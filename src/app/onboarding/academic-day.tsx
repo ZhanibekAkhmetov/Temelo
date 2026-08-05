@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import { router } from "expo-router";
 
+import { DurationField } from "@/components/DurationField";
+import { InlineTimeField } from "@/components/InlineTimeField";
 import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TextField } from "@/components/TextField";
-import { TimeInput } from "@/components/TimeInput";
-import { generateTimeSlots, isValidHHmm } from "@/domain/time";
+import { generateTimeSlots } from "@/domain/time";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 
@@ -15,9 +16,10 @@ export default function AcademicDayConfigScreen() {
   const { state, setAcademicDayConfig } = useAppState();
 
   const [dayStart, setDayStart] = useState(state.settings.academicDayStart);
-  const [lessonDuration, setLessonDuration] = useState(String(state.settings.defaultLessonDurationMinutes));
-  const [breakDuration, setBreakDuration] = useState(String(state.settings.defaultBreakDurationMinutes));
+  const [lessonDuration, setLessonDuration] = useState(state.settings.defaultLessonDurationMinutes);
+  const [breakDuration, setBreakDuration] = useState(state.settings.defaultBreakDurationMinutes);
   const [slotCount, setSlotCount] = useState(String(state.settings.slotCount));
+  const [startTimePickerOpen, setStartTimePickerOpen] = useState(false);
 
   const isPostOnboardingEdit = state.settings.onboardingCompleted;
   const hasActivePlacements = state.placements.some((p) => !p.deletedAt);
@@ -26,8 +28,8 @@ export default function AcademicDayConfigScreen() {
     () =>
       generateTimeSlots({
         dayStart,
-        lessonDurationMinutes: Number(lessonDuration),
-        breakDurationMinutes: Number(breakDuration),
+        lessonDurationMinutes: lessonDuration,
+        breakDurationMinutes: breakDuration,
         slotCount: Number(slotCount),
       }),
     [dayStart, lessonDuration, breakDuration, slotCount],
@@ -36,8 +38,8 @@ export default function AcademicDayConfigScreen() {
   function save() {
     const result = setAcademicDayConfig({
       academicDayStart: dayStart,
-      defaultLessonDurationMinutes: Number(lessonDuration),
-      defaultBreakDurationMinutes: Number(breakDuration),
+      defaultLessonDurationMinutes: lessonDuration,
+      defaultBreakDurationMinutes: breakDuration,
       slotCount: Number(slotCount),
     });
     if (!result.ok) return;
@@ -71,15 +73,18 @@ export default function AcademicDayConfigScreen() {
         Define your typical academic day to generate time slots.
       </Text>
 
-      <TimeInput
+      <InlineTimeField
         label="Academic day starts at"
         value={dayStart}
-        onChangeText={setDayStart}
-        error={dayStart.length > 0 && !isValidHHmm(dayStart) ? "Enter a valid time (HH:mm)." : undefined}
-        helperText="24-hour"
+        onChange={setDayStart}
+        expanded={startTimePickerOpen}
+        onToggle={() => setStartTimePickerOpen((open) => !open)}
+        helperText="24-hour, in five-minute steps"
       />
-      <TextField label="Lesson duration (minutes)" value={lessonDuration} onChangeText={setLessonDuration} keyboardType="numeric" />
-      <TextField label="Break duration (minutes)" value={breakDuration} onChangeText={setBreakDuration} keyboardType="numeric" />
+      <DurationField label="Lesson duration" valueMinutes={lessonDuration} onChange={setLessonDuration} minimumMinutes={5} />
+      <DurationField label="Break between lessons" valueMinutes={breakDuration} onChange={setBreakDuration} minimumMinutes={0} />
+
+      <View style={{ height: spacing.md }} />
       <TextField label="Number of periods" value={slotCount} onChangeText={setSlotCount} keyboardType="numeric" />
 
       <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.sm, marginBottom: spacing.xs }]}>

@@ -13,10 +13,31 @@ export function isValidHHmm(value: string): boolean {
   return HHMM_PATTERN.test(value);
 }
 
-function parseHHmmToMinutes(value: string): number | null {
+export function parseHHmmToMinutes(value: string): number | null {
   const match = HHMM_PATTERN.exec(value);
   if (!match) return null;
   return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/** Hour/minute pair for the wheel picker; null when `value` isn't HH:mm. */
+export function splitHHmm(value: string): { hours: number; minutes: number } | null {
+  const totalMinutes = parseHHmmToMinutes(value);
+  if (totalMinutes === null) return null;
+  return { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 };
+}
+
+export function joinHHmm(hours: number, minutes: number): string {
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+/** A length of time as "1 h 30 min", "45 min" or "2 h". */
+export function formatDurationMinutes(totalMinutes: number): string {
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0 min";
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.round(totalMinutes % 60);
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} h`;
+  return `${hours} h ${minutes} min`;
 }
 
 function formatMinutesToHHmm(totalMinutes: number): string {
@@ -108,4 +129,54 @@ export function findCurrentPeriodIndex(
     if (nowTime < slot.endTime) return i;
   }
   return 0;
+}
+
+/**
+ * Which period boundaries deserve a stronger line on the grid: the start of
+ * the day, and any period that begins after a longer gap than the routine
+ * one between lessons — a real break in the day rather than the change-over
+ * that happens every period. Everything else is a minor line.
+ */
+export function findMajorBoundaries(slots: { startTime: string; endTime: string }[]): boolean[] {
+  const gaps = slots.map((slot, index) => {
+    if (index === 0) return -1;
+    const start = parseHHmmToMinutes(slot.startTime);
+    const previousEnd = parseHHmmToMinutes(slots[index - 1].endTime);
+    return start === null || previousEnd === null ? -1 : start - previousEnd;
+  });
+
+  const routineGaps = gaps.filter((gap) => gap >= 0);
+  const routineGap = routineGaps.length > 0 ? Math.min(...routineGaps) : 0;
+
+  return slots.map((_, index) => index === 0 || gaps[index] > routineGap);
+}
+
+export interface PeriodProgress {
+  index: number;
+  /** How far through that period the current moment is, 0–1. */
+  fraction: number;
+}
+
+/**
+ * Where "now" sits inside the period currently in progress, for the
+ * current-time marker. Returns null outside lesson time (before the day
+ * starts, during a break, after the last period) — the marker is only
+ * meaningful within a period, since the grid's rows are periods rather than
+ * uniform clock hours.
+ */
+export function findPeriodProgress(
+  slots: { startTime: string; endTime: string }[],
+  nowTime: string,
+): PeriodProgress | null {
+  const nowMinutes = parseHHmmToMinutes(nowTime);
+  if (nowMinutes === null) return null;
+
+  for (let i = 0; i < slots.length; i++) {
+    const start = parseHHmmToMinutes(slots[i].startTime);
+    const end = parseHHmmToMinutes(slots[i].endTime);
+    if (start === null || end === null || end <= start) continue;
+    if (nowMinutes < start || nowMinutes >= end) continue;
+    return { index: i, fraction: (nowMinutes - start) / (end - start) };
+  }
+  return null;
 }

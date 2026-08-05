@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { getAppearanceAccent } from "@/theme/tokens";
+import { getAppearanceColors } from "@/theme/tokens";
 import { useTheme } from "@/theme/useTheme";
 
 interface GridCellContent {
@@ -18,10 +18,14 @@ interface GridCellProps {
   accessibilityLabel: string;
 }
 
-export function GridCell({ width, height, isToday, content, onPress, accessibilityLabel }: GridCellProps) {
-  const { colors, spacing, radii, typography, borderWidth, scheme } = useTheme();
+/** Below this a cell only has room for the class name, not the room too. */
+const ROOM_LINE_MIN_HEIGHT = 52;
 
-  const accent = content ? getAppearanceAccent(content.appearanceId, scheme) : undefined;
+export function GridCell({ width, height, isToday, content, onPress, accessibilityLabel }: GridCellProps) {
+  const { colors, radii, typography, borderWidth, scheme } = useTheme();
+
+  const appearance = content ? getAppearanceColors(content.appearanceId, scheme) : null;
+  const showRoom = Boolean(content?.room) && height >= ROOM_LINE_MIN_HEIGHT;
 
   return (
     <Pressable
@@ -34,40 +38,50 @@ export function GridCell({ width, height, isToday, content, onPress, accessibili
           width,
           height,
           borderColor: colors.border,
-          borderWidth: borderWidth.thin,
-          backgroundColor: isToday ? colors.todayBackground : content ? colors.surface : colors.background,
-          opacity: pressed ? 0.7 : 1,
+          borderRightWidth: borderWidth.thin,
+          borderBottomWidth: borderWidth.thin,
+          backgroundColor: isToday ? colors.todayBackground : "transparent",
+          opacity: pressed ? 0.6 : 1,
         },
       ]}
     >
-      {content ? (
-        <View style={[styles.filled, { borderLeftColor: accent, borderLeftWidth: 3, paddingLeft: spacing.xs }]}>
-          <Text style={[typography.gridText, { color: colors.textPrimary }]} numberOfLines={2}>
-            {content.name}
-          </Text>
-          {content.room ? (
-            <Text style={[typography.gridSecondary, { color: colors.textSecondary }]} numberOfLines={1}>
-              {content.room}
+      {content && appearance ? (
+        // A complete rectangle on all four sides, inset inside the cell — it
+        // never borrows the grid's own cell border for an edge.
+        <View
+          style={[
+            styles.block,
+            { backgroundColor: appearance.fill, borderRadius: radii.sm, borderColor: appearance.edge, borderWidth: 1 },
+          ]}
+        >
+          <View style={styles.blockContent}>
+            <Text style={[typography.gridText, { color: appearance.ink }]} numberOfLines={showRoom ? 2 : 1}>
+              {content.name}
             </Text>
-          ) : null}
+            {showRoom ? (
+              <Text style={[typography.gridSecondary, { color: appearance.inkMuted }]} numberOfLines={1}>
+                {content.room}
+              </Text>
+            ) : null}
+          </View>
         </View>
-      ) : (
-        <View style={[styles.empty, { borderRadius: radii.sm }]} />
-      )}
+      ) : null}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   cell: {
-    padding: 3,
-    justifyContent: "center",
+    padding: 2,
   },
-  filled: {
+  block: {
     flex: 1,
-    justifyContent: "center",
+    overflow: "hidden",
   },
-  empty: {
+  blockContent: {
     flex: 1,
+    justifyContent: "flex-start",
+    paddingHorizontal: 5,
+    paddingVertical: 3,
   },
 });

@@ -2,11 +2,14 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
+import { slotsCollide, type OccupiedSlot } from "@/domain/recurrence";
 import { generateTimeSlots } from "@/domain/time";
+import { occupiedSlotIds } from "@/domain/timetable";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
 import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
-import type { AcademicTerm, Course, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
+import { createSeedState } from "@/state/seed";
+import type { AcademicTerm, Course, GridOrientation, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
 
 export interface AppState {
   settings: Settings;
@@ -40,6 +43,8 @@ export interface UpsertPlacementInput {
   placementId?: string;
   weekday: Weekday;
   timeSlotId: string;
+  /** Consecutive periods occupied; defaults to a single period. */
+  slotSpan?: number;
   name: string;
   room: string;
   teacher: string;
@@ -49,18 +54,31 @@ export interface UpsertPlacementInput {
   endsOn: string;
 }
 
+/** A drag or resize in the grid: position only, nothing else changes. */
+export interface MovePlacementInput {
+  placementId: string;
+  weekday: Weekday;
+  timeSlotId: string;
+  slotSpan: number;
+}
+
 interface AppStateContextValue {
   state: AppState;
   setWeekendMode: (input: { weekendMode: WeekendMode }) => void;
+  setGridOrientation: (input: { gridOrientation: GridOrientation }) => void;
   setAcademicDayConfig: (input: AcademicDayConfigInput) => ActionResult;
   setTermConfig: (input: TermConfigInput) => ActionResult;
   updateTermInfo: (input: TermInfoInput) => ActionResult;
   upsertPlacement: (input: UpsertPlacementInput) => ActionResult;
+  movePlacement: (input: MovePlacementInput) => ActionResult;
+  /** Read-only: whether a proposed position is free. Changes nothing. */
+  checkPlacement: (input: MovePlacementInput) => ActionResult;
   deletePlacement: (placementId: string) => void;
+  loadSampleTimetable: () => void;
   resetPrototype: () => void;
 }
 
-function buildInitialState(): AppState {
+function buildEmptyState(): AppState {
   return {
     settings: { ...DEFAULT_SETTINGS },
     term: createDefaultTerm(),
@@ -68,6 +86,52 @@ function buildInitialState(): AppState {
     courses: [],
     placements: [],
   };
+}
+
+/**
+ * The prototype opens on the sample timetable so gestures can be tried
+ * immediately; "Reset prototype" still clears everything back to
+ * onboarding, and Settings can reload the sample at any time.
+ */
+function buildInitialState(): AppState {
+  return createSeedState();
+}
+
+interface ConflictCandidate {
+  placementId?: string;
+  weekday: Weekday;
+  timeSlotId: string;
+  slotSpan: number;
+  recurrenceType: RecurrenceType;
+  startsOn: string;
+  endsOn: string;
+}
+
+/**
+ * Two classes may share a weekday and period as long as they never actually
+ * meet on the same date — an alternating pair of biweekly classes, or a
+ * one-off in a week its neighbour skips.
+ */
+function findConflict(state: AppState, candidate: ConflictCandidate): Placement | undefined {
+  const occupied: OccupiedSlot = {
+    weekday: candidate.weekday,
+    slotIds: occupiedSlotIds(state.timeSlots, candidate.timeSlotId, candidate.slotSpan),
+    recurrenceType: candidate.recurrenceType,
+    startsOn: candidate.startsOn,
+    endsOn: candidate.endsOn,
+  };
+
+  return state.placements.find(
+    (placement) =>
+      !placement.deletedAt &&
+      placement.id !== candidate.placementId &&
+      slotsCollide({ ...placement, slotIds: occupiedSlotIds(state.timeSlots, placement.timeSlotId, placement.slotSpan) }, occupied),
+  );
+}
+
+function conflictError(state: AppState, conflict: Placement): ActionResult {
+  const course = state.courses.find((candidate) => candidate.id === conflict.courseId);
+  return { ok: false, error: `This slot is already used by ${course?.name ?? "another class"}.` };
 }
 
 const AppStateContext = createContext<AppStateContextValue | null>(null);
@@ -80,6 +144,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setState((prev) => ({
         ...prev,
         settings: { ...prev.settings, weekendMode: input.weekendMode },
+      }));
+    };
+
+    const setGridOrientation: AppStateContextValue["setGridOrientation"] = (input) => {
+      setState((prev) => ({
+        ...prev,
+        settings: { ...prev.settings, gridOrientation: input.gridOrientation },
       }));
     };
 
@@ -166,20 +237,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: "End date cannot be before the start date." };
       }
 
-      const conflict = state.placements.find(
-        (placement) =>
-          !placement.deletedAt &&
-          placement.id !== input.placementId &&
-          placement.weekday === input.weekday &&
-          placement.timeSlotId === input.timeSlotId,
-      );
-      if (conflict) {
-        const conflictCourse = state.courses.find((course) => course.id === conflict.courseId);
-        return {
-          ok: false,
-          error: `This slot is already used by ${conflictCourse?.name ?? "another class"}.`,
-        };
-      }
+      const slotSpan = Math.max(1, input.slotSpan ?? 1);
+      const conflict = findConflict(state, {
+        placementId: input.placementId,
+        weekday: input.weekday,
+        timeSlotId: input.timeSlotId,
+        slotSpan,
+        recurrenceType: input.recurrenceType,
+        startsOn: input.startsOn,
+        endsOn: input.endsOn,
+      });
+      if (conflict) return conflictError(state, conflict);
 
       const now = new Date().toISOString();
 
@@ -205,6 +273,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             placement.id === input.placementId
               ? {
                   ...placement,
+                  timeSlotId: input.timeSlotId,
+                  slotSpan,
                   recurrenceType: input.recurrenceType,
                   startsOn: input.startsOn,
                   endsOn: input.endsOn,
@@ -233,6 +303,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         courseId,
         weekday: input.weekday,
         timeSlotId: input.timeSlotId,
+        slotSpan,
         recurrenceType: input.recurrenceType,
         startsOn: input.startsOn,
         endsOn: input.endsOn,
@@ -249,6 +320,63 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: true };
     };
 
+    /**
+     * The same validation `movePlacement` applies, without applying it —
+     * so a drag in progress can show whether where it is hovering would be
+     * accepted, using one rule rather than two.
+     */
+    const checkPlacement: AppStateContextValue["checkPlacement"] = (input) => {
+      const existing = state.placements.find((placement) => placement.id === input.placementId);
+      if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
+
+      const conflict = findConflict(state, {
+        placementId: input.placementId,
+        weekday: input.weekday,
+        timeSlotId: input.timeSlotId,
+        slotSpan: Math.max(1, input.slotSpan),
+        recurrenceType: existing.recurrenceType,
+        startsOn: existing.startsOn,
+        endsOn: existing.endsOn,
+      });
+      return conflict ? conflictError(state, conflict) : { ok: true };
+    };
+
+    /**
+     * The settled result of a grid drag or resize. Only the position moves,
+     * so the course, recurrence and dates are deliberately left untouched.
+     */
+    const movePlacement: AppStateContextValue["movePlacement"] = (input) => {
+      const existing = state.placements.find((placement) => placement.id === input.placementId);
+      if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
+
+      const slotSpan = Math.max(1, input.slotSpan);
+      if (existing.weekday === input.weekday && existing.timeSlotId === input.timeSlotId && existing.slotSpan === slotSpan) {
+        return { ok: true };
+      }
+
+      const conflict = findConflict(state, {
+        placementId: input.placementId,
+        weekday: input.weekday,
+        timeSlotId: input.timeSlotId,
+        slotSpan,
+        recurrenceType: existing.recurrenceType,
+        startsOn: existing.startsOn,
+        endsOn: existing.endsOn,
+      });
+      if (conflict) return conflictError(state, conflict);
+
+      const now = new Date().toISOString();
+      setState((prev) => ({
+        ...prev,
+        placements: prev.placements.map((placement) =>
+          placement.id === input.placementId
+            ? { ...placement, weekday: input.weekday, timeSlotId: input.timeSlotId, slotSpan, updatedAt: now }
+            : placement,
+        ),
+      }));
+      return { ok: true };
+    };
+
     const deletePlacement: AppStateContextValue["deletePlacement"] = (placementId) => {
       const now = new Date().toISOString();
       setState((prev) => ({
@@ -259,18 +387,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }));
     };
 
+    const loadSampleTimetable: AppStateContextValue["loadSampleTimetable"] = () => {
+      setState(createSeedState());
+    };
+
     const resetPrototype: AppStateContextValue["resetPrototype"] = () => {
-      setState(buildInitialState());
+      setState(buildEmptyState());
     };
 
     return {
       state,
       setWeekendMode,
+      setGridOrientation,
       setAcademicDayConfig,
       setTermConfig,
       updateTermInfo,
       upsertPlacement,
+      movePlacement,
+      checkPlacement,
       deletePlacement,
+      loadSampleTimetable,
       resetPrototype,
     };
   }, [state]);

@@ -51,32 +51,3 @@ export function addDaysIso(date: string, days: number): string {
   local.setDate(local.getDate() + days);
   return `${local.getFullYear()}-${pad2(local.getMonth() + 1)}-${pad2(local.getDate())}`;
 }
-
-/**
- * Conversion between the on-device display format (DD.MM.YYYY, entered as
- * 8 plain digits) and the internal storage format (ISO YYYY-MM-DD). Kept
- * here because it's a date-representation concern, not UI masking — the
- * masking itself (which digits are typed so far, colon/dot placement)
- * lives in the input components.
- */
-export function isoToDmyDigits(iso: string): string {
-  const match = ISO_DATE_PATTERN.exec(iso);
-  if (!match) return "";
-  const [, year, month, day] = match;
-  return `${day}${month}${year}`;
-}
-
-export function dmyDigitsToIso(digits: string): string {
-  if (digits.length !== 8) return "";
-  const day = digits.slice(0, 2);
-  const month = digits.slice(2, 4);
-  const year = digits.slice(4, 8);
-  return `${year}-${month}-${day}`;
-}
-
-/** ISO -> DD.MM.YYYY for display; returns the input unchanged if it isn't a valid ISO date. */
-export function formatIsoAsDmy(iso: string): string {
-  const digits = isoToDmyDigits(iso);
-  if (digits.length !== 8) return iso;
-  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)}`;
-}

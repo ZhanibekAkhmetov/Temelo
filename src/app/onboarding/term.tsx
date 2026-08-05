@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Text } from "react-native";
 import { router } from "expo-router";
 
-import { DateInput } from "@/components/DateInput";
+import { InlineDateField } from "@/components/InlineDateField";
 import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { TextField } from "@/components/TextField";
@@ -18,10 +18,15 @@ export default function TermConfigScreen() {
   const [startDate, setStartDate] = useState(state.term.startDate);
   const [estimatedEndDate, setEstimatedEndDate] = useState(state.term.estimatedEndDate);
 
+  const [openPicker, setOpenPicker] = useState<"start" | "end" | null>(null);
   const [nameError, setNameError] = useState<string | undefined>();
   const [startError, setStartError] = useState<string | undefined>();
   const [endError, setEndError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | undefined>();
+
+  function togglePicker(picker: "start" | "end") {
+    setOpenPicker((current) => (current === picker ? null : picker));
+  }
 
   function handleFinish() {
     let hasError = false;
@@ -69,11 +74,20 @@ export default function TermConfigScreen() {
       </Text>
 
       <TextField label="Term name" value={name} onChangeText={setName} error={nameError} placeholder="Current term" />
-      <DateInput label="Start date" value={startDate} onChangeText={setStartDate} error={startError} helperText="e.g. 01.09.2026" />
-      <DateInput
+      <InlineDateField
+        label="Start date"
+        value={startDate}
+        onChange={setStartDate}
+        expanded={openPicker === "start"}
+        onToggle={() => togglePicker("start")}
+        error={startError}
+      />
+      <InlineDateField
         label="Estimated end date"
         value={estimatedEndDate}
-        onChangeText={setEstimatedEndDate}
+        onChange={setEstimatedEndDate}
+        expanded={openPicker === "end"}
+        onToggle={() => togglePicker("end")}
         error={endError}
         helperText="An estimate — easy to change later"
       />

@@ -1,7 +1,8 @@
 /**
- * Restrained visual tokens: neutral surfaces, thin borders, modest radii,
- * one subdued accent. Kept intentionally small — no gradients, no
- * decorative palette.
+ * Restrained visual tokens: neutral surfaces, thin borders, modest radii.
+ * Colour is spent in one place only — the classes on the grid, whose
+ * palette is at the bottom of this file — and the chrome stays out of its
+ * way. No gradients.
  */
 
 export const spacing = {
@@ -47,6 +48,8 @@ export interface ColorTokens {
   destructive: string;
   destructiveMuted: string;
   todayBackground: string;
+  /** Wash behind a range that has been proposed but not saved yet. */
+  provisionalFill: string;
 }
 
 export const lightColors: ColorTokens = {
@@ -58,11 +61,12 @@ export const lightColors: ColorTokens = {
   textPrimary: "#1C1B19",
   textSecondary: "#57534E",
   textMuted: "#8A8681",
-  accent: "#2F5D8A",
-  accentMuted: "#DCE6EF",
-  destructive: "#9A3324",
-  destructiveMuted: "#F2DAD4",
-  todayBackground: "#E8EEF3",
+  accent: "#1C63B3",
+  accentMuted: "#E5EBFD",
+  destructive: "#D11A2F",
+  destructiveMuted: "#FEEDEB",
+  todayBackground: "#EDF0FE",
+  provisionalFill: "#1C63B31F",
 };
 
 export const darkColors: ColorTokens = {
@@ -74,43 +78,89 @@ export const darkColors: ColorTokens = {
   textPrimary: "#EDEBE7",
   textSecondary: "#B7B3AC",
   textMuted: "#847F78",
-  accent: "#7FA8CE",
-  accentMuted: "#233442",
-  destructive: "#D98B7C",
-  destructiveMuted: "#3A2521",
-  todayBackground: "#1F2C36",
+  accent: "#8EB0FA",
+  accentMuted: "#2C3449",
+  destructive: "#F93E33",
+  destructiveMuted: "#2B1917",
+  todayBackground: "#282E3E",
+  provisionalFill: "#8EB0FA26",
 };
 
+/**
+ * Ordered so that consecutive courses — which are handed the next entry in
+ * turn — never land on neighbouring hues. The closest adjacent pair here is
+ * ΔE₀₀ ≈ 38, and the closest pair anywhere in the set ≈ 17 (violet/magenta).
+ */
 export const APPEARANCE_PALETTE = [
-  "slate",
-  "clay",
-  "moss",
-  "plum",
-  "ochre",
+  "blue",
+  "red",
+  "emerald",
+  "violet",
+  "amber",
   "teal",
+  "magenta",
 ] as const;
 
 export type AppearanceId = (typeof APPEARANCE_PALETTE)[number];
 
-const APPEARANCE_ACCENTS_LIGHT: Record<AppearanceId, string> = {
-  slate: "#5B6B7A",
-  clay: "#9A5B45",
-  moss: "#5C7A52",
-  plum: "#7A5C82",
-  ochre: "#9A7A2E",
-  teal: "#3E7A78",
+export interface AppearanceColors {
+  /** The block's own background — opaque, so it never dilutes into the grid. */
+  fill: string;
+  /** Class name on that fill. */
+  ink: string;
+  /** Room line on that fill. */
+  inkMuted: string;
+  /** Hairline around the block. */
+  edge: string;
+  /** Stroke of the selection rectangle and its resize handles. */
+  outline: string;
+}
+
+/**
+ * Seven course colours, generated in CIELAB rather than picked by eye: one
+ * hue each, spaced at least 31° apart, carrying 90% of the chroma sRGB can
+ * hold at that lightness and never more than C 72 — vivid enough to tell
+ * apart at a glance on a black grid, short of the gamut edge where colours
+ * start to buzz.
+ *
+ * `fill` is deliberately light (L* 62–73). That is what carries the colour,
+ * and it lets one near-black ink sit on every one of them at 6.3:1 or
+ * better, so no course needs its own text rule.
+ *
+ * `deep` is the same hue darkened: the block's hairline in both schemes, and
+ * the selection stroke in light mode, where a lighter stroke would dissolve
+ * into the page. `bright` is the same hue lightened, for the selection
+ * stroke in dark mode.
+ */
+const APPEARANCE_HUES: Record<AppearanceId, { fill: string; deep: string; bright: string }> = {
+  blue: { fill: "#5996F4", deep: "#2868B8", bright: "#B0C3F6" },
+  red: { fill: "#F76D66", deep: "#CE2431", bright: "#F7B7AF" },
+  emerald: { fill: "#31B978", deep: "#218455", bright: "#6BE9A5" },
+  violet: { fill: "#B57AF4", deep: "#8447CE", bright: "#D8B7F6" },
+  amber: { fill: "#F8A02E", deep: "#B9741A", bright: "#FBD6B5" },
+  teal: { fill: "#37BCC6", deep: "#268890", bright: "#59EEF9" },
+  magenta: { fill: "#F65FC1", deep: "#C02491", bright: "#F7B2DA" },
 };
 
-const APPEARANCE_ACCENTS_DARK: Record<AppearanceId, string> = {
-  slate: "#9AAAB8",
-  clay: "#D0987F",
-  moss: "#9CBB8E",
-  plum: "#BB9AC4",
-  ochre: "#D0B25F",
-  teal: "#82BFBC",
-};
+/** One ink for every fill; the room line is the same ink at 80%. */
+const APPEARANCE_INK = "#121110";
+const APPEARANCE_INK_MUTED = `${APPEARANCE_INK}CC`;
 
-export function getAppearanceAccent(appearanceId: string, scheme: "light" | "dark"): string {
-  const palette = scheme === "dark" ? APPEARANCE_ACCENTS_DARK : APPEARANCE_ACCENTS_LIGHT;
-  return palette[appearanceId as AppearanceId] ?? palette.slate;
+const FALLBACK_APPEARANCE: AppearanceId = "blue";
+
+/**
+ * The colours a class is drawn with. The fill and the ink are the same in
+ * both schemes — one palette, not two that can drift — and only the strokes
+ * change, because "stands out against the block" means lighter on a dark
+ * grid and darker on a light one.
+ */
+export function getAppearanceColors(appearanceId: string, scheme: "light" | "dark"): AppearanceColors {
+  const hue = APPEARANCE_HUES[appearanceId as AppearanceId] ?? APPEARANCE_HUES[FALLBACK_APPEARANCE];
+  return {
+    fill: hue.fill,
+    ink: APPEARANCE_INK,
+    inkMuted: APPEARANCE_INK_MUTED,
+    edge: hue.deep,
+    outline: scheme === "dark" ? hue.bright : hue.deep,
+  };
 }

@@ -3,28 +3,33 @@ import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, St
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
-import { DateInput } from "@/components/DateInput";
+import { InlineDateField } from "@/components/InlineDateField";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { TextField } from "@/components/TextField";
-import { formatIsoAsDmy } from "@/domain/date";
+import { formatIsoLong } from "@/domain/calendar";
 import { WEEKDAY_LABEL, type Weekday } from "@/domain/week";
+import type { ScheduledClass } from "@/domain/timetable";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
-import type { AcademicTerm, Course, Placement, RecurrenceType, TimeSlot } from "@/types/models";
-
-interface ExistingSelection {
-  placement: Placement;
-  course: Course;
-}
+import type { AcademicTerm, RecurrenceType, TimeSlot } from "@/types/models";
 
 interface ClassEditorModalProps {
   visible: boolean;
   onClose: () => void;
   weekday: Weekday;
+  /** Date of the tapped cell, in the week that was on screen. */
+  date: string;
   timeSlot: TimeSlot;
+  /** Periods the class occupies — set by resizing it in the grid. */
+  slotSpan: number;
+  /** End of the last period in the span. */
+  endTime: string;
   term: AcademicTerm;
-  existing?: ExistingSelection;
+  existing?: ScheduledClass;
 }
+
+/** Which inline picker is unfolded — at most one at a time. */
+type OpenPicker = "date" | "startsOn" | "endsOn" | null;
 
 const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
   { label: "Weekly", value: "weekly" },
@@ -32,7 +37,7 @@ const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
   { label: "One time", value: "once" },
 ];
 
-export function ClassEditorModal({ visible, onClose, weekday, timeSlot, term, existing }: ClassEditorModalProps) {
+export function ClassEditorModal({ visible, onClose, weekday, date, timeSlot, slotSpan, endTime, term, existing }: ClassEditorModalProps) {
   return (
     <Modal
       visible={visible}
@@ -42,10 +47,13 @@ export function ClassEditorModal({ visible, onClose, weekday, timeSlot, term, ex
     >
       {visible ? (
         <ClassEditorForm
-          key={`${weekday}-${timeSlot.id}-${existing?.placement.id ?? "new"}`}
+          key={`${weekday}-${date}-${timeSlot.id}-${existing?.placement.id ?? "new"}`}
           onClose={onClose}
           weekday={weekday}
+          date={date}
           timeSlot={timeSlot}
+          slotSpan={slotSpan}
+          endTime={endTime}
           term={term}
           existing={existing}
         />
@@ -54,7 +62,7 @@ export function ClassEditorModal({ visible, onClose, weekday, timeSlot, term, ex
   );
 }
 
-function ClassEditorForm({ onClose, weekday, timeSlot, term, existing }: Omit<ClassEditorModalProps, "visible">) {
+function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, term, existing }: Omit<ClassEditorModalProps, "visible">) {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { upsertPlacement, deletePlacement } = useAppState();
 
@@ -63,20 +71,32 @@ function ClassEditorForm({ onClose, weekday, timeSlot, term, existing }: Omit<Cl
   const [teacher, setTeacher] = useState(existing?.course.teacher ?? "");
   const [notes, setNotes] = useState(existing?.course.notes ?? "");
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(existing?.placement.recurrenceType ?? "weekly");
-  const [startsOn, setStartsOn] = useState(existing?.placement.startsOn ?? term.startDate);
+  const [startsOn, setStartsOn] = useState(
+    existing && existing.placement.recurrenceType !== "once" ? existing.placement.startsOn : term.startDate,
+  );
   const [endsOn, setEndsOn] = useState(existing?.placement.endsOn ?? term.estimatedEndDate);
+  // A one-off defaults to the day that was tapped, not the start of term.
+  const [onceDate, setOnceDate] = useState(
+    existing?.placement.recurrenceType === "once" ? existing.placement.startsOn : date,
+  );
   const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
+  const [openPicker, setOpenPicker] = useState<OpenPicker>(null);
   const [nameError, setNameError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | undefined>();
 
-  const effectiveEndsOn = recurrenceType === "once" ? startsOn : endsOn;
+  const isOneOff = recurrenceType === "once";
+  const effectiveStartsOn = isOneOff ? onceDate : startsOn;
+  const effectiveEndsOn = isOneOff ? onceDate : endsOn;
 
-  const summaryText =
-    recurrenceType === "once"
-      ? `One time on ${formatIsoAsDmy(startsOn)}`
-      : recurrenceType === "biweekly"
-        ? `Every two weeks until ${formatIsoAsDmy(effectiveEndsOn)}`
-        : `Every week until ${formatIsoAsDmy(effectiveEndsOn)}`;
+  const summaryText = isOneOff
+    ? `One time on ${formatIsoLong(onceDate)}`
+    : recurrenceType === "biweekly"
+      ? `Every two weeks until ${formatIsoLong(effectiveEndsOn)}`
+      : `Every week until ${formatIsoLong(effectiveEndsOn)}`;
+
+  function togglePicker(picker: Exclude<OpenPicker, null>) {
+    setOpenPicker((current) => (current === picker ? null : picker));
+  }
 
   function handleSave() {
     const trimmedName = name.trim();
@@ -91,12 +111,13 @@ function ClassEditorForm({ onClose, weekday, timeSlot, term, existing }: Omit<Cl
       placementId: existing?.placement.id,
       weekday,
       timeSlotId: timeSlot.id,
+      slotSpan,
       name: trimmedName,
       room,
       teacher,
       notes,
       recurrenceType,
-      startsOn,
+      startsOn: effectiveStartsOn,
       endsOn: effectiveEndsOn,
     });
 
@@ -142,7 +163,8 @@ function ClassEditorForm({ onClose, weekday, timeSlot, term, existing }: Omit<Cl
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg }}>
           <Text style={[typography.caption, { color: colors.textMuted, marginBottom: spacing.md }]}>
-            {WEEKDAY_LABEL[weekday]} · period {timeSlot.position} · {timeSlot.startTime}–{timeSlot.endTime}
+            {WEEKDAY_LABEL[weekday]} · period {timeSlot.position}
+            {slotSpan > 1 ? `–${timeSlot.position + slotSpan - 1}` : ""} · {timeSlot.startTime}–{endTime}
           </Text>
 
           <TextField
@@ -176,10 +198,33 @@ function ClassEditorForm({ onClose, weekday, timeSlot, term, existing }: Omit<Cl
                 <SegmentedControl options={RECURRENCE_OPTIONS} value={recurrenceType} onChange={setRecurrenceType} accessibilityLabel="Recurrence" />
               </View>
 
-              <DateInput label="Start date" value={startsOn} onChangeText={setStartsOn} helperText="e.g. 01.09.2026" />
-              {recurrenceType !== "once" ? (
-                <DateInput label="End date" value={endsOn} onChangeText={setEndsOn} helperText="Estimated — can be changed later" />
-              ) : null}
+              {isOneOff ? (
+                <InlineDateField
+                  label="Date"
+                  value={onceDate}
+                  onChange={setOnceDate}
+                  expanded={openPicker === "date"}
+                  onToggle={() => togglePicker("date")}
+                />
+              ) : (
+                <>
+                  <InlineDateField
+                    label="Start date"
+                    value={startsOn}
+                    onChange={setStartsOn}
+                    expanded={openPicker === "startsOn"}
+                    onToggle={() => togglePicker("startsOn")}
+                  />
+                  <InlineDateField
+                    label="End date"
+                    value={endsOn}
+                    onChange={setEndsOn}
+                    expanded={openPicker === "endsOn"}
+                    onToggle={() => togglePicker("endsOn")}
+                    helperText="Estimated — can be changed later"
+                  />
+                </>
+              )}
             </View>
           ) : null}
 

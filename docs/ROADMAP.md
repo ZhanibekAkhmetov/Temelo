@@ -62,6 +62,19 @@ current implementation status.
    seven weekdays (previously only Monday/Sunday), and the quick-add/edit
    editor was changed from a bottom sheet (obscured by the Android
    keyboard) to a full-screen modal with Save in the header.
+   *Layout revision:* the grid now defaults back to weekdays-as-columns in a
+   calendar-style layout sized so every shown day fits without sideways
+   scrolling, and the grid shows one dated week at a time (swipe or the
+   header arrows to change week). The weekdays-as-rows layout above is kept
+   as a "Timetable layout" setting; because its own horizontal scroll owns
+   sideways gestures, it changes week with the header arrows rather than by
+   swiping.
+   *Gesture pass:* the vertical layout is now a single Reanimated/Gesture
+   Handler surface — week paging, vertical scrolling, pinch zoom of the time
+   scale, and long-press move/resize of blocks, all axis-locked and driven
+   on the UI thread. Placements gained a `slotSpan` so a class can occupy
+   consecutive periods; placement remains period-aligned by design (no
+   arbitrary-minute events).
 
 7. **Quick class creation**
    Tapping an empty slot lets the user create a class with just a name,

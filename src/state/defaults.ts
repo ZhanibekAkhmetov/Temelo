@@ -5,6 +5,7 @@ import type { AcademicTerm, Settings, TimeSlot } from "@/types/models";
 
 export const DEFAULT_SETTINGS: Settings = {
   weekendMode: "saturdaySunday",
+  gridOrientation: "vertical",
   academicDayStart: "07:30",
   defaultLessonDurationMinutes: 90,
   defaultBreakDurationMinutes: 20,
