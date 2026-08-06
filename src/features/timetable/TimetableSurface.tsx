@@ -7,7 +7,7 @@ import { addWeeksIso, weekDatesFrom } from "@/domain/calendar";
 import type { EditSource } from "@/domain/classEdit";
 import type { OccurrencePreview } from "@/domain/occurrence";
 import { findCurrentPeriodIndex } from "@/domain/time";
-import { resolveWeekBlocks, type ScheduledClass } from "@/domain/timetable";
+import { resolveWeekBlocks, type ScheduledClass, type WeekBlock } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
 import {
   clampValue,
@@ -286,46 +286,57 @@ export function TimetableSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bodyHeight, slotCount, timeSlots]);
 
-  /** The settled week only changes here, once a page has stopped moving. */
-  const commitWeek = useCallback(
-    (direction: number) => {
-      if (direction === 0) return;
-      const next = baseIdx.get() + direction;
-      baseIdx.set(next);
-      setBaseIndex(next);
-      onVisibleWeekChange(addWeeksIso(anchorWeekStart, next));
-    },
-    [anchorWeekStart, baseIdx, onVisibleWeekChange],
-  );
+  /**
+   * Brings the committed week into line with the page the pager is actually
+   * resting on. Every settle ends here, however it got there.
+   *
+   * This is deliberately absolute and idempotent rather than "advance by
+   * one, if the animation reported that it finished". A page spring is
+   * cancelled routinely — a second swipe during the settle, an arrow press,
+   * a pinch that freezes the pager — and a relative commit that only runs on
+   * a clean finish is simply dropped when that happens. The pager still ends
+   * up on the new page, so the week on screen and the week the rest of this
+   * component believes in drift apart, and stay apart: hit-testing,
+   * `visibleBlocks` and the editor all keep answering for the previous week
+   * while the user looks at the next one. Re-deriving the week from where
+   * the pager truly is cannot drift.
+   */
+  const reconcilePage = useCallback(() => {
+    const settled = Math.round(pos.get());
+    if (settled === baseIdx.get()) return;
+    baseIdx.set(settled);
+    setBaseIndex(settled);
+    onVisibleWeekChange(addWeeksIso(anchorWeekStart, settled));
+  }, [anchorWeekStart, baseIdx, onVisibleWeekChange, pos]);
 
   const goToPage = useCallback(
     (target: number) => {
-      const distance = target - baseIdx.get();
+      // Measured from where the pager is, not from the last committed week:
+      // during a settle those differ, and the committed one is the stale half.
+      const from = Math.round(pos.get());
+      const distance = target - from;
       if (distance === 0) return;
 
       // Only the neighbouring weeks are mounted, so anything further away
       // is a jump rather than a slide: position and week change together
       // and the destination is rendered directly.
       if (Math.abs(distance) > 1) {
-        baseIdx.set(target);
         pos.set(target);
-        setBaseIndex(target);
-        onVisibleWeekChange(addWeeksIso(anchorWeekStart, target));
+        reconcilePage();
         return;
       }
 
       // One week away is the same animation and the same settlement path a
-      // swipe takes: spring first, commit the logical week on arrival.
-      const step = Math.sign(distance);
+      // swipe takes: spring first, reconcile the logical week on arrival.
       pageSettling.set(1);
       pos.set(
-        withSpring(baseIdx.get() + step, PAGE_SPRING, (finished) => {
+        withSpring(from + Math.sign(distance), PAGE_SPRING, () => {
           pageSettling.set(0);
-          if (finished) runOnJS(commitWeek)(step);
+          runOnJS(reconcilePage)();
         }),
       );
     },
-    [anchorWeekStart, baseIdx, commitWeek, onVisibleWeekChange, pageSettling, pos],
+    [pageSettling, pos, reconcilePage],
   );
 
   /**
@@ -341,7 +352,7 @@ export function TimetableSurface({
   useImperativeHandle(
     ref,
     () => ({
-      goToRelativeWeek: (offset: number) => goToPage(baseIdx.get() + offset),
+      goToRelativeWeek: (offset: number) => goToPage(Math.round(pos.get()) + offset),
       goToCurrentWeek: () => goToPage(0),
       settleDeferredDrag: (revert: boolean) => {
         const deferred = deferredOrigin.get();
@@ -356,8 +367,34 @@ export function TimetableSurface({
         setInteraction({ kind: "eventSelected", occurrenceId: deferred.occurrenceId, ...deferred.origin });
       },
     }),
-    [baseIdx, deferredOrigin, goToPage, setInteraction],
+    [deferredOrigin, goToPage, pos, setInteraction],
   );
+
+  /**
+   * The week the user is actually looking at, resolved at the moment it is
+   * asked for.
+   *
+   * The pages are *mounted* from `baseIndex` but *positioned* from `pos`, so
+   * whenever those two disagree the page that slides into the middle is a
+   * neighbour, drawing a week that `visibleWeekStart` does not name. The
+   * grid looks perfectly right while every lookup keyed on the committed
+   * week answers for the page that just left the screen — which is how a tap
+   * on an empty slot could open the editor of a class that is not there.
+   *
+   * `pos` is the same value the pages place themselves by, so reading it
+   * here asks the one question that cannot be a render behind: which page is
+   * under the finger. Only gestures use this, and only once each, so
+   * re-resolving a single week is not on any hot path.
+   */
+  const pageUnderFinger = useCallback(() => {
+    const weekStart = addWeeksIso(anchorWeekStart, Math.round(pos.get()));
+    const dates = weekDatesFrom(weekStart);
+    return {
+      weekStart,
+      dates,
+      blocks: resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
+    };
+  }, [anchorWeekStart, courses, exceptions, placements, pos, preview, timeSlots, weekdays]);
 
   /**
    * Whether a proposed range is free.
@@ -372,17 +409,18 @@ export function TimetableSurface({
     (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
       if (dayIndex < 0 || dayIndex >= dayCount || startIndex < 0 || startIndex + span > slotCount) return false;
 
-      const subject = occurrenceId ? visibleBlocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
+      const page = pageUnderFinger();
+      const subject = occurrenceId ? page.blocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
       if (subject && !subject.exception) {
         return canPlaceClass({
           placementId: subject.placement.id,
           weekday: weekdays[dayIndex],
           timeSlotId: timeSlots[startIndex].id,
           slotSpan: span,
-          date: visibleDates[weekdays[dayIndex]],
+          date: page.dates[weekdays[dayIndex]],
         });
       }
-      return !visibleBlocks.some(
+      return !page.blocks.some(
         (block) =>
           block.occurrenceId !== occurrenceId &&
           block.dayIndex === dayIndex &&
@@ -390,24 +428,23 @@ export function TimetableSurface({
           block.startIndex < startIndex + span,
       );
     },
-    [canPlaceClass, dayCount, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
+    [canPlaceClass, dayCount, pageUnderFinger, slotCount, timeSlots, weekdays],
   );
 
   const openEditorFor = useCallback(
-    (dayIndex: number, startIndex: number, span: number, occurrenceId: string | null) => {
+    (dates: Record<Weekday, string>, dayIndex: number, startIndex: number, span: number, existing?: WeekBlock) => {
       const weekday = weekdays[dayIndex];
-      const existing = occurrenceId ? visibleBlocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
       setInteraction(IDLE);
       onOpenEditor({
         weekday,
-        date: visibleDates[weekday],
+        date: dates[weekday],
         timeSlot: timeSlots[startIndex],
         slotSpan: span,
         endTime: timeSlots[Math.min(slotCount - 1, startIndex + span - 1)].endTime,
         existing,
       });
     },
-    [onOpenEditor, setInteraction, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
+    [onOpenEditor, setInteraction, slotCount, timeSlots, weekdays],
   );
 
   /**
@@ -449,31 +486,34 @@ export function TimetableSurface({
         return;
       }
 
-      const existing = visibleBlocks.find(
+      // Resolved from the pager itself, so the class this tap is judged
+      // against is the one actually drawn under it.
+      const page = pageUnderFinger();
+      const existing = page.blocks.find(
         (block) => block.dayIndex === dayIndex && slotIndex >= block.startIndex && slotIndex < block.startIndex + block.span,
       );
       if (existing) {
-        openEditorFor(existing.dayIndex, existing.startIndex, existing.span, existing.occurrenceId);
+        openEditorFor(page.dates, existing.dayIndex, existing.startIndex, existing.span, existing);
         return;
       }
 
       const active = interaction;
       const insideActive =
         (active.kind === "provisionalSelected" || active.kind === "eventSelected") &&
-        active.weekStart === visibleWeekStart &&
+        active.weekStart === page.weekStart &&
         active.dayIndex === dayIndex &&
         slotIndex >= active.startIndex &&
         slotIndex < active.startIndex + active.span;
 
       if (insideActive && active.kind === "provisionalSelected") {
-        openEditorFor(active.dayIndex, active.startIndex, active.span, null);
+        openEditorFor(page.dates, active.dayIndex, active.startIndex, active.span);
         return;
       }
 
-      setInteraction({ kind: "provisionalSelected", weekStart: visibleWeekStart, dayIndex, startIndex: slotIndex, span: 1 });
+      setInteraction({ kind: "provisionalSelected", weekStart: page.weekStart, dayIndex, startIndex: slotIndex, span: 1 });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [columnWidth, dayCount, interaction, openEditorFor, setInteraction, slotCount, visibleBlocks, visibleWeekStart],
+    [columnWidth, dayCount, interaction, openEditorFor, pageUnderFinger, setInteraction, slotCount],
   );
 
   /** idle | provisionalSelected --long press on empty grid--> creatingRange */
@@ -483,7 +523,7 @@ export function TimetableSurface({
       setSubject(null);
       setInteraction({
         kind: "creatingRange",
-        weekStart: visibleWeekStart,
+        weekStart: pageUnderFinger().weekStart,
         dayIndex,
         anchorIndex,
         startIndex: anchorIndex,
@@ -491,14 +531,15 @@ export function TimetableSurface({
         valid: rangeIsFree(null, dayIndex, anchorIndex, 1),
       });
     },
-    [rangeIsFree, setInteraction, visibleWeekStart],
+    [pageUnderFinger, rangeIsFree, setInteraction],
   );
 
   /** eventSelected --handle drag--> resizingStart | resizingEnd */
   const beginResize = useCallback(
     (edge: "start" | "end", occurrenceId: string, dayIndex: number, startIndex: number, span: number) => {
-      const origin: RangeGeometry = { weekStart: visibleWeekStart, dayIndex, startIndex, span };
-      const block = visibleBlocks.find((candidate) => candidate.occurrenceId === occurrenceId);
+      const page = pageUnderFinger();
+      const origin: RangeGeometry = { weekStart: page.weekStart, dayIndex, startIndex, span };
+      const block = page.blocks.find((candidate) => candidate.occurrenceId === occurrenceId);
       setSubject(
         block
           ? { occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
@@ -508,14 +549,14 @@ export function TimetableSurface({
         kind: edge === "start" ? "resizingStart" : "resizingEnd",
         occurrenceId,
         origin,
-        weekStart: visibleWeekStart,
+        weekStart: page.weekStart,
         dayIndex,
         startIndex,
         span,
         valid: true,
       });
     },
-    [setInteraction, visibleBlocks, visibleWeekStart],
+    [pageUnderFinger, setInteraction],
   );
 
   /**
@@ -525,36 +566,42 @@ export function TimetableSurface({
   const beginHold = useCallback(
     (occurrenceId: string, dayIndex: number, startIndex: number, span: number) => {
       activationTick();
+      const page = pageUnderFinger();
       const alreadySelected =
         interaction.kind === "eventSelected" &&
         interaction.occurrenceId === occurrenceId &&
-        interaction.weekStart === visibleWeekStart;
+        interaction.weekStart === page.weekStart;
 
-      const block = visibleBlocks.find((candidate) => candidate.occurrenceId === occurrenceId);
-      setSubject(
-        block
-          ? { occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
-          : { occurrenceId },
-      );
+      const block = page.blocks.find((candidate) => candidate.occurrenceId === occurrenceId);
+      // The worklet hit-tests against `hitBlocks`, which is published from an
+      // effect and so describes the previous render. A hold that lands on a
+      // class the week on screen does not actually contain is that lag, not
+      // an intention: selecting it would offer resize handles for a block
+      // nobody can see.
+      if (!block) {
+        setInteraction(IDLE);
+        return;
+      }
+      setSubject({ occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId });
 
       if (!alreadySelected) {
         // Selection only: the class must not move because it was picked.
-        setInteraction({ kind: "eventSelected", occurrenceId, weekStart: visibleWeekStart, dayIndex, startIndex, span });
+        setInteraction({ kind: "eventSelected", occurrenceId, weekStart: page.weekStart, dayIndex, startIndex, span });
         return;
       }
 
       setInteraction({
         kind: "movingEvent",
         occurrenceId,
-        origin: { weekStart: visibleWeekStart, dayIndex, startIndex, span },
-        weekStart: visibleWeekStart,
+        origin: { weekStart: page.weekStart, dayIndex, startIndex, span },
+        weekStart: page.weekStart,
         dayIndex,
         startIndex,
         span,
         valid: true,
       });
     },
-    [interaction, setInteraction, visibleBlocks, visibleWeekStart],
+    [interaction, pageUnderFinger, setInteraction],
   );
 
   /** One boundary crossed: tick once, and re-check the proposed range. */
@@ -608,7 +655,8 @@ export function TimetableSurface({
 
       const { origin, occurrenceId } = current;
       const unchanged = dayIndex === origin.dayIndex && startIndex === origin.startIndex && span === origin.span;
-      const occurrence = occurrenceId ? visibleBlocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
+      const page = pageUnderFinger();
+      const occurrence = occurrenceId ? page.blocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
       if (!occurrenceId || !occurrence || unchanged || !rangeIsFree(occurrenceId, dayIndex, startIndex, span)) {
         setInteraction(
           occurrenceId ? { kind: "eventSelected", occurrenceId, ...origin } : { kind: "provisionalSelected", ...origin },
@@ -623,7 +671,7 @@ export function TimetableSurface({
         weekday,
         timeSlotId: timeSlots[startIndex].id,
         slotSpan: span,
-        date: visibleDates[weekday],
+        date: page.dates[weekday],
         source: current.kind === "movingEvent" ? "move" : "resize",
       });
       deferredOrigin.set(outcome === "deferred" ? { occurrenceId, origin } : null);
@@ -635,8 +683,7 @@ export function TimetableSurface({
       rangeIsFree,
       setInteraction,
       timeSlots,
-      visibleBlocks,
-      visibleDates,
+      pageUnderFinger,
       weekdays,
     ],
   );
@@ -870,13 +917,14 @@ export function TimetableSurface({
 
       if (!success) {
         // Cut short rather than released — a second finger, most likely.
-        // Return to the week that is already current instead of committing
-        // one, and let the fling die where it is.
+        // Return to the page the drag began on instead of committing one,
+        // and let the fling die where it is.
         if (mode === PAN_PAGE) {
           pageSettling.set(1);
           pos.set(
-            withSpring(baseIdx.get(), PAGE_SPRING, () => {
+            withSpring(Math.round(panStartPos.get()), PAGE_SPRING, () => {
               pageSettling.set(0);
+              runOnJS(reconcilePage)();
             }),
           );
         }
@@ -884,7 +932,11 @@ export function TimetableSurface({
       }
       if (mode === PAN_PAGE) {
         if (size.width <= 0) return;
-        const travelled = pos.get() - baseIdx.get();
+        // Measured from the page the drag started on. Taking it from the
+        // committed week instead would misjudge every drag that began while
+        // an earlier settle was still running.
+        const from = Math.round(panStartPos.get());
+        const travelled = pos.get() - from;
         const velocityPages = -event.velocityX / size.width;
         const projected = travelled + velocityPages * PAGE_VELOCITY_PROJECTION_SECONDS;
 
@@ -896,9 +948,9 @@ export function TimetableSurface({
         // settle is a continuation of the drag rather than a new animation.
         pageSettling.set(1);
         pos.set(
-          withSpring(baseIdx.get() + direction, { ...PAGE_SPRING, velocity: velocityPages }, (finished) => {
+          withSpring(from + direction, { ...PAGE_SPRING, velocity: velocityPages }, () => {
             pageSettling.set(0);
-            if (finished && direction !== 0) runOnJS(commitWeek)(direction);
+            runOnJS(reconcilePage)();
           }),
         );
         return;
@@ -971,14 +1023,21 @@ export function TimetableSurface({
       if (axis.get() === AXIS.pinch) {
         axis.set(AXIS.none);
         // A pinch can leave the pager fractionally off if it interrupted a
-        // settle; put it back on its own week without committing anything.
-        if (pos.get() !== baseIdx.get()) {
+        // settle; put it back on the nearest whole page. That page is
+        // whichever one is on screen — the pinch froze the pager, it did not
+        // undo the swipe that was already under way — so the week is
+        // reconciled to it rather than dragged back to the previous one.
+        const settled = Math.round(pos.get());
+        if (pos.get() !== settled) {
           pageSettling.set(1);
           pos.set(
-            withSpring(baseIdx.get(), PAGE_SPRING, () => {
+            withSpring(settled, PAGE_SPRING, () => {
               pageSettling.set(0);
+              runOnJS(reconcilePage)();
             }),
           );
+        } else {
+          runOnJS(reconcilePage)();
         }
       }
     });

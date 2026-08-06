@@ -13,6 +13,7 @@ import {
   validateClassEditDraft,
   type PendingClassEdit,
 } from "@/domain/classEdit";
+import { defaultSeriesStartDate } from "@/domain/recurrence";
 import { WEEKDAY_LABEL, type Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
 import { useAppState } from "@/state/AppStateContext";
@@ -108,8 +109,16 @@ function ClassEditorForm({
   // been moved or altered on its own.
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(existing?.basePlacement.recurrenceType ?? "weekly");
   const [startsOn, setStartsOn] = useState(
-    existing && existing.basePlacement.recurrenceType !== "once" ? existing.basePlacement.startsOn : term.startDate,
+    existing && existing.basePlacement.recurrenceType !== "once"
+      ? existing.basePlacement.startsOn
+      : defaultSeriesStartDate(existing?.basePlacement.recurrenceType ?? "weekly", date, term.startDate),
   );
+  /**
+   * Whether the start date is the user's own choice. An existing series
+   * always owns its start; a new one follows the recurrence type until the
+   * user picks a date, after which it stops moving underneath them.
+   */
+  const [startDateIsOwn, setStartDateIsOwn] = useState(Boolean(existing));
   const [endsOn, setEndsOn] = useState(existing?.basePlacement.endsOn ?? term.estimatedEndDate);
   // A one-off defaults to the day that was tapped, not the start of term.
   const [onceDate, setOnceDate] = useState(
@@ -132,6 +141,23 @@ function ClassEditorForm({
 
   function togglePicker(picker: Exclude<OpenPicker, null>) {
     setOpenPicker((current) => (current === picker ? null : picker));
+  }
+
+  /**
+   * Choosing "every 2 weeks" also chooses which half of the fortnight the
+   * class falls on, and the start date is where that is recorded — so a new
+   * class re-anchors on the week the user tapped. Left at the start of term
+   * it would land on the same alternating weeks as every other one, and
+   * collide with all of them.
+   */
+  function handleRecurrenceChange(next: RecurrenceType) {
+    setRecurrenceType(next);
+    if (!startDateIsOwn) setStartsOn(defaultSeriesStartDate(next, date, term.startDate));
+  }
+
+  function handleStartDateChange(value: string) {
+    setStartDateIsOwn(true);
+    setStartsOn(value);
   }
 
   function handleSave() {
@@ -266,7 +292,12 @@ function ClassEditorForm({
 
               <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Recurrence</Text>
               <View style={{ marginBottom: spacing.md }}>
-                <SegmentedControl options={RECURRENCE_OPTIONS} value={recurrenceType} onChange={setRecurrenceType} accessibilityLabel="Recurrence" />
+                <SegmentedControl
+                  options={RECURRENCE_OPTIONS}
+                  value={recurrenceType}
+                  onChange={handleRecurrenceChange}
+                  accessibilityLabel="Recurrence"
+                />
               </View>
 
               {isOneOff ? (
@@ -282,9 +313,12 @@ function ClassEditorForm({
                   <InlineDateField
                     label="Start date"
                     value={startsOn}
-                    onChange={setStartsOn}
+                    onChange={handleStartDateChange}
                     expanded={openPicker === "startsOn"}
                     onToggle={() => togglePicker("startsOn")}
+                    helperText={
+                      recurrenceType === "biweekly" ? "Sets which alternating week this class falls on" : undefined
+                    }
                   />
                   <InlineDateField
                     label="End date"

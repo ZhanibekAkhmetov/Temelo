@@ -204,9 +204,8 @@ export interface EditableTimetable {
 
 export type EditResult = { ok: true; next: EditableTimetable } | { ok: false; error: string };
 
-function conflictMessage(courses: Course[], placement: Placement | undefined, courseName?: string): string {
-  const name = courseName ?? courses.find((course) => course.id === placement?.courseId)?.name ?? "another class";
-  return `This slot is already used by ${name}.`;
+function conflictMessage(conflict: Occurrence): string {
+  return `This slot is already used by ${conflict.course.name}.`;
 }
 
 /**
@@ -244,13 +243,13 @@ function applyOnlyThis(current: EditableTimetable, draft: ClassEditDraft, base: 
   const blocked = onlyThisBlockedReason(draft);
   if (blocked) return { ok: false, error: blocked };
 
-  const conflict = findOccurrenceConflict(current, current.timeSlots, {
+  const conflict = findOccurrenceConflict(current, {
     occurrenceId: occurrenceIdFor(base.id, draft.occurrenceDate),
     date: draft.effectiveDate,
     timeSlotId: draft.timeSlotId,
     slotSpan: draft.slotSpan,
   });
-  if (conflict) return { ok: false, error: conflictMessage(current.courses, undefined, conflict.course.name) };
+  if (conflict) return { ok: false, error: conflictMessage(conflict) };
 
   const overrideOf = <T,>(value: T, seriesValue: T): T | null => (value === seriesValue ? null : value);
   const overrides = {
@@ -341,8 +340,8 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
 
   // The old series is already truncated in `placements`, so the two halves
   // are checked against each other as the two separate series they now are.
-  const conflict = findPlacementConflict(current.timeSlots, placements, { ...nextPlacement, placementId: nextPlacement.id });
-  if (conflict) return { ok: false, error: conflictMessage(current.courses, conflict) };
+  const conflict = findPlacementConflict({ ...current, placements }, { ...nextPlacement, placementId: nextPlacement.id });
+  if (conflict) return { ok: false, error: conflictMessage(conflict) };
 
   /*
    * One-off exceptions from the split point onwards belonged to the old
@@ -397,8 +396,8 @@ function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Place
   // Against everything except itself: the stored copy of this very series
   // is still the unedited one, and it would otherwise clash with its own
   // replacement whenever the schedule did not move at all.
-  const conflict = findPlacementConflict(current.timeSlots, current.placements, { ...nextPlacement, placementId: base.id });
-  if (conflict) return { ok: false, error: conflictMessage(current.courses, conflict) };
+  const conflict = findPlacementConflict(current, { ...nextPlacement, placementId: base.id });
+  if (conflict) return { ok: false, error: conflictMessage(conflict) };
 
   return {
     ok: true,

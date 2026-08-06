@@ -1,21 +1,34 @@
 /**
- * "Is this slot free?" asked at the two levels the app actually edits at.
+ * "Is this slot free?"
  *
- * A series-level change has to hold for every date the series meets, so it
- * is checked against recurrence overlap. A single-occurrence change only has
- * to hold on one date, so it is checked against what that one date resolves
- * to — which is stricter in one direction and far looser in the other, and
- * getting them the same way round is the whole point of separating them.
+ * One rule answers it, at both levels the app edits at: two classes clash
+ * exactly when they occupy a shared period on a shared *concrete date*.
+ * Nothing here compares one recurrence rule against another. A candidate is
+ * expanded into the dates it meets on, those dates are resolved into the
+ * occurrences that actually happen — exceptions folded in — and the two are
+ * intersected.
+ *
+ * Going through real dates is what makes the awkward cases fall out for
+ * free rather than each needing its own clause: two alternating classes on
+ * opposite weeks share a weekday, a period and a date range but never a
+ * date; a one-off clashes only on its own day, whatever weekday its record
+ * happens to name; and an occurrence that has been moved elsewhere leaves
+ * its original slot free, because resolving that date no longer produces it.
  */
 
 import { resolveOccurrences, type Occurrence, type OccurrenceSource } from "@/domain/occurrence";
-import { slotsCollide, type OccupiedSlot } from "@/domain/recurrence";
+import { occurrenceDates } from "@/domain/recurrence";
 import { occupiedSlotIds } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
-import type { Placement, RecurrenceType, TimeSlot } from "@/types/models";
+import type { RecurrenceType, TimeSlot } from "@/types/models";
+
+/** Everything a clash check reads: the stored timetable, exceptions included. */
+export interface ConflictSource extends OccurrenceSource {
+  timeSlots: TimeSlot[];
+}
 
 export interface PlacementCandidate {
-  /** The placement being moved, so it is not counted against itself. */
+  /** The series being edited, so it is never counted against itself. */
   placementId?: string;
   weekday: Weekday;
   timeSlotId: string;
@@ -25,54 +38,68 @@ export interface PlacementCandidate {
   endsOn: string;
 }
 
-/**
- * Two classes may share a weekday and period as long as they never actually
- * meet on the same date — an alternating pair of biweekly classes, or a
- * one-off in a week its neighbour skips.
- */
-export function findPlacementConflict(
-  timeSlots: TimeSlot[],
-  placements: Placement[],
-  candidate: PlacementCandidate,
-): Placement | undefined {
-  const occupied: OccupiedSlot = {
-    weekday: candidate.weekday,
-    slotIds: occupiedSlotIds(timeSlots, candidate.timeSlotId, candidate.slotSpan),
-    recurrenceType: candidate.recurrenceType,
-    startsOn: candidate.startsOn,
-    endsOn: candidate.endsOn,
-  };
-
-  return placements.find(
-    (placement) =>
-      !placement.deletedAt &&
-      placement.id !== candidate.placementId &&
-      slotsCollide(
-        { ...placement, slotIds: occupiedSlotIds(timeSlots, placement.timeSlotId, placement.slotSpan) },
-        occupied,
-      ),
-  );
-}
-
 export interface OccurrenceCandidate {
-  /** The occurrence being moved, so it is not counted against itself. */
+  /** The occurrence being moved, so it is never counted against itself. */
   occurrenceId: string;
   date: string;
   timeSlotId: string;
   slotSpan: number;
 }
 
-/** Anything already meeting on that one date, in any of the same periods. */
-export function findOccurrenceConflict(
-  source: OccurrenceSource,
-  timeSlots: TimeSlot[],
-  candidate: OccurrenceCandidate,
+/**
+ * The first occurrence standing in the way of something that would occupy
+ * `slotSpan` periods from `timeSlotId` on each of `dates`.
+ *
+ * Every period of the span is compared, not just the one it starts in: a
+ * two-period class reaches into the period below it, and a class sitting
+ * only there is just as much in the way.
+ */
+function firstClashOn(
+  source: ConflictSource,
+  dates: string[],
+  timeSlotId: string,
+  slotSpan: number,
+  isSelf: (occurrence: Occurrence) => boolean,
 ): Occurrence | undefined {
-  const wanted = occupiedSlotIds(timeSlots, candidate.timeSlotId, candidate.slotSpan);
+  if (dates.length === 0) return undefined;
+  const wanted = occupiedSlotIds(source.timeSlots, timeSlotId, slotSpan);
+  if (wanted.length === 0) return undefined;
 
-  return resolveOccurrences({ ...source, preview: null }, [candidate.date]).find((occurrence) => {
-    if (occurrence.occurrenceId === candidate.occurrenceId) return false;
-    const taken = occupiedSlotIds(timeSlots, occurrence.placement.timeSlotId, occurrence.placement.slotSpan);
+  // An uncommitted edit is a proposal, not a class that is there; nothing is
+  // ever blocked by a preview that may still be cancelled.
+  return resolveOccurrences({ ...source, preview: null }, dates).find((occurrence) => {
+    if (isSelf(occurrence)) return false;
+    const taken = occupiedSlotIds(source.timeSlots, occurrence.placement.timeSlotId, occurrence.placement.slotSpan);
     return taken.some((slotId) => wanted.includes(slotId));
   });
+}
+
+/**
+ * Whether a whole series can occupy a slot — checked on every date it meets,
+ * because a series has to hold on all of them.
+ */
+export function findPlacementConflict(source: ConflictSource, candidate: PlacementCandidate): Occurrence | undefined {
+  return firstClashOn(
+    source,
+    occurrenceDates(candidate),
+    candidate.timeSlotId,
+    candidate.slotSpan,
+    // The series being edited cannot clash with itself, and neither can its
+    // own one-off exceptions — they are the same class.
+    (occurrence) => occurrence.basePlacement.id === candidate.placementId,
+  );
+}
+
+/**
+ * Whether one occurrence can occupy a slot — checked on its single date, so
+ * one lesson may legitimately sit where its own series never could.
+ */
+export function findOccurrenceConflict(source: ConflictSource, candidate: OccurrenceCandidate): Occurrence | undefined {
+  return firstClashOn(
+    source,
+    [candidate.date],
+    candidate.timeSlotId,
+    candidate.slotSpan,
+    (occurrence) => occurrence.occurrenceId === candidate.occurrenceId,
+  );
 }

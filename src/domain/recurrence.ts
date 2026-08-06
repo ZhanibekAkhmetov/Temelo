@@ -18,11 +18,6 @@ export interface RecurringSlot {
   endsOn: string;
 }
 
-/** A placement resolved to the periods it actually occupies. */
-export interface OccupiedSlot extends RecurringSlot {
-  slotIds: string[];
-}
-
 /**
  * Upper bound on the weekly steps a clash check will walk, so a mistyped
  * far-future end date can't turn into a long loop. 520 weeks is ten years.
@@ -78,28 +73,42 @@ export function hasOccurrenceBetween(slot: RecurringSlot, from: string, until: s
 }
 
 /**
- * True when two placements would overlap on the same day — same weekday, at
- * least one period in common, and at least one date where both meet.
- * Checked date by date rather than by weekday alone, so a one-off and a
- * biweekly class can legitimately share a period on weeks where neither
- * actually meets.
+ * Every date a slot actually meets on, in order.
+ *
+ * This is what "do these two clash" is answered from. Comparing recurrence
+ * rules to each other means reasoning about weekday, range and parity all at
+ * once — and a rule whose weekday field disagrees with its own date, which
+ * is every one-off, has no honest answer at that level at all. Two lists of
+ * concrete dates have exactly one question between them: do they share one.
  */
-export function slotsCollide(a: OccupiedSlot, b: OccupiedSlot): boolean {
-  if (a.weekday !== b.weekday) return false;
-  if (!a.slotIds.some((slotId) => b.slotIds.includes(slotId))) return false;
+export function occurrenceDates(slot: RecurringSlot): string[] {
+  if (slot.startsOn > slot.endsOn) return [];
+  // A one-off *is* its date. Its weekday field is decoration and must not be
+  // consulted, because nothing keeps the two in step.
+  if (slot.recurrenceType === "once") return [slot.startsOn];
 
-  const from = a.startsOn > b.startsOn ? a.startsOn : b.startsOn;
-  const until = a.endsOn < b.endsOn ? a.endsOn : b.endsOn;
-  if (from > until) return false;
-
-  let date = firstOccurrenceOnOrAfter(from, a.weekday);
-  for (let step = 0; date <= until && step < MAX_OCCURRENCE_STEPS; step++) {
-    if (occursOn(a, date) && occursOn(b, date)) return true;
+  const dates: string[] = [];
+  let date = firstOccurrenceOnOrAfter(slot.startsOn, slot.weekday);
+  for (let step = 0; date <= slot.endsOn && step < MAX_OCCURRENCE_STEPS; step++) {
+    if (occursOn(slot, date)) dates.push(date);
     date = addDaysIso(date, 7);
   }
-  // A one-off sits on a single date that the weekly walk above can miss
-  // when it isn't on the slot's own weekday.
-  if (a.recurrenceType === "once") return occursOn(b, a.startsOn);
-  if (b.recurrenceType === "once") return occursOn(a, b.startsOn);
-  return false;
+  return dates;
+}
+
+/**
+ * The start date a newly created class should carry.
+ *
+ * An every-two-week class meets on alternating weeks counted from its own
+ * first occurrence, so its start date is not merely when it begins — it is
+ * which half of the fortnight it belongs to. Anchoring a new one at the term
+ * start would put every alternating class the user ever creates on the same
+ * half, and so into permanent conflict with each other. The week the user
+ * tapped is the week they meant, so that is the anchor.
+ *
+ * A weekly class meets every week regardless of where it is anchored, so it
+ * keeps starting at the beginning of term; a one-off is simply its own date.
+ */
+export function defaultSeriesStartDate(recurrenceType: RecurrenceType, tappedDate: string, termStart: string): string {
+  return recurrenceType === "weekly" ? termStart : tappedDate;
 }

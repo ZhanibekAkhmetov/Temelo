@@ -4,6 +4,7 @@ import { applyClassEditScope, type ClassEditDraft, type EditScope } from "@/doma
 import { findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
+import type { Occurrence } from "@/domain/occurrence";
 import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
@@ -120,13 +121,17 @@ function buildInitialState(): AppState {
   return createSeedState();
 }
 
-function findConflict(state: AppState, candidate: PlacementCandidate): Placement | undefined {
-  return findPlacementConflict(state.timeSlots, state.placements, candidate);
+/**
+ * The whole stored timetable is handed to the check, exceptions included:
+ * an occurrence that has been moved out of a slot no longer defends it, and
+ * one that has been moved into a slot does.
+ */
+function findConflict(state: AppState, candidate: PlacementCandidate): Occurrence | undefined {
+  return findPlacementConflict(state, candidate);
 }
 
-function conflictError(state: AppState, conflict: Placement): ActionResult {
-  const course = state.courses.find((candidate) => candidate.id === conflict.courseId);
-  return { ok: false, error: `This slot is already used by ${course?.name ?? "another class"}.` };
+function conflictError(conflict: Occurrence): ActionResult {
+  return { ok: false, error: `This slot is already used by ${conflict.course.name}.` };
 }
 
 const AppStateContext = createContext<AppStateContextValue | null>(null);
@@ -247,7 +252,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         startsOn: input.startsOn,
         endsOn: input.endsOn,
       });
-      if (conflict) return conflictError(state, conflict);
+      if (conflict) return conflictError(conflict);
 
       const now = new Date().toISOString();
 
@@ -339,7 +344,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         startsOn: oneOff ? input.date : existing.startsOn,
         endsOn: oneOff ? input.date : existing.endsOn,
       });
-      return conflict ? conflictError(state, conflict) : { ok: true };
+      return conflict ? conflictError(conflict) : { ok: true };
     };
 
     /**
@@ -368,7 +373,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         recurrenceType: existing.recurrenceType,
         ...dates,
       });
-      if (conflict) return conflictError(state, conflict);
+      if (conflict) return conflictError(conflict);
 
       const now = new Date().toISOString();
       setState((prev) => ({
