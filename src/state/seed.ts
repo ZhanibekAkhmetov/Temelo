@@ -12,7 +12,7 @@ import { createId } from "@/domain/id";
 import type { Weekday } from "@/domain/week";
 import { createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
-import type { AcademicTerm, Course, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
+import type { AcademicTerm, Course, OccurrenceException, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
 
 const TERM_STARTS_WEEKS_AGO = 2;
 const TERM_LENGTH_WEEKS = 18;
@@ -47,6 +47,7 @@ export interface SeededState {
   timeSlots: TimeSlot[];
   courses: Course[];
   placements: Placement[];
+  exceptions: OccurrenceException[];
 }
 
 /**
@@ -115,5 +116,8 @@ export function createSeedState(): SeededState {
     timeSlots,
     courses,
     placements,
+    // The sample timetable is a plain series set; exceptions only ever come
+    // from an "only this occurrence" edit the user makes.
+    exceptions: [],
   };
 }

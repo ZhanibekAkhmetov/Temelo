@@ -4,8 +4,10 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { cancelAnimation, runOnJS, useSharedValue, withDecay, withSpring } from "react-native-reanimated";
 
 import { addWeeksIso, weekDatesFrom } from "@/domain/calendar";
+import type { EditSource } from "@/domain/classEdit";
+import type { OccurrencePreview } from "@/domain/occurrence";
 import { findCurrentPeriodIndex } from "@/domain/time";
-import { resolveWeekBlocks } from "@/domain/timetable";
+import { resolveWeekBlocks, type ScheduledClass, type WeekBlock } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
 import {
   clampValue,
@@ -39,7 +41,7 @@ import { TimeGutter } from "@/features/timetable/TimeGutter";
 import type { HitBlock, PageOverlay, SelectedCell } from "@/features/timetable/types";
 import { WeekPage } from "@/features/timetable/WeekPage";
 import { activationTick, selectionTick } from "@/util/haptics";
-import type { Course, Placement, TimeSlot } from "@/types/models";
+import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 /**
  * What a touch landed on. The pan decides this once, at finger-down, while
@@ -73,6 +75,12 @@ const PAGE_OFFSETS = [-1, 0, 1];
 export interface TimetableSurfaceHandle {
   goToRelativeWeek: (offset: number) => void;
   goToCurrentWeek: () => void;
+  /**
+   * Closes out a drag whose commit was deferred to a scope choice: `revert`
+   * puts the selection back where the drag started, otherwise the edit is
+   * done and nothing stays selected.
+   */
+  settleDeferredDrag: (revert: boolean) => void;
 }
 
 interface TimetableSurfaceProps {
@@ -82,14 +90,35 @@ interface TimetableSurfaceProps {
   timeSlots: TimeSlot[];
   placements: Placement[];
   courses: Course[];
+  exceptions: OccurrenceException[];
+  /** An edit awaiting a scope choice, drawn where it would land. */
+  preview: OccurrencePreview | null;
   today: string;
   now: string;
   onVisibleWeekChange: (weekStartIso: string) => void;
   onOpenEditor: (selection: SelectedCell) => void;
-  onMoveClass: (input: PlacementPosition) => void;
+  /**
+   * A settled drag or resize. Returns "deferred" when it opened a question
+   * instead of changing anything, so the surface knows to keep the origin
+   * for a possible cancel.
+   */
+  onMoveClass: (move: OccurrenceMove) => MoveOutcome;
   /** Whether a proposed position is free, checked against recurrence overlap. */
   canPlaceClass: (input: PlacementPosition) => boolean;
   ref?: Ref<TimetableSurfaceHandle>;
+}
+
+export type MoveOutcome = "committed" | "deferred";
+
+/** Where a drag or resize left one occurrence of one class. */
+export interface OccurrenceMove {
+  occurrence: ScheduledClass;
+  weekday: Weekday;
+  timeSlotId: string;
+  slotSpan: number;
+  /** Date in the displayed week the block was dropped on. */
+  date: string;
+  source: EditSource;
 }
 
 export interface PlacementPosition {
@@ -97,6 +126,8 @@ export interface PlacementPosition {
   weekday: Weekday;
   timeSlotId: string;
   slotSpan: number;
+  /** Destination date in the displayed week. */
+  date: string;
 }
 
 /**
@@ -111,6 +142,8 @@ export function TimetableSurface({
   timeSlots,
   placements,
   courses,
+  exceptions,
+  preview,
   today,
   now,
   onVisibleWeekChange,
@@ -196,8 +229,8 @@ export function TimetableSurface({
 
   const visibleDates = useMemo(() => weekDatesFrom(visibleWeekStart), [visibleWeekStart]);
   const visibleBlocks = useMemo(
-    () => resolveWeekBlocks({ weekdays, dates: visibleDates, placements, courses, timeSlots }),
-    [weekdays, visibleDates, placements, courses, timeSlots],
+    () => resolveWeekBlocks({ weekdays, dates: visibleDates, placements, courses, exceptions, timeSlots, preview }),
+    [weekdays, visibleDates, placements, courses, exceptions, timeSlots, preview],
   );
 
   // Hit-testing data for the gesture worklets: only the week on screen can
@@ -205,7 +238,7 @@ export function TimetableSurface({
   useEffect(() => {
     hitBlocks.set(
       visibleBlocks.map((block) => ({
-        placementId: block.placement.id,
+        occurrenceId: block.occurrenceId,
         dayIndex: block.dayIndex,
         startIndex: block.startIndex,
         span: block.span,
@@ -221,7 +254,7 @@ export function TimetableSurface({
     selectionSV.set(
       onVisibleWeek && (interaction.kind === "provisionalSelected" || interaction.kind === "eventSelected")
         ? {
-            placementId: interaction.kind === "eventSelected" ? interaction.placementId : null,
+            occurrenceId: interaction.kind === "eventSelected" ? interaction.occurrenceId : null,
             dayIndex: interaction.dayIndex,
             startIndex: interaction.startIndex,
             span: interaction.span,
@@ -253,96 +286,165 @@ export function TimetableSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bodyHeight, slotCount, timeSlots]);
 
-  /** The settled week only changes here, once a page has stopped moving. */
-  const commitWeek = useCallback(
-    (direction: number) => {
-      if (direction === 0) return;
-      const next = baseIdx.get() + direction;
-      baseIdx.set(next);
-      setBaseIndex(next);
-      onVisibleWeekChange(addWeeksIso(anchorWeekStart, next));
-    },
-    [anchorWeekStart, baseIdx, onVisibleWeekChange],
-  );
+  /**
+   * Brings the committed week into line with the page the pager is actually
+   * resting on. Every settle ends here, however it got there.
+   *
+   * This is deliberately absolute and idempotent rather than "advance by
+   * one, if the animation reported that it finished". A page spring is
+   * cancelled routinely — a second swipe during the settle, an arrow press,
+   * a pinch that freezes the pager — and a relative commit that only runs on
+   * a clean finish is simply dropped when that happens. The pager still ends
+   * up on the new page, so the week on screen and the week the rest of this
+   * component believes in drift apart, and stay apart: hit-testing,
+   * `visibleBlocks` and the editor all keep answering for the previous week
+   * while the user looks at the next one. Re-deriving the week from where
+   * the pager truly is cannot drift.
+   */
+  const reconcilePage = useCallback(() => {
+    const settled = Math.round(pos.get());
+    if (settled === baseIdx.get()) return;
+    baseIdx.set(settled);
+    setBaseIndex(settled);
+    onVisibleWeekChange(addWeeksIso(anchorWeekStart, settled));
+  }, [anchorWeekStart, baseIdx, onVisibleWeekChange, pos]);
 
   const goToPage = useCallback(
     (target: number) => {
-      const distance = target - baseIdx.get();
+      // Measured from where the pager is, not from the last committed week:
+      // during a settle those differ, and the committed one is the stale half.
+      const from = Math.round(pos.get());
+      const distance = target - from;
       if (distance === 0) return;
 
       // Only the neighbouring weeks are mounted, so anything further away
       // is a jump rather than a slide: position and week change together
       // and the destination is rendered directly.
       if (Math.abs(distance) > 1) {
-        baseIdx.set(target);
         pos.set(target);
-        setBaseIndex(target);
-        onVisibleWeekChange(addWeeksIso(anchorWeekStart, target));
+        reconcilePage();
         return;
       }
 
       // One week away is the same animation and the same settlement path a
-      // swipe takes: spring first, commit the logical week on arrival.
-      const step = Math.sign(distance);
+      // swipe takes: spring first, reconcile the logical week on arrival.
       pageSettling.set(1);
       pos.set(
-        withSpring(baseIdx.get() + step, PAGE_SPRING, (finished) => {
+        withSpring(from + Math.sign(distance), PAGE_SPRING, () => {
           pageSettling.set(0);
-          if (finished) runOnJS(commitWeek)(step);
+          runOnJS(reconcilePage)();
         }),
       );
     },
-    [anchorWeekStart, baseIdx, commitWeek, onVisibleWeekChange, pageSettling, pos],
+    [pageSettling, pos, reconcilePage],
   );
+
+  /**
+   * Where a drag that has not been committed yet started, kept only for as
+   * long as the scope question is open — it is what "Cancel" puts back.
+   *
+   * A shared value rather than a ref for the same reason `latestInteraction`
+   * is one: it is written from the callback a gesture hands its release to,
+   * which is reachable from worklets built during render.
+   */
+  const deferredOrigin = useSharedValue<{ occurrenceId: string; origin: RangeGeometry } | null>(null);
 
   useImperativeHandle(
     ref,
     () => ({
-      goToRelativeWeek: (offset: number) => goToPage(baseIdx.get() + offset),
+      goToRelativeWeek: (offset: number) => goToPage(Math.round(pos.get()) + offset),
       goToCurrentWeek: () => goToPage(0),
+      settleDeferredDrag: (revert: boolean) => {
+        const deferred = deferredOrigin.get();
+        deferredOrigin.set(null);
+        // Committed edits leave nothing selected: after a series split the
+        // occurrence under the selection is no longer the one that was
+        // dragged, and a stale selection would offer handles for it.
+        if (!revert || !deferred) {
+          setInteraction(IDLE);
+          return;
+        }
+        setInteraction({ kind: "eventSelected", occurrenceId: deferred.occurrenceId, ...deferred.origin });
+      },
     }),
-    [baseIdx, goToPage],
+    [deferredOrigin, goToPage, pos, setInteraction],
   );
 
   /**
-   * Whether a proposed range is free. An existing class is checked against
-   * recurrence overlap through the store; a range that has no placement yet
-   * is checked against what actually meets in the week on screen.
+   * The week the user is actually looking at, resolved at the moment it is
+   * asked for.
+   *
+   * The pages are *mounted* from `baseIndex` but *positioned* from `pos`, so
+   * whenever those two disagree the page that slides into the middle is a
+   * neighbour, drawing a week that `visibleWeekStart` does not name. The
+   * grid looks perfectly right while every lookup keyed on the committed
+   * week answers for the page that just left the screen — which is how a tap
+   * on an empty slot could open the editor of a class that is not there.
+   *
+   * `pos` is the same value the pages place themselves by, so reading it
+   * here asks the one question that cannot be a render behind: which page is
+   * under the finger. Only gestures use this, and only once each, so
+   * re-resolving a single week is not on any hot path.
+   */
+  const pageUnderFinger = useCallback(() => {
+    const weekStart = addWeeksIso(anchorWeekStart, Math.round(pos.get()));
+    const dates = weekDatesFrom(weekStart);
+    return {
+      weekStart,
+      dates,
+      blocks: resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
+    };
+  }, [anchorWeekStart, courses, exceptions, placements, pos, preview, timeSlots, weekdays]);
+
+  /**
+   * Whether a proposed range is free.
+   *
+   * A whole series is checked against recurrence overlap through the store,
+   * because it has to hold on every date it meets. A single occurrence that
+   * has already stepped out of its series — and a range that is not a class
+   * yet — only has to be free on the one date on screen, so it is checked
+   * against what actually meets in the visible week.
    */
   const rangeIsFree = useCallback(
-    (placementId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
+    (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
       if (dayIndex < 0 || dayIndex >= dayCount || startIndex < 0 || startIndex + span > slotCount) return false;
-      if (placementId) {
+
+      const page = pageUnderFinger();
+      const subject = occurrenceId ? page.blocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
+      if (subject && !subject.exception) {
         return canPlaceClass({
-          placementId,
+          placementId: subject.placement.id,
           weekday: weekdays[dayIndex],
           timeSlotId: timeSlots[startIndex].id,
           slotSpan: span,
+          date: page.dates[weekdays[dayIndex]],
         });
       }
-      return !visibleBlocks.some(
+      return !page.blocks.some(
         (block) =>
-          block.dayIndex === dayIndex && startIndex < block.startIndex + block.span && block.startIndex < startIndex + span,
+          block.occurrenceId !== occurrenceId &&
+          block.dayIndex === dayIndex &&
+          startIndex < block.startIndex + block.span &&
+          block.startIndex < startIndex + span,
       );
     },
-    [canPlaceClass, dayCount, slotCount, timeSlots, visibleBlocks, weekdays],
+    [canPlaceClass, dayCount, pageUnderFinger, slotCount, timeSlots, weekdays],
   );
 
   const openEditorFor = useCallback(
-    (dayIndex: number, startIndex: number, span: number, placementId: string | null) => {
+    (dates: Record<Weekday, string>, dayIndex: number, startIndex: number, span: number, existing?: WeekBlock) => {
       const weekday = weekdays[dayIndex];
-      const existing = placementId ? visibleBlocks.find((block) => block.placement.id === placementId) : undefined;
       setInteraction(IDLE);
       onOpenEditor({
         weekday,
-        date: visibleDates[weekday],
+        date: dates[weekday],
         timeSlot: timeSlots[startIndex],
         slotSpan: span,
         endTime: timeSlots[Math.min(slotCount - 1, startIndex + span - 1)].endTime,
-        existing: existing ? { placement: existing.placement, course: existing.course } : undefined,
+        existing,
       });
     },
-    [onOpenEditor, setInteraction, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
+    [onOpenEditor, setInteraction, slotCount, timeSlots, weekdays],
   );
 
   /**
@@ -384,31 +486,34 @@ export function TimetableSurface({
         return;
       }
 
-      const existing = visibleBlocks.find(
+      // Resolved from the pager itself, so the class this tap is judged
+      // against is the one actually drawn under it.
+      const page = pageUnderFinger();
+      const existing = page.blocks.find(
         (block) => block.dayIndex === dayIndex && slotIndex >= block.startIndex && slotIndex < block.startIndex + block.span,
       );
       if (existing) {
-        openEditorFor(existing.dayIndex, existing.startIndex, existing.span, existing.placement.id);
+        openEditorFor(page.dates, existing.dayIndex, existing.startIndex, existing.span, existing);
         return;
       }
 
       const active = interaction;
       const insideActive =
         (active.kind === "provisionalSelected" || active.kind === "eventSelected") &&
-        active.weekStart === visibleWeekStart &&
+        active.weekStart === page.weekStart &&
         active.dayIndex === dayIndex &&
         slotIndex >= active.startIndex &&
         slotIndex < active.startIndex + active.span;
 
       if (insideActive && active.kind === "provisionalSelected") {
-        openEditorFor(active.dayIndex, active.startIndex, active.span, null);
+        openEditorFor(page.dates, active.dayIndex, active.startIndex, active.span);
         return;
       }
 
-      setInteraction({ kind: "provisionalSelected", weekStart: visibleWeekStart, dayIndex, startIndex: slotIndex, span: 1 });
+      setInteraction({ kind: "provisionalSelected", weekStart: page.weekStart, dayIndex, startIndex: slotIndex, span: 1 });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [columnWidth, dayCount, interaction, openEditorFor, setInteraction, slotCount, visibleBlocks, visibleWeekStart],
+    [columnWidth, dayCount, interaction, openEditorFor, pageUnderFinger, setInteraction, slotCount],
   );
 
   /** idle | provisionalSelected --long press on empty grid--> creatingRange */
@@ -418,7 +523,7 @@ export function TimetableSurface({
       setSubject(null);
       setInteraction({
         kind: "creatingRange",
-        weekStart: visibleWeekStart,
+        weekStart: pageUnderFinger().weekStart,
         dayIndex,
         anchorIndex,
         startIndex: anchorIndex,
@@ -426,31 +531,32 @@ export function TimetableSurface({
         valid: rangeIsFree(null, dayIndex, anchorIndex, 1),
       });
     },
-    [rangeIsFree, setInteraction, visibleWeekStart],
+    [pageUnderFinger, rangeIsFree, setInteraction],
   );
 
   /** eventSelected --handle drag--> resizingStart | resizingEnd */
   const beginResize = useCallback(
-    (edge: "start" | "end", placementId: string, dayIndex: number, startIndex: number, span: number) => {
-      const origin: RangeGeometry = { weekStart: visibleWeekStart, dayIndex, startIndex, span };
-      const block = visibleBlocks.find((candidate) => candidate.placement.id === placementId);
+    (edge: "start" | "end", occurrenceId: string, dayIndex: number, startIndex: number, span: number) => {
+      const page = pageUnderFinger();
+      const origin: RangeGeometry = { weekStart: page.weekStart, dayIndex, startIndex, span };
+      const block = page.blocks.find((candidate) => candidate.occurrenceId === occurrenceId);
       setSubject(
         block
-          ? { placementId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
-          : { placementId },
+          ? { occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
+          : { occurrenceId },
       );
       setInteraction({
         kind: edge === "start" ? "resizingStart" : "resizingEnd",
-        placementId,
+        occurrenceId,
         origin,
-        weekStart: visibleWeekStart,
+        weekStart: page.weekStart,
         dayIndex,
         startIndex,
         span,
         valid: true,
       });
     },
-    [setInteraction, visibleBlocks, visibleWeekStart],
+    [pageUnderFinger, setInteraction],
   );
 
   /**
@@ -458,38 +564,44 @@ export function TimetableSurface({
    * eventSelected --long press on the same class--> movingEvent
    */
   const beginHold = useCallback(
-    (placementId: string, dayIndex: number, startIndex: number, span: number) => {
+    (occurrenceId: string, dayIndex: number, startIndex: number, span: number) => {
       activationTick();
+      const page = pageUnderFinger();
       const alreadySelected =
         interaction.kind === "eventSelected" &&
-        interaction.placementId === placementId &&
-        interaction.weekStart === visibleWeekStart;
+        interaction.occurrenceId === occurrenceId &&
+        interaction.weekStart === page.weekStart;
 
-      const block = visibleBlocks.find((candidate) => candidate.placement.id === placementId);
-      setSubject(
-        block
-          ? { placementId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
-          : { placementId },
-      );
+      const block = page.blocks.find((candidate) => candidate.occurrenceId === occurrenceId);
+      // The worklet hit-tests against `hitBlocks`, which is published from an
+      // effect and so describes the previous render. A hold that lands on a
+      // class the week on screen does not actually contain is that lag, not
+      // an intention: selecting it would offer resize handles for a block
+      // nobody can see.
+      if (!block) {
+        setInteraction(IDLE);
+        return;
+      }
+      setSubject({ occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId });
 
       if (!alreadySelected) {
         // Selection only: the class must not move because it was picked.
-        setInteraction({ kind: "eventSelected", placementId, weekStart: visibleWeekStart, dayIndex, startIndex, span });
+        setInteraction({ kind: "eventSelected", occurrenceId, weekStart: page.weekStart, dayIndex, startIndex, span });
         return;
       }
 
       setInteraction({
         kind: "movingEvent",
-        placementId,
-        origin: { weekStart: visibleWeekStart, dayIndex, startIndex, span },
-        weekStart: visibleWeekStart,
+        occurrenceId,
+        origin: { weekStart: page.weekStart, dayIndex, startIndex, span },
+        weekStart: page.weekStart,
         dayIndex,
         startIndex,
         span,
         valid: true,
       });
     },
-    [interaction, setInteraction, visibleBlocks, visibleWeekStart],
+    [interaction, pageUnderFinger, setInteraction],
   );
 
   /** One boundary crossed: tick once, and re-check the proposed range. */
@@ -502,7 +614,7 @@ export function TimetableSurface({
         return;
       }
       if (current.kind === "resizingStart" || current.kind === "resizingEnd" || current.kind === "movingEvent") {
-        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.placementId, dayIndex, startIndex, span) });
+        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.occurrenceId, dayIndex, startIndex, span) });
       }
     },
     [latestInteraction, rangeIsFree, setInteraction],
@@ -518,6 +630,10 @@ export function TimetableSurface({
    * render that flushes it, so moving the class from there would update the
    * app-state provider while this component is rendering. `settleShaping`
    * guarantees the hand-over happens once, so the write happens once.
+   *
+   * A gesture that was interrupted, changed nothing, or came to rest
+   * somewhere it cannot land returns to where it started and hands nothing
+   * over at all — so none of those can raise the scope question.
    */
   const finishManipulation = useCallback(
     (dayIndex: number, startIndex: number, span: number) => {
@@ -537,24 +653,39 @@ export function TimetableSurface({
       // something else has already settled it: there is nothing to commit.
       if (current.kind !== "resizingStart" && current.kind !== "resizingEnd" && current.kind !== "movingEvent") return;
 
-      const { origin, placementId } = current;
+      const { origin, occurrenceId } = current;
       const unchanged = dayIndex === origin.dayIndex && startIndex === origin.startIndex && span === origin.span;
-      if (!placementId || unchanged || !rangeIsFree(placementId, dayIndex, startIndex, span)) {
+      const page = pageUnderFinger();
+      const occurrence = occurrenceId ? page.blocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
+      if (!occurrenceId || !occurrence || unchanged || !rangeIsFree(occurrenceId, dayIndex, startIndex, span)) {
         setInteraction(
-          placementId ? { kind: "eventSelected", placementId, ...origin } : { kind: "provisionalSelected", ...origin },
+          occurrenceId ? { kind: "eventSelected", occurrenceId, ...origin } : { kind: "provisionalSelected", ...origin },
         );
         return;
       }
 
-      setInteraction({ kind: "eventSelected", placementId, weekStart: origin.weekStart, dayIndex, startIndex, span });
-      onMoveClass({
-        placementId,
-        weekday: weekdays[dayIndex],
+      const weekday = weekdays[dayIndex];
+      setInteraction({ kind: "eventSelected", occurrenceId, weekStart: origin.weekStart, dayIndex, startIndex, span });
+      const outcome = onMoveClass({
+        occurrence,
+        weekday,
         timeSlotId: timeSlots[startIndex].id,
         slotSpan: span,
+        date: page.dates[weekday],
+        source: current.kind === "movingEvent" ? "move" : "resize",
       });
+      deferredOrigin.set(outcome === "deferred" ? { occurrenceId, origin } : null);
     },
-    [latestInteraction, onMoveClass, rangeIsFree, setInteraction, timeSlots, weekdays],
+    [
+      deferredOrigin,
+      latestInteraction,
+      onMoveClass,
+      rangeIsFree,
+      setInteraction,
+      timeSlots,
+      pageUnderFinger,
+      weekdays,
+    ],
   );
 
   /** Period under a surface-relative y, fractional part included. */
@@ -589,7 +720,7 @@ export function TimetableSurface({
     if (height <= 0 || y < DAY_HEADER_HEIGHT || dayIndex < 0 || slotFloat < 0 || slotFloat >= slotCount) return TARGET_CHROME;
 
     const selection = selectionSV.get();
-    if (selection && selection.placementId !== null && selection.dayIndex === dayIndex) {
+    if (selection && selection.occurrenceId !== null && selection.dayIndex === dayIndex) {
       const fingerY = slotFloat * height;
       if (Math.abs(fingerY - selection.startIndex * height) <= HANDLE_TOUCH_RADIUS) return TARGET_HANDLE_START;
       if (Math.abs(fingerY - (selection.startIndex + selection.span) * height) <= HANDLE_TOUCH_RADIUS) return TARGET_HANDLE_END;
@@ -726,7 +857,7 @@ export function TimetableSurface({
       // sideways is still a resize, and it must not scroll the grid away.
       const target = touchTarget.get();
       const selection = selectionSV.get();
-      if ((target === TARGET_HANDLE_START || target === TARGET_HANDLE_END) && selection && selection.placementId !== null) {
+      if ((target === TARGET_HANDLE_START || target === TARGET_HANDLE_END) && selection && selection.occurrenceId !== null) {
         axis.set(AXIS.block);
         panMode.set(target === TARGET_HANDLE_START ? PAN_RESIZE_START : PAN_RESIZE_END);
         dragDay.set(selection.dayIndex);
@@ -738,7 +869,7 @@ export function TimetableSurface({
         suppressTap.set(1);
         runOnJS(beginResize)(
           target === TARGET_HANDLE_START ? "start" : "end",
-          selection.placementId,
+          selection.occurrenceId,
           selection.dayIndex,
           selection.startIndex,
           selection.span,
@@ -786,13 +917,14 @@ export function TimetableSurface({
 
       if (!success) {
         // Cut short rather than released — a second finger, most likely.
-        // Return to the week that is already current instead of committing
-        // one, and let the fling die where it is.
+        // Return to the page the drag began on instead of committing one,
+        // and let the fling die where it is.
         if (mode === PAN_PAGE) {
           pageSettling.set(1);
           pos.set(
-            withSpring(baseIdx.get(), PAGE_SPRING, () => {
+            withSpring(Math.round(panStartPos.get()), PAGE_SPRING, () => {
               pageSettling.set(0);
+              runOnJS(reconcilePage)();
             }),
           );
         }
@@ -800,7 +932,11 @@ export function TimetableSurface({
       }
       if (mode === PAN_PAGE) {
         if (size.width <= 0) return;
-        const travelled = pos.get() - baseIdx.get();
+        // Measured from the page the drag started on. Taking it from the
+        // committed week instead would misjudge every drag that began while
+        // an earlier settle was still running.
+        const from = Math.round(panStartPos.get());
+        const travelled = pos.get() - from;
         const velocityPages = -event.velocityX / size.width;
         const projected = travelled + velocityPages * PAGE_VELOCITY_PROJECTION_SECONDS;
 
@@ -812,9 +948,9 @@ export function TimetableSurface({
         // settle is a continuation of the drag rather than a new animation.
         pageSettling.set(1);
         pos.set(
-          withSpring(baseIdx.get() + direction, { ...PAGE_SPRING, velocity: velocityPages }, (finished) => {
+          withSpring(from + direction, { ...PAGE_SPRING, velocity: velocityPages }, () => {
             pageSettling.set(0);
-            if (finished && direction !== 0) runOnJS(commitWeek)(direction);
+            runOnJS(reconcilePage)();
           }),
         );
         return;
@@ -887,14 +1023,21 @@ export function TimetableSurface({
       if (axis.get() === AXIS.pinch) {
         axis.set(AXIS.none);
         // A pinch can leave the pager fractionally off if it interrupted a
-        // settle; put it back on its own week without committing anything.
-        if (pos.get() !== baseIdx.get()) {
+        // settle; put it back on the nearest whole page. That page is
+        // whichever one is on screen — the pinch froze the pager, it did not
+        // undo the swipe that was already under way — so the week is
+        // reconciled to it rather than dragged back to the previous one.
+        const settled = Math.round(pos.get());
+        if (pos.get() !== settled) {
           pageSettling.set(1);
           pos.set(
-            withSpring(baseIdx.get(), PAGE_SPRING, () => {
+            withSpring(settled, PAGE_SPRING, () => {
               pageSettling.set(0);
+              runOnJS(reconcilePage)();
             }),
           );
+        } else {
+          runOnJS(reconcilePage)();
         }
       }
     });
@@ -961,7 +1104,7 @@ export function TimetableSurface({
       }
       // The visible week can have changed under a stale hit-test; without a
       // class to hold there is nothing to select, and the tap still stands.
-      if (!hit || hit.placementId === null) return;
+      if (!hit || hit.occurrenceId === null) return;
 
       axis.set(AXIS.block);
       suppressTap.set(1);
@@ -970,7 +1113,7 @@ export function TimetableSurface({
 
       const selection = selectionSV.get();
       const alreadySelected =
-        selection !== null && selection.placementId === hit.placementId && interactionSV.get() === INTERACTION.eventSelected;
+        selection !== null && selection.occurrenceId === hit.occurrenceId && interactionSV.get() === INTERACTION.eventSelected;
 
       dragDay.set(hit.dayIndex);
       dragStart.set(hit.startIndex);
@@ -982,7 +1125,7 @@ export function TimetableSurface({
       // second hold on the same class is what starts a move.
       panMode.set(alreadySelected ? PAN_MOVE : PAN_HELD);
       interactionSV.set(alreadySelected ? INTERACTION.movingEvent : INTERACTION.eventSelected);
-      runOnJS(beginHold)(hit.placementId, hit.dayIndex, hit.startIndex, hit.span);
+      runOnJS(beginHold)(hit.occurrenceId, hit.dayIndex, hit.startIndex, hit.span);
     });
 
   const tap = Gesture.Tap()
@@ -1021,7 +1164,7 @@ export function TimetableSurface({
         }
       : null;
   const overlayWeekStart = interaction.kind === "idle" ? null : interaction.weekStart;
-  const hiddenPlacementId = live ? (subject?.placementId ?? null) : null;
+  const hiddenOccurrenceId = live ? (subject?.occurrenceId ?? null) : null;
 
   return (
     <View
@@ -1051,13 +1194,15 @@ export function TimetableSurface({
                   timeSlots={timeSlots}
                   placements={placements}
                   courses={courses}
+                  exceptions={exceptions}
+                  preview={preview}
                   today={today}
                   now={now}
                   width={size.width}
                   columnWidth={columnWidth}
                   slotHeight={slotHeight}
                   scrollY={scrollY}
-                  hiddenPlacementId={hiddenPlacementId}
+                  hiddenOccurrenceId={hiddenOccurrenceId}
                   overlay={weekStart === overlayWeekStart ? pageOverlay : null}
                 />
               );

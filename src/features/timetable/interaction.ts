@@ -35,11 +35,11 @@ export type Interaction =
   /** A range exists on screen but no placement has been created for it. */
   | ({ kind: "provisionalSelected" } & RangeGeometry)
   /** An existing class is selected and showing its resize handles. */
-  | ({ kind: "eventSelected"; placementId: string } & RangeGeometry)
+  | ({ kind: "eventSelected"; occurrenceId: string } & RangeGeometry)
   /** A handle or the body of the selected class is being dragged. */
   | ({
       kind: "resizingStart" | "resizingEnd" | "movingEvent";
-      placementId: string | null;
+      occurrenceId: string | null;
       valid: boolean;
       /** Where it was before the drag, to return to if the drop is refused. */
       origin: RangeGeometry;
@@ -57,11 +57,11 @@ export function interactionRange(interaction: Interaction): RangeGeometry | null
   return interaction.kind === "idle" ? null : interaction;
 }
 
-/** The placement an interaction is about, if it is about an existing one. */
-export function interactionPlacementId(interaction: Interaction): string | null {
-  if (interaction.kind === "eventSelected") return interaction.placementId;
+/** The occurrence an interaction is about, if it is about an existing one. */
+export function interactionOccurrenceId(interaction: Interaction): string | null {
+  if (interaction.kind === "eventSelected") return interaction.occurrenceId;
   if (interaction.kind === "movingEvent" || interaction.kind === "resizingStart" || interaction.kind === "resizingEnd") {
-    return interaction.placementId;
+    return interaction.occurrenceId;
   }
   return null;
 }

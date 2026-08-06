@@ -34,6 +34,8 @@ export function WeekGridHorizontal({
   timeSlots,
   placements,
   courses,
+  exceptions,
+  preview,
   today,
   now,
   width,
@@ -44,8 +46,8 @@ export function WeekGridHorizontal({
 
   const dates = useMemo(() => weekDatesFrom(weekStart), [weekStart]);
   const classesByCell = useMemo(
-    () => resolveWeekClasses({ weekdays, dates, placements, courses, timeSlots }),
-    [weekdays, dates, placements, courses, timeSlots],
+    () => resolveWeekClasses({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
+    [weekdays, dates, placements, courses, exceptions, timeSlots, preview],
   );
 
   const weekdayColWidth = clamp(width * 0.2, WEEKDAY_COL_MIN, WEEKDAY_COL_MAX);

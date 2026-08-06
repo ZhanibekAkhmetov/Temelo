@@ -7,6 +7,13 @@ import { InlineDateField } from "@/components/InlineDateField";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { TextField } from "@/components/TextField";
 import { formatIsoLong } from "@/domain/calendar";
+import {
+  createPendingClassEdit,
+  draftHasChanges,
+  validateClassEditDraft,
+  type PendingClassEdit,
+} from "@/domain/classEdit";
+import { defaultSeriesStartDate } from "@/domain/recurrence";
 import { WEEKDAY_LABEL, type Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
 import { useAppState } from "@/state/AppStateContext";
@@ -26,6 +33,11 @@ interface ClassEditorModalProps {
   endTime: string;
   term: AcademicTerm;
   existing?: ScheduledClass;
+  /**
+   * Edits to a repeating class leave here as a draft rather than as a
+   * change: the screen asks which occurrences they apply to first.
+   */
+  onRequestScope: (edit: PendingClassEdit) => void;
 }
 
 /** Which inline picker is unfolded — at most one at a time. */
@@ -37,7 +49,18 @@ const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
   { label: "One time", value: "once" },
 ];
 
-export function ClassEditorModal({ visible, onClose, weekday, date, timeSlot, slotSpan, endTime, term, existing }: ClassEditorModalProps) {
+export function ClassEditorModal({
+  visible,
+  onClose,
+  weekday,
+  date,
+  timeSlot,
+  slotSpan,
+  endTime,
+  term,
+  existing,
+  onRequestScope,
+}: ClassEditorModalProps) {
   return (
     <Modal
       visible={visible}
@@ -47,7 +70,7 @@ export function ClassEditorModal({ visible, onClose, weekday, date, timeSlot, sl
     >
       {visible ? (
         <ClassEditorForm
-          key={`${weekday}-${date}-${timeSlot.id}-${existing?.placement.id ?? "new"}`}
+          key={`${weekday}-${date}-${timeSlot.id}-${existing?.occurrenceId ?? "new"}`}
           onClose={onClose}
           weekday={weekday}
           date={date}
@@ -56,13 +79,24 @@ export function ClassEditorModal({ visible, onClose, weekday, date, timeSlot, sl
           endTime={endTime}
           term={term}
           existing={existing}
+          onRequestScope={onRequestScope}
         />
       ) : null}
     </Modal>
   );
 }
 
-function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, term, existing }: Omit<ClassEditorModalProps, "visible">) {
+function ClassEditorForm({
+  onClose,
+  weekday,
+  date,
+  timeSlot,
+  slotSpan,
+  endTime,
+  term,
+  existing,
+  onRequestScope,
+}: Omit<ClassEditorModalProps, "visible">) {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { upsertPlacement, deletePlacement } = useAppState();
 
@@ -70,14 +104,25 @@ function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, 
   const [room, setRoom] = useState(existing?.course.room ?? "");
   const [teacher, setTeacher] = useState(existing?.course.teacher ?? "");
   const [notes, setNotes] = useState(existing?.course.notes ?? "");
-  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(existing?.placement.recurrenceType ?? "weekly");
+  // Recurrence is a property of the series, never of the occurrence that was
+  // tapped — so these read from the series even when this occurrence has
+  // been moved or altered on its own.
+  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(existing?.basePlacement.recurrenceType ?? "weekly");
   const [startsOn, setStartsOn] = useState(
-    existing && existing.placement.recurrenceType !== "once" ? existing.placement.startsOn : term.startDate,
+    existing && existing.basePlacement.recurrenceType !== "once"
+      ? existing.basePlacement.startsOn
+      : defaultSeriesStartDate(existing?.basePlacement.recurrenceType ?? "weekly", date, term.startDate),
   );
-  const [endsOn, setEndsOn] = useState(existing?.placement.endsOn ?? term.estimatedEndDate);
+  /**
+   * Whether the start date is the user's own choice. An existing series
+   * always owns its start; a new one follows the recurrence type until the
+   * user picks a date, after which it stops moving underneath them.
+   */
+  const [startDateIsOwn, setStartDateIsOwn] = useState(Boolean(existing));
+  const [endsOn, setEndsOn] = useState(existing?.basePlacement.endsOn ?? term.estimatedEndDate);
   // A one-off defaults to the day that was tapped, not the start of term.
   const [onceDate, setOnceDate] = useState(
-    existing?.placement.recurrenceType === "once" ? existing.placement.startsOn : date,
+    existing?.basePlacement.recurrenceType === "once" ? existing.basePlacement.startsOn : date,
   );
   const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
   const [openPicker, setOpenPicker] = useState<OpenPicker>(null);
@@ -98,6 +143,23 @@ function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, 
     setOpenPicker((current) => (current === picker ? null : picker));
   }
 
+  /**
+   * Choosing "every 2 weeks" also chooses which half of the fortnight the
+   * class falls on, and the start date is where that is recorded — so a new
+   * class re-anchors on the week the user tapped. Left at the start of term
+   * it would land on the same alternating weeks as every other one, and
+   * collide with all of them.
+   */
+  function handleRecurrenceChange(next: RecurrenceType) {
+    setRecurrenceType(next);
+    if (!startDateIsOwn) setStartsOn(defaultSeriesStartDate(next, date, term.startDate));
+  }
+
+  function handleStartDateChange(value: string) {
+    setStartDateIsOwn(true);
+    setStartsOn(value);
+  }
+
   function handleSave() {
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -107,8 +169,43 @@ function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, 
     setNameError(undefined);
     setFormError(undefined);
 
+    /*
+     * A class that repeats cannot be saved outright: the same form could
+     * mean a change to one lesson, to the rest of the term, or to the whole
+     * series, and only the user knows which. It leaves as a draft, and the
+     * timetable screen asks. A class that meets once has no series to
+     * choose between, so it is written straight through.
+     */
+    if (existing && existing.basePlacement.recurrenceType !== "once") {
+      const pending = createPendingClassEdit({
+        occurrence: existing,
+        source: "editor",
+        effectiveDate: date,
+        weekday,
+        timeSlotId: timeSlot.id,
+        slotSpan,
+        name: trimmedName,
+        room: room.trim(),
+        teacher: teacher.trim(),
+        notes: notes.trim(),
+        recurrenceType,
+        startsOn: effectiveStartsOn,
+        endsOn: effectiveEndsOn,
+      });
+
+      const check = validateClassEditDraft(pending.draft);
+      if (!check.ok) {
+        setFormError(check.error);
+        return;
+      }
+      // Nothing to apply, so nothing to ask about.
+      if (draftHasChanges(pending.draft)) onRequestScope(pending);
+      onClose();
+      return;
+    }
+
     const result = upsertPlacement({
-      placementId: existing?.placement.id,
+      placementId: existing?.basePlacement.id,
       weekday,
       timeSlotId: timeSlot.id,
       slotSpan,
@@ -136,7 +233,7 @@ function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, 
         text: "Delete",
         style: "destructive",
         onPress: () => {
-          deletePlacement(existing.placement.id);
+          deletePlacement(existing.basePlacement.id);
           onClose();
         },
       },
@@ -195,7 +292,12 @@ function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, 
 
               <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Recurrence</Text>
               <View style={{ marginBottom: spacing.md }}>
-                <SegmentedControl options={RECURRENCE_OPTIONS} value={recurrenceType} onChange={setRecurrenceType} accessibilityLabel="Recurrence" />
+                <SegmentedControl
+                  options={RECURRENCE_OPTIONS}
+                  value={recurrenceType}
+                  onChange={handleRecurrenceChange}
+                  accessibilityLabel="Recurrence"
+                />
               </View>
 
               {isOneOff ? (
@@ -211,9 +313,12 @@ function ClassEditorForm({ onClose, weekday, date, timeSlot, slotSpan, endTime, 
                   <InlineDateField
                     label="Start date"
                     value={startsOn}
-                    onChange={setStartsOn}
+                    onChange={handleStartDateChange}
                     expanded={openPicker === "startsOn"}
                     onToggle={() => togglePicker("startsOn")}
+                    helperText={
+                      recurrenceType === "biweekly" ? "Sets which alternating week this class falls on" : undefined
+                    }
                   />
                   <InlineDateField
                     label="End date"

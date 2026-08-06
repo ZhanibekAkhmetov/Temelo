@@ -1,6 +1,7 @@
+import type { OccurrencePreview } from "@/domain/occurrence";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
-import type { Course, Placement, TimeSlot } from "@/types/models";
+import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 export interface SelectedCell {
   weekday: Weekday;
@@ -28,8 +29,8 @@ export interface PageOverlay {
 
 /** What the gesture worklets need to hit-test the visible week. */
 export interface HitBlock {
-  /** null for the provisional block, which has no placement yet. */
-  placementId: string | null;
+  /** null for the provisional block, which has no occurrence yet. */
+  occurrenceId: string | null;
   dayIndex: number;
   startIndex: number;
   span: number;
@@ -42,6 +43,9 @@ export interface WeekGridProps {
   timeSlots: TimeSlot[];
   placements: Placement[];
   courses: Course[];
+  exceptions: OccurrenceException[];
+  /** An edit awaiting a scope choice, drawn where it would land. */
+  preview: OccurrencePreview | null;
   today: string;
   now: string;
   width: number;
