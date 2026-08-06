@@ -125,6 +125,28 @@ export function TimetableSurface({
   const [interaction, setInteractionState] = useState<Interaction>(IDLE);
   const [subject, setSubject] = useState<ManipulationSubject | null>(null);
 
+  /**
+   * The interaction as last asked for, readable the instant it is set.
+   *
+   * The callbacks a gesture hands its drag to have to decide what a release
+   * means from state an earlier callback has only just requested, and
+   * several `runOnJS` calls from one frame arrive in a single React batch —
+   * a render closure would still be showing the state before the drag
+   * began. A functional `setState` updater sees the right value, but it is
+   * run *during the render that flushes it*, so anything it does beyond
+   * returning the next state — writing to the store, above all — happens
+   * mid-render. This is written in the same breath as the state instead, so
+   * the callbacks can read it and stay plain event handlers.
+   */
+  const latestInteraction = useSharedValue<Interaction>(IDLE);
+  const setInteraction = useCallback(
+    (next: Interaction) => {
+      latestInteraction.set(next);
+      setInteractionState(next);
+    },
+    [latestInteraction],
+  );
+
   const dayCount = weekdays.length;
   const slotCount = timeSlots.length;
   const bodyHeight = Math.max(0, size.height - DAY_HEADER_HEIGHT);
@@ -310,7 +332,7 @@ export function TimetableSurface({
     (dayIndex: number, startIndex: number, span: number, placementId: string | null) => {
       const weekday = weekdays[dayIndex];
       const existing = placementId ? visibleBlocks.find((block) => block.placement.id === placementId) : undefined;
-      setInteractionState(IDLE);
+      setInteraction(IDLE);
       onOpenEditor({
         weekday,
         date: visibleDates[weekday],
@@ -320,7 +342,7 @@ export function TimetableSurface({
         existing: existing ? { placement: existing.placement, course: existing.course } : undefined,
       });
     },
-    [onOpenEditor, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
+    [onOpenEditor, setInteraction, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
   );
 
   /**
@@ -330,18 +352,18 @@ export function TimetableSurface({
    * scrolling to its handles is part of resizing it.
    */
   const dismissProvisional = useCallback(() => {
-    setInteractionState((current) => (current.kind === "provisionalSelected" ? IDLE : current));
-  }, []);
+    if (latestInteraction.get().kind === "provisionalSelected") setInteraction(IDLE);
+  }, [latestInteraction, setInteraction]);
 
   /** Android Back clears whatever is provisional or selected before it leaves. */
   useEffect(() => {
     if (interaction.kind === "idle") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      setInteractionState(IDLE);
+      setInteraction(IDLE);
       return true;
     });
     return () => subscription.remove();
-  }, [interaction.kind]);
+  }, [interaction.kind, setInteraction]);
 
   /**
    * idle | provisionalSelected | eventSelected --tap-->
@@ -358,7 +380,7 @@ export function TimetableSurface({
       const onGrid = y >= DAY_HEADER_HEIGHT && dayIndex >= 0 && dayIndex < dayCount && slotIndex >= 0 && slotIndex < slotCount;
 
       if (!onGrid) {
-        setInteractionState(IDLE);
+        setInteraction(IDLE);
         return;
       }
 
@@ -383,10 +405,10 @@ export function TimetableSurface({
         return;
       }
 
-      setInteractionState({ kind: "provisionalSelected", weekStart: visibleWeekStart, dayIndex, startIndex: slotIndex, span: 1 });
+      setInteraction({ kind: "provisionalSelected", weekStart: visibleWeekStart, dayIndex, startIndex: slotIndex, span: 1 });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [columnWidth, dayCount, interaction, openEditorFor, slotCount, visibleBlocks, visibleWeekStart],
+    [columnWidth, dayCount, interaction, openEditorFor, setInteraction, slotCount, visibleBlocks, visibleWeekStart],
   );
 
   /** idle | provisionalSelected --long press on empty grid--> creatingRange */
@@ -394,7 +416,7 @@ export function TimetableSurface({
     (dayIndex: number, anchorIndex: number) => {
       activationTick();
       setSubject(null);
-      setInteractionState({
+      setInteraction({
         kind: "creatingRange",
         weekStart: visibleWeekStart,
         dayIndex,
@@ -404,7 +426,7 @@ export function TimetableSurface({
         valid: rangeIsFree(null, dayIndex, anchorIndex, 1),
       });
     },
-    [rangeIsFree, visibleWeekStart],
+    [rangeIsFree, setInteraction, visibleWeekStart],
   );
 
   /** eventSelected --handle drag--> resizingStart | resizingEnd */
@@ -417,7 +439,7 @@ export function TimetableSurface({
           ? { placementId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
           : { placementId },
       );
-      setInteractionState({
+      setInteraction({
         kind: edge === "start" ? "resizingStart" : "resizingEnd",
         placementId,
         origin,
@@ -428,7 +450,7 @@ export function TimetableSurface({
         valid: true,
       });
     },
-    [visibleBlocks, visibleWeekStart],
+    [setInteraction, visibleBlocks, visibleWeekStart],
   );
 
   /**
@@ -452,11 +474,11 @@ export function TimetableSurface({
 
       if (!alreadySelected) {
         // Selection only: the class must not move because it was picked.
-        setInteractionState({ kind: "eventSelected", placementId, weekStart: visibleWeekStart, dayIndex, startIndex, span });
+        setInteraction({ kind: "eventSelected", placementId, weekStart: visibleWeekStart, dayIndex, startIndex, span });
         return;
       }
 
-      setInteractionState({
+      setInteraction({
         kind: "movingEvent",
         placementId,
         origin: { weekStart: visibleWeekStart, dayIndex, startIndex, span },
@@ -467,62 +489,72 @@ export function TimetableSurface({
         valid: true,
       });
     },
-    [interaction, visibleBlocks, visibleWeekStart],
+    [interaction, setInteraction, visibleBlocks, visibleWeekStart],
   );
 
   /** One boundary crossed: tick once, and re-check the proposed range. */
   const handleDetent = useCallback(
     (dayIndex: number, startIndex: number, span: number) => {
       selectionTick();
-      setInteractionState((current) => {
-        if (current.kind === "creatingRange") {
-          return { ...current, dayIndex, startIndex, span, valid: rangeIsFree(null, dayIndex, startIndex, span) };
-        }
-        if (current.kind === "resizingStart" || current.kind === "resizingEnd" || current.kind === "movingEvent") {
-          return { ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.placementId, dayIndex, startIndex, span) };
-        }
-        return current;
-      });
+      const current = latestInteraction.get();
+      if (current.kind === "creatingRange") {
+        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(null, dayIndex, startIndex, span) });
+        return;
+      }
+      if (current.kind === "resizingStart" || current.kind === "resizingEnd" || current.kind === "movingEvent") {
+        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.placementId, dayIndex, startIndex, span) });
+      }
     },
-    [rangeIsFree],
+    [latestInteraction, rangeIsFree, setInteraction],
   );
 
   /**
    * creatingRange --release--> provisionalSelected (dropped if it overlaps)
    * resizing* | movingEvent --release--> eventSelected, committed only when
    * the proposed range is free.
+   *
+   * The store write lives here, in the callback the gesture hands the drag
+   * to, and never inside a `setState` updater: an updater runs during the
+   * render that flushes it, so moving the class from there would update the
+   * app-state provider while this component is rendering. `settleShaping`
+   * guarantees the hand-over happens once, so the write happens once.
    */
   const finishManipulation = useCallback(
     (dayIndex: number, startIndex: number, span: number) => {
+      const current = latestInteraction.get();
       setSubject(null);
-      setInteractionState((current) => {
-        if (current.kind === "creatingRange") {
-          if (!rangeIsFree(null, dayIndex, startIndex, span)) return IDLE;
-          return { kind: "provisionalSelected", weekStart: current.weekStart, dayIndex, startIndex, span };
-        }
 
-        if (current.kind !== "resizingStart" && current.kind !== "resizingEnd" && current.kind !== "movingEvent") {
-          return current;
-        }
+      if (current.kind === "creatingRange") {
+        setInteraction(
+          rangeIsFree(null, dayIndex, startIndex, span)
+            ? { kind: "provisionalSelected", weekStart: current.weekStart, dayIndex, startIndex, span }
+            : IDLE,
+        );
+        return;
+      }
 
-        const { origin, placementId } = current;
-        const unchanged = dayIndex === origin.dayIndex && startIndex === origin.startIndex && span === origin.span;
-        if (!placementId || unchanged || !rangeIsFree(placementId, dayIndex, startIndex, span)) {
-          return placementId
-            ? { kind: "eventSelected", placementId, ...origin }
-            : { kind: "provisionalSelected", ...origin };
-        }
+      // The gesture was cut short before it ever became a manipulation, or
+      // something else has already settled it: there is nothing to commit.
+      if (current.kind !== "resizingStart" && current.kind !== "resizingEnd" && current.kind !== "movingEvent") return;
 
-        onMoveClass({
-          placementId,
-          weekday: weekdays[dayIndex],
-          timeSlotId: timeSlots[startIndex].id,
-          slotSpan: span,
-        });
-        return { kind: "eventSelected", placementId, weekStart: origin.weekStart, dayIndex, startIndex, span };
+      const { origin, placementId } = current;
+      const unchanged = dayIndex === origin.dayIndex && startIndex === origin.startIndex && span === origin.span;
+      if (!placementId || unchanged || !rangeIsFree(placementId, dayIndex, startIndex, span)) {
+        setInteraction(
+          placementId ? { kind: "eventSelected", placementId, ...origin } : { kind: "provisionalSelected", ...origin },
+        );
+        return;
+      }
+
+      setInteraction({ kind: "eventSelected", placementId, weekStart: origin.weekStart, dayIndex, startIndex, span });
+      onMoveClass({
+        placementId,
+        weekday: weekdays[dayIndex],
+        timeSlotId: timeSlots[startIndex].id,
+        slotSpan: span,
       });
     },
-    [onMoveClass, rangeIsFree, timeSlots, weekdays],
+    [latestInteraction, onMoveClass, rangeIsFree, setInteraction, timeSlots, weekdays],
   );
 
   /** Period under a surface-relative y, fractional part included. */
