@@ -4,11 +4,20 @@ import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { addWeeksIso, monthShortYearLabel, startOfWeekIso } from "@/domain/calendar";
+import {
+  createPendingClassEdit,
+  onlyThisBlockedReason,
+  type EditScope,
+  type PendingClassEdit,
+} from "@/domain/classEdit";
 import { addDaysIso, todayIsoDate } from "@/domain/date";
 import { getOrderedWeekdays } from "@/domain/week";
 import { ClassEditorModal } from "@/features/timetable/ClassEditorModal";
+import { EditScopeSheet } from "@/features/timetable/EditScopeSheet";
 import {
   TimetableSurface,
+  type MoveOutcome,
+  type OccurrenceMove,
   type PlacementPosition,
   type TimetableSurfaceHandle,
 } from "@/features/timetable/TimetableSurface";
@@ -23,8 +32,14 @@ const MONTH_LABEL_DAY_OFFSET = 3;
 
 export default function TimetableScreen() {
   const { colors, spacing, typography } = useTheme();
-  const { state, movePlacement, checkPlacement } = useAppState();
+  const { state, movePlacement, checkPlacement, applyClassEdit } = useAppState();
   const [selected, setSelected] = useState<SelectedCell | null>(null);
+  /**
+   * An edit that has been made but not yet applied to anything. It is drawn
+   * where it would land and lives only here, so cancelling the scope
+   * question leaves the stored timetable exactly as it was.
+   */
+  const [pendingEdit, setPendingEdit] = useState<PendingClassEdit | null>(null);
   const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
 
   // The minute tick is also what carries the timetable over midnight: both
@@ -56,13 +71,53 @@ export default function TimetableScreen() {
     setVisibleWeekStart(currentWeekStart);
   }
 
+  /**
+   * A settled drag or resize. A class that meets once has no series to
+   * scope against, so it simply moves; anything that repeats is drafted and
+   * the scope question is asked before the store hears about it at all.
+   */
   const handleMoveClass = useCallback(
-    (input: PlacementPosition) => {
-      const result = movePlacement(input);
-      if (!result.ok) Alert.alert("Cannot move class", result.error);
+    (move: OccurrenceMove): MoveOutcome => {
+      const series = move.occurrence.basePlacement;
+      if (series.recurrenceType === "once") {
+        const result = movePlacement({
+          placementId: series.id,
+          weekday: move.weekday,
+          timeSlotId: move.timeSlotId,
+          slotSpan: move.slotSpan,
+          date: move.date,
+        });
+        if (!result.ok) Alert.alert("Cannot move class", result.error);
+        return "committed";
+      }
+
+      setPendingEdit(
+        createPendingClassEdit({
+          occurrence: move.occurrence,
+          source: move.source,
+          effectiveDate: move.date,
+          weekday: move.weekday,
+          timeSlotId: move.timeSlotId,
+          slotSpan: move.slotSpan,
+        }),
+      );
+      return "deferred";
     },
     [movePlacement],
   );
+
+  function handleScopeCancel() {
+    setPendingEdit(null);
+    surfaceRef.current?.settleDeferredDrag(true);
+  }
+
+  function handleScopeSelect(scope: EditScope) {
+    if (!pendingEdit) return;
+    const result = applyClassEdit(pendingEdit.draft, scope);
+    setPendingEdit(null);
+    surfaceRef.current?.settleDeferredDrag(!result.ok);
+    if (!result.ok) Alert.alert("Cannot apply change", result.error);
+  }
 
   // Asked once per crossed boundary while dragging, so the preview can show
   // whether the drop would be accepted before the finger lifts.
@@ -131,6 +186,8 @@ export default function TimetableScreen() {
             timeSlots={state.timeSlots}
             placements={state.placements}
             courses={state.courses}
+            exceptions={state.exceptions}
+            preview={pendingEdit?.preview ?? null}
             today={today}
             now={now}
             onVisibleWeekChange={setVisibleWeekStart}
@@ -145,6 +202,8 @@ export default function TimetableScreen() {
             timeSlots={state.timeSlots}
             placements={state.placements}
             courses={state.courses}
+            exceptions={state.exceptions}
+            preview={pendingEdit?.preview ?? null}
             today={today}
             now={now}
             width={gridSize.width}
@@ -165,6 +224,18 @@ export default function TimetableScreen() {
           endTime={selected.endTime}
           term={state.term}
           existing={selected.existing}
+          onRequestScope={setPendingEdit}
+        />
+      ) : null}
+
+      {/* Never in the same frame as the editor: they are two native modals,
+          and the editor's save is what raises this one. */}
+      {pendingEdit && !selected ? (
+        <EditScopeSheet
+          effectiveDate={pendingEdit.draft.effectiveDate}
+          onlyThisBlockedReason={onlyThisBlockedReason(pendingEdit.draft)}
+          onSelect={handleScopeSelect}
+          onCancel={handleScopeCancel}
         />
       ) : null}
     </SafeAreaView>

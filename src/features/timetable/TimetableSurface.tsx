@@ -4,8 +4,10 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { cancelAnimation, runOnJS, useSharedValue, withDecay, withSpring } from "react-native-reanimated";
 
 import { addWeeksIso, weekDatesFrom } from "@/domain/calendar";
+import type { EditSource } from "@/domain/classEdit";
+import type { OccurrencePreview } from "@/domain/occurrence";
 import { findCurrentPeriodIndex } from "@/domain/time";
-import { resolveWeekBlocks } from "@/domain/timetable";
+import { resolveWeekBlocks, type ScheduledClass } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
 import {
   clampValue,
@@ -39,7 +41,7 @@ import { TimeGutter } from "@/features/timetable/TimeGutter";
 import type { HitBlock, PageOverlay, SelectedCell } from "@/features/timetable/types";
 import { WeekPage } from "@/features/timetable/WeekPage";
 import { activationTick, selectionTick } from "@/util/haptics";
-import type { Course, Placement, TimeSlot } from "@/types/models";
+import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 /**
  * What a touch landed on. The pan decides this once, at finger-down, while
@@ -73,6 +75,12 @@ const PAGE_OFFSETS = [-1, 0, 1];
 export interface TimetableSurfaceHandle {
   goToRelativeWeek: (offset: number) => void;
   goToCurrentWeek: () => void;
+  /**
+   * Closes out a drag whose commit was deferred to a scope choice: `revert`
+   * puts the selection back where the drag started, otherwise the edit is
+   * done and nothing stays selected.
+   */
+  settleDeferredDrag: (revert: boolean) => void;
 }
 
 interface TimetableSurfaceProps {
@@ -82,14 +90,35 @@ interface TimetableSurfaceProps {
   timeSlots: TimeSlot[];
   placements: Placement[];
   courses: Course[];
+  exceptions: OccurrenceException[];
+  /** An edit awaiting a scope choice, drawn where it would land. */
+  preview: OccurrencePreview | null;
   today: string;
   now: string;
   onVisibleWeekChange: (weekStartIso: string) => void;
   onOpenEditor: (selection: SelectedCell) => void;
-  onMoveClass: (input: PlacementPosition) => void;
+  /**
+   * A settled drag or resize. Returns "deferred" when it opened a question
+   * instead of changing anything, so the surface knows to keep the origin
+   * for a possible cancel.
+   */
+  onMoveClass: (move: OccurrenceMove) => MoveOutcome;
   /** Whether a proposed position is free, checked against recurrence overlap. */
   canPlaceClass: (input: PlacementPosition) => boolean;
   ref?: Ref<TimetableSurfaceHandle>;
+}
+
+export type MoveOutcome = "committed" | "deferred";
+
+/** Where a drag or resize left one occurrence of one class. */
+export interface OccurrenceMove {
+  occurrence: ScheduledClass;
+  weekday: Weekday;
+  timeSlotId: string;
+  slotSpan: number;
+  /** Date in the displayed week the block was dropped on. */
+  date: string;
+  source: EditSource;
 }
 
 export interface PlacementPosition {
@@ -97,6 +126,8 @@ export interface PlacementPosition {
   weekday: Weekday;
   timeSlotId: string;
   slotSpan: number;
+  /** Destination date in the displayed week. */
+  date: string;
 }
 
 /**
@@ -111,6 +142,8 @@ export function TimetableSurface({
   timeSlots,
   placements,
   courses,
+  exceptions,
+  preview,
   today,
   now,
   onVisibleWeekChange,
@@ -196,8 +229,8 @@ export function TimetableSurface({
 
   const visibleDates = useMemo(() => weekDatesFrom(visibleWeekStart), [visibleWeekStart]);
   const visibleBlocks = useMemo(
-    () => resolveWeekBlocks({ weekdays, dates: visibleDates, placements, courses, timeSlots }),
-    [weekdays, visibleDates, placements, courses, timeSlots],
+    () => resolveWeekBlocks({ weekdays, dates: visibleDates, placements, courses, exceptions, timeSlots, preview }),
+    [weekdays, visibleDates, placements, courses, exceptions, timeSlots, preview],
   );
 
   // Hit-testing data for the gesture worklets: only the week on screen can
@@ -205,7 +238,7 @@ export function TimetableSurface({
   useEffect(() => {
     hitBlocks.set(
       visibleBlocks.map((block) => ({
-        placementId: block.placement.id,
+        occurrenceId: block.occurrenceId,
         dayIndex: block.dayIndex,
         startIndex: block.startIndex,
         span: block.span,
@@ -221,7 +254,7 @@ export function TimetableSurface({
     selectionSV.set(
       onVisibleWeek && (interaction.kind === "provisionalSelected" || interaction.kind === "eventSelected")
         ? {
-            placementId: interaction.kind === "eventSelected" ? interaction.placementId : null,
+            occurrenceId: interaction.kind === "eventSelected" ? interaction.occurrenceId : null,
             dayIndex: interaction.dayIndex,
             startIndex: interaction.startIndex,
             span: interaction.span,
@@ -295,43 +328,75 @@ export function TimetableSurface({
     [anchorWeekStart, baseIdx, commitWeek, onVisibleWeekChange, pageSettling, pos],
   );
 
+  /**
+   * Where a drag that has not been committed yet started, kept only for as
+   * long as the scope question is open — it is what "Cancel" puts back.
+   *
+   * A shared value rather than a ref for the same reason `latestInteraction`
+   * is one: it is written from the callback a gesture hands its release to,
+   * which is reachable from worklets built during render.
+   */
+  const deferredOrigin = useSharedValue<{ occurrenceId: string; origin: RangeGeometry } | null>(null);
+
   useImperativeHandle(
     ref,
     () => ({
       goToRelativeWeek: (offset: number) => goToPage(baseIdx.get() + offset),
       goToCurrentWeek: () => goToPage(0),
+      settleDeferredDrag: (revert: boolean) => {
+        const deferred = deferredOrigin.get();
+        deferredOrigin.set(null);
+        // Committed edits leave nothing selected: after a series split the
+        // occurrence under the selection is no longer the one that was
+        // dragged, and a stale selection would offer handles for it.
+        if (!revert || !deferred) {
+          setInteraction(IDLE);
+          return;
+        }
+        setInteraction({ kind: "eventSelected", occurrenceId: deferred.occurrenceId, ...deferred.origin });
+      },
     }),
-    [baseIdx, goToPage],
+    [baseIdx, deferredOrigin, goToPage, setInteraction],
   );
 
   /**
-   * Whether a proposed range is free. An existing class is checked against
-   * recurrence overlap through the store; a range that has no placement yet
-   * is checked against what actually meets in the week on screen.
+   * Whether a proposed range is free.
+   *
+   * A whole series is checked against recurrence overlap through the store,
+   * because it has to hold on every date it meets. A single occurrence that
+   * has already stepped out of its series — and a range that is not a class
+   * yet — only has to be free on the one date on screen, so it is checked
+   * against what actually meets in the visible week.
    */
   const rangeIsFree = useCallback(
-    (placementId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
+    (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
       if (dayIndex < 0 || dayIndex >= dayCount || startIndex < 0 || startIndex + span > slotCount) return false;
-      if (placementId) {
+
+      const subject = occurrenceId ? visibleBlocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
+      if (subject && !subject.exception) {
         return canPlaceClass({
-          placementId,
+          placementId: subject.placement.id,
           weekday: weekdays[dayIndex],
           timeSlotId: timeSlots[startIndex].id,
           slotSpan: span,
+          date: visibleDates[weekdays[dayIndex]],
         });
       }
       return !visibleBlocks.some(
         (block) =>
-          block.dayIndex === dayIndex && startIndex < block.startIndex + block.span && block.startIndex < startIndex + span,
+          block.occurrenceId !== occurrenceId &&
+          block.dayIndex === dayIndex &&
+          startIndex < block.startIndex + block.span &&
+          block.startIndex < startIndex + span,
       );
     },
-    [canPlaceClass, dayCount, slotCount, timeSlots, visibleBlocks, weekdays],
+    [canPlaceClass, dayCount, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
   );
 
   const openEditorFor = useCallback(
-    (dayIndex: number, startIndex: number, span: number, placementId: string | null) => {
+    (dayIndex: number, startIndex: number, span: number, occurrenceId: string | null) => {
       const weekday = weekdays[dayIndex];
-      const existing = placementId ? visibleBlocks.find((block) => block.placement.id === placementId) : undefined;
+      const existing = occurrenceId ? visibleBlocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
       setInteraction(IDLE);
       onOpenEditor({
         weekday,
@@ -339,7 +404,7 @@ export function TimetableSurface({
         timeSlot: timeSlots[startIndex],
         slotSpan: span,
         endTime: timeSlots[Math.min(slotCount - 1, startIndex + span - 1)].endTime,
-        existing: existing ? { placement: existing.placement, course: existing.course } : undefined,
+        existing,
       });
     },
     [onOpenEditor, setInteraction, slotCount, timeSlots, visibleBlocks, visibleDates, weekdays],
@@ -388,7 +453,7 @@ export function TimetableSurface({
         (block) => block.dayIndex === dayIndex && slotIndex >= block.startIndex && slotIndex < block.startIndex + block.span,
       );
       if (existing) {
-        openEditorFor(existing.dayIndex, existing.startIndex, existing.span, existing.placement.id);
+        openEditorFor(existing.dayIndex, existing.startIndex, existing.span, existing.occurrenceId);
         return;
       }
 
@@ -431,17 +496,17 @@ export function TimetableSurface({
 
   /** eventSelected --handle drag--> resizingStart | resizingEnd */
   const beginResize = useCallback(
-    (edge: "start" | "end", placementId: string, dayIndex: number, startIndex: number, span: number) => {
+    (edge: "start" | "end", occurrenceId: string, dayIndex: number, startIndex: number, span: number) => {
       const origin: RangeGeometry = { weekStart: visibleWeekStart, dayIndex, startIndex, span };
-      const block = visibleBlocks.find((candidate) => candidate.placement.id === placementId);
+      const block = visibleBlocks.find((candidate) => candidate.occurrenceId === occurrenceId);
       setSubject(
         block
-          ? { placementId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
-          : { placementId },
+          ? { occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
+          : { occurrenceId },
       );
       setInteraction({
         kind: edge === "start" ? "resizingStart" : "resizingEnd",
-        placementId,
+        occurrenceId,
         origin,
         weekStart: visibleWeekStart,
         dayIndex,
@@ -458,29 +523,29 @@ export function TimetableSurface({
    * eventSelected --long press on the same class--> movingEvent
    */
   const beginHold = useCallback(
-    (placementId: string, dayIndex: number, startIndex: number, span: number) => {
+    (occurrenceId: string, dayIndex: number, startIndex: number, span: number) => {
       activationTick();
       const alreadySelected =
         interaction.kind === "eventSelected" &&
-        interaction.placementId === placementId &&
+        interaction.occurrenceId === occurrenceId &&
         interaction.weekStart === visibleWeekStart;
 
-      const block = visibleBlocks.find((candidate) => candidate.placement.id === placementId);
+      const block = visibleBlocks.find((candidate) => candidate.occurrenceId === occurrenceId);
       setSubject(
         block
-          ? { placementId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
-          : { placementId },
+          ? { occurrenceId, name: block.course.name, room: block.course.room, appearanceId: block.course.appearanceId }
+          : { occurrenceId },
       );
 
       if (!alreadySelected) {
         // Selection only: the class must not move because it was picked.
-        setInteraction({ kind: "eventSelected", placementId, weekStart: visibleWeekStart, dayIndex, startIndex, span });
+        setInteraction({ kind: "eventSelected", occurrenceId, weekStart: visibleWeekStart, dayIndex, startIndex, span });
         return;
       }
 
       setInteraction({
         kind: "movingEvent",
-        placementId,
+        occurrenceId,
         origin: { weekStart: visibleWeekStart, dayIndex, startIndex, span },
         weekStart: visibleWeekStart,
         dayIndex,
@@ -502,7 +567,7 @@ export function TimetableSurface({
         return;
       }
       if (current.kind === "resizingStart" || current.kind === "resizingEnd" || current.kind === "movingEvent") {
-        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.placementId, dayIndex, startIndex, span) });
+        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.occurrenceId, dayIndex, startIndex, span) });
       }
     },
     [latestInteraction, rangeIsFree, setInteraction],
@@ -518,6 +583,10 @@ export function TimetableSurface({
    * render that flushes it, so moving the class from there would update the
    * app-state provider while this component is rendering. `settleShaping`
    * guarantees the hand-over happens once, so the write happens once.
+   *
+   * A gesture that was interrupted, changed nothing, or came to rest
+   * somewhere it cannot land returns to where it started and hands nothing
+   * over at all — so none of those can raise the scope question.
    */
   const finishManipulation = useCallback(
     (dayIndex: number, startIndex: number, span: number) => {
@@ -537,24 +606,39 @@ export function TimetableSurface({
       // something else has already settled it: there is nothing to commit.
       if (current.kind !== "resizingStart" && current.kind !== "resizingEnd" && current.kind !== "movingEvent") return;
 
-      const { origin, placementId } = current;
+      const { origin, occurrenceId } = current;
       const unchanged = dayIndex === origin.dayIndex && startIndex === origin.startIndex && span === origin.span;
-      if (!placementId || unchanged || !rangeIsFree(placementId, dayIndex, startIndex, span)) {
+      const occurrence = occurrenceId ? visibleBlocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
+      if (!occurrenceId || !occurrence || unchanged || !rangeIsFree(occurrenceId, dayIndex, startIndex, span)) {
         setInteraction(
-          placementId ? { kind: "eventSelected", placementId, ...origin } : { kind: "provisionalSelected", ...origin },
+          occurrenceId ? { kind: "eventSelected", occurrenceId, ...origin } : { kind: "provisionalSelected", ...origin },
         );
         return;
       }
 
-      setInteraction({ kind: "eventSelected", placementId, weekStart: origin.weekStart, dayIndex, startIndex, span });
-      onMoveClass({
-        placementId,
-        weekday: weekdays[dayIndex],
+      const weekday = weekdays[dayIndex];
+      setInteraction({ kind: "eventSelected", occurrenceId, weekStart: origin.weekStart, dayIndex, startIndex, span });
+      const outcome = onMoveClass({
+        occurrence,
+        weekday,
         timeSlotId: timeSlots[startIndex].id,
         slotSpan: span,
+        date: visibleDates[weekday],
+        source: current.kind === "movingEvent" ? "move" : "resize",
       });
+      deferredOrigin.set(outcome === "deferred" ? { occurrenceId, origin } : null);
     },
-    [latestInteraction, onMoveClass, rangeIsFree, setInteraction, timeSlots, weekdays],
+    [
+      deferredOrigin,
+      latestInteraction,
+      onMoveClass,
+      rangeIsFree,
+      setInteraction,
+      timeSlots,
+      visibleBlocks,
+      visibleDates,
+      weekdays,
+    ],
   );
 
   /** Period under a surface-relative y, fractional part included. */
@@ -589,7 +673,7 @@ export function TimetableSurface({
     if (height <= 0 || y < DAY_HEADER_HEIGHT || dayIndex < 0 || slotFloat < 0 || slotFloat >= slotCount) return TARGET_CHROME;
 
     const selection = selectionSV.get();
-    if (selection && selection.placementId !== null && selection.dayIndex === dayIndex) {
+    if (selection && selection.occurrenceId !== null && selection.dayIndex === dayIndex) {
       const fingerY = slotFloat * height;
       if (Math.abs(fingerY - selection.startIndex * height) <= HANDLE_TOUCH_RADIUS) return TARGET_HANDLE_START;
       if (Math.abs(fingerY - (selection.startIndex + selection.span) * height) <= HANDLE_TOUCH_RADIUS) return TARGET_HANDLE_END;
@@ -726,7 +810,7 @@ export function TimetableSurface({
       // sideways is still a resize, and it must not scroll the grid away.
       const target = touchTarget.get();
       const selection = selectionSV.get();
-      if ((target === TARGET_HANDLE_START || target === TARGET_HANDLE_END) && selection && selection.placementId !== null) {
+      if ((target === TARGET_HANDLE_START || target === TARGET_HANDLE_END) && selection && selection.occurrenceId !== null) {
         axis.set(AXIS.block);
         panMode.set(target === TARGET_HANDLE_START ? PAN_RESIZE_START : PAN_RESIZE_END);
         dragDay.set(selection.dayIndex);
@@ -738,7 +822,7 @@ export function TimetableSurface({
         suppressTap.set(1);
         runOnJS(beginResize)(
           target === TARGET_HANDLE_START ? "start" : "end",
-          selection.placementId,
+          selection.occurrenceId,
           selection.dayIndex,
           selection.startIndex,
           selection.span,
@@ -961,7 +1045,7 @@ export function TimetableSurface({
       }
       // The visible week can have changed under a stale hit-test; without a
       // class to hold there is nothing to select, and the tap still stands.
-      if (!hit || hit.placementId === null) return;
+      if (!hit || hit.occurrenceId === null) return;
 
       axis.set(AXIS.block);
       suppressTap.set(1);
@@ -970,7 +1054,7 @@ export function TimetableSurface({
 
       const selection = selectionSV.get();
       const alreadySelected =
-        selection !== null && selection.placementId === hit.placementId && interactionSV.get() === INTERACTION.eventSelected;
+        selection !== null && selection.occurrenceId === hit.occurrenceId && interactionSV.get() === INTERACTION.eventSelected;
 
       dragDay.set(hit.dayIndex);
       dragStart.set(hit.startIndex);
@@ -982,7 +1066,7 @@ export function TimetableSurface({
       // second hold on the same class is what starts a move.
       panMode.set(alreadySelected ? PAN_MOVE : PAN_HELD);
       interactionSV.set(alreadySelected ? INTERACTION.movingEvent : INTERACTION.eventSelected);
-      runOnJS(beginHold)(hit.placementId, hit.dayIndex, hit.startIndex, hit.span);
+      runOnJS(beginHold)(hit.occurrenceId, hit.dayIndex, hit.startIndex, hit.span);
     });
 
   const tap = Gesture.Tap()
@@ -1021,7 +1105,7 @@ export function TimetableSurface({
         }
       : null;
   const overlayWeekStart = interaction.kind === "idle" ? null : interaction.weekStart;
-  const hiddenPlacementId = live ? (subject?.placementId ?? null) : null;
+  const hiddenOccurrenceId = live ? (subject?.occurrenceId ?? null) : null;
 
   return (
     <View
@@ -1051,13 +1135,15 @@ export function TimetableSurface({
                   timeSlots={timeSlots}
                   placements={placements}
                   courses={courses}
+                  exceptions={exceptions}
+                  preview={preview}
                   today={today}
                   now={now}
                   width={size.width}
                   columnWidth={columnWidth}
                   slotHeight={slotHeight}
                   scrollY={scrollY}
-                  hiddenPlacementId={hiddenPlacementId}
+                  hiddenOccurrenceId={hiddenOccurrenceId}
                   overlay={weekStart === overlayWeekStart ? pageOverlay : null}
                 />
               );

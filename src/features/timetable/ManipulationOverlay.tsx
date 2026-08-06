@@ -12,7 +12,7 @@ const BUBBLE_HEIGHT = 22;
 const BUBBLE_GAP = 6;
 
 export interface ManipulationSubject {
-  placementId: string | null;
+  occurrenceId: string | null;
   name?: string;
   room?: string;
   appearanceId?: string;

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 
 import { dayOfMonth, weekDatesFrom } from "@/domain/calendar";
+import type { OccurrencePreview } from "@/domain/occurrence";
 import { findMajorBoundaries, findPeriodProgress } from "@/domain/time";
 import { resolveWeekBlocks } from "@/domain/timetable";
 import { isWeekendDay, WEEKDAY_LABEL, WEEKDAY_SHORT_LABEL, type Weekday } from "@/domain/week";
@@ -11,7 +12,7 @@ import { GridBlock, SelectionOutline } from "@/features/timetable/GridBlock";
 import type { PageOverlay } from "@/features/timetable/types";
 import { getAppearanceColors } from "@/theme/tokens";
 import { useTheme } from "@/theme/useTheme";
-import type { Course, Placement, TimeSlot } from "@/types/models";
+import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 const DATE_BADGE_SIZE = 28;
 
@@ -34,6 +35,9 @@ interface WeekPageProps {
   timeSlots: TimeSlot[];
   placements: Placement[];
   courses: Course[];
+  exceptions: OccurrenceException[];
+  /** An edit awaiting a scope choice, drawn where it would land. */
+  preview: OccurrencePreview | null;
   today: string;
   now: string;
   width: number;
@@ -41,7 +45,7 @@ interface WeekPageProps {
   slotHeight: SharedValue<number>;
   scrollY: SharedValue<number>;
   /** Set while a block on this page is being dragged, so it is drawn by the overlay instead. */
-  hiddenPlacementId: string | null;
+  hiddenOccurrenceId: string | null;
   /** The provisional range or the selected class, when it belongs to this week. */
   overlay: PageOverlay | null;
 }
@@ -66,21 +70,23 @@ function WeekPageComponent({
   timeSlots,
   placements,
   courses,
+  exceptions,
+  preview,
   today,
   now,
   width,
   columnWidth,
   slotHeight,
   scrollY,
-  hiddenPlacementId,
+  hiddenOccurrenceId,
   overlay,
 }: WeekPageProps) {
   const { colors, typography, borderWidth, radii, scheme } = useTheme();
 
   const dates = useMemo(() => weekDatesFrom(weekStart), [weekStart]);
   const blocks = useMemo(
-    () => resolveWeekBlocks({ weekdays, dates, placements, courses, timeSlots }),
-    [weekdays, dates, placements, courses, timeSlots],
+    () => resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
+    [weekdays, dates, placements, courses, exceptions, timeSlots, preview],
   );
 
   // A selected class is ringed in its own colour, one step brighter than the
@@ -160,10 +166,11 @@ function WeekPageComponent({
           ))}
 
           {blocks.map((block) =>
-            block.placement.id === hiddenPlacementId ? null : (
+            block.occurrenceId === hiddenOccurrenceId ? null : (
               <GridBlock
-                // Stable per occurrence: this placement, on this date.
-                key={`${block.placement.id}|${block.date}`}
+                // Stable per occurrence, and per the date it is drawn on —
+                // an occurrence that moved is the same one somewhere else.
+                key={`${block.occurrenceId}|${block.date}`}
                 startIndex={block.startIndex}
                 span={block.span}
                 left={TIME_GUTTER_WIDTH + block.dayIndex * columnWidth}

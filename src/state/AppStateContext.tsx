@@ -1,15 +1,24 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
+import { applyClassEditScope, type ClassEditDraft, type EditScope } from "@/domain/classEdit";
+import { findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
-import { slotsCollide, type OccupiedSlot } from "@/domain/recurrence";
 import { generateTimeSlots } from "@/domain/time";
-import { occupiedSlotIds } from "@/domain/timetable";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
 import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
 import { createSeedState } from "@/state/seed";
-import type { AcademicTerm, Course, GridOrientation, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
+import type {
+  AcademicTerm,
+  Course,
+  GridOrientation,
+  OccurrenceException,
+  Placement,
+  RecurrenceType,
+  Settings,
+  TimeSlot,
+} from "@/types/models";
 
 export interface AppState {
   settings: Settings;
@@ -17,6 +26,8 @@ export interface AppState {
   timeSlots: TimeSlot[];
   courses: Course[];
   placements: Placement[];
+  /** Single occurrences that step out of line with their series. */
+  exceptions: OccurrenceException[];
 }
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -60,6 +71,12 @@ export interface MovePlacementInput {
   weekday: Weekday;
   timeSlotId: string;
   slotSpan: number;
+  /**
+   * Destination date in the week the drag happened in. A repeating class
+   * ignores it — its dates come from its rule — but a one-off *is* its date,
+   * so dropping it on another day has to move the date with it.
+   */
+  date: string;
 }
 
 interface AppStateContextValue {
@@ -73,6 +90,11 @@ interface AppStateContextValue {
   movePlacement: (input: MovePlacementInput) => ActionResult;
   /** Read-only: whether a proposed position is free. Changes nothing. */
   checkPlacement: (input: MovePlacementInput) => ActionResult;
+  /**
+   * The only way a drafted edit to a recurring class reaches the store —
+   * and only ever with a scope the user has chosen.
+   */
+  applyClassEdit: (draft: ClassEditDraft, scope: EditScope) => ActionResult;
   deletePlacement: (placementId: string) => void;
   loadSampleTimetable: () => void;
   resetPrototype: () => void;
@@ -85,6 +107,7 @@ function buildEmptyState(): AppState {
     timeSlots: createDefaultTimeSlots(),
     courses: [],
     placements: [],
+    exceptions: [],
   };
 }
 
@@ -97,36 +120,8 @@ function buildInitialState(): AppState {
   return createSeedState();
 }
 
-interface ConflictCandidate {
-  placementId?: string;
-  weekday: Weekday;
-  timeSlotId: string;
-  slotSpan: number;
-  recurrenceType: RecurrenceType;
-  startsOn: string;
-  endsOn: string;
-}
-
-/**
- * Two classes may share a weekday and period as long as they never actually
- * meet on the same date — an alternating pair of biweekly classes, or a
- * one-off in a week its neighbour skips.
- */
-function findConflict(state: AppState, candidate: ConflictCandidate): Placement | undefined {
-  const occupied: OccupiedSlot = {
-    weekday: candidate.weekday,
-    slotIds: occupiedSlotIds(state.timeSlots, candidate.timeSlotId, candidate.slotSpan),
-    recurrenceType: candidate.recurrenceType,
-    startsOn: candidate.startsOn,
-    endsOn: candidate.endsOn,
-  };
-
-  return state.placements.find(
-    (placement) =>
-      !placement.deletedAt &&
-      placement.id !== candidate.placementId &&
-      slotsCollide({ ...placement, slotIds: occupiedSlotIds(state.timeSlots, placement.timeSlotId, placement.slotSpan) }, occupied),
-  );
+function findConflict(state: AppState, candidate: PlacementCandidate): Placement | undefined {
+  return findPlacementConflict(state.timeSlots, state.placements, candidate);
 }
 
 function conflictError(state: AppState, conflict: Placement): ActionResult {
@@ -181,6 +176,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         })),
         placements: prev.placements.map((placement) =>
           placement.deletedAt ? placement : { ...placement, deletedAt: now, updatedAt: now },
+        ),
+        // Exceptions point at periods too, so they cannot outlive the
+        // periods the old academic day was made of.
+        exceptions: prev.exceptions.map((exception) =>
+          exception.deletedAt ? exception : { ...exception, deletedAt: now, updatedAt: now },
         ),
       }));
       return { ok: true };
@@ -329,14 +329,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
       if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
 
+      const oneOff = existing.recurrenceType === "once";
       const conflict = findConflict(state, {
         placementId: input.placementId,
         weekday: input.weekday,
         timeSlotId: input.timeSlotId,
         slotSpan: Math.max(1, input.slotSpan),
         recurrenceType: existing.recurrenceType,
-        startsOn: existing.startsOn,
-        endsOn: existing.endsOn,
+        startsOn: oneOff ? input.date : existing.startsOn,
+        endsOn: oneOff ? input.date : existing.endsOn,
       });
       return conflict ? conflictError(state, conflict) : { ok: true };
     };
@@ -350,9 +351,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
 
       const slotSpan = Math.max(1, input.slotSpan);
-      if (existing.weekday === input.weekday && existing.timeSlotId === input.timeSlotId && existing.slotSpan === slotSpan) {
-        return { ok: true };
-      }
+      const oneOff = existing.recurrenceType === "once";
+      const dates = oneOff ? { startsOn: input.date, endsOn: input.date } : { startsOn: existing.startsOn, endsOn: existing.endsOn };
+      const unchanged =
+        existing.weekday === input.weekday &&
+        existing.timeSlotId === input.timeSlotId &&
+        existing.slotSpan === slotSpan &&
+        existing.startsOn === dates.startsOn;
+      if (unchanged) return { ok: true };
 
       const conflict = findConflict(state, {
         placementId: input.placementId,
@@ -360,8 +366,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         timeSlotId: input.timeSlotId,
         slotSpan,
         recurrenceType: existing.recurrenceType,
-        startsOn: existing.startsOn,
-        endsOn: existing.endsOn,
+        ...dates,
       });
       if (conflict) return conflictError(state, conflict);
 
@@ -370,9 +375,37 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ...prev,
         placements: prev.placements.map((placement) =>
           placement.id === input.placementId
-            ? { ...placement, weekday: input.weekday, timeSlotId: input.timeSlotId, slotSpan, updatedAt: now }
+            ? { ...placement, weekday: input.weekday, timeSlotId: input.timeSlotId, slotSpan, ...dates, updatedAt: now }
             : placement,
         ),
+      }));
+      return { ok: true };
+    };
+
+    /**
+     * A drafted edit, applied at the scope the user picked. All of the
+     * recurrence reasoning lives in the domain; this only decides when its
+     * result becomes state.
+     */
+    const applyClassEdit: AppStateContextValue["applyClassEdit"] = (draft, scope) => {
+      const result = applyClassEditScope(
+        {
+          timeSlots: state.timeSlots,
+          courses: state.courses,
+          placements: state.placements,
+          exceptions: state.exceptions,
+        },
+        draft,
+        scope,
+        new Date().toISOString(),
+      );
+      if (!result.ok) return { ok: false, error: result.error };
+
+      setState((prev) => ({
+        ...prev,
+        courses: result.next.courses,
+        placements: result.next.placements,
+        exceptions: result.next.exceptions,
       }));
       return { ok: true };
     };
@@ -383,6 +416,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ...prev,
         placements: prev.placements.map((placement) =>
           placement.id === placementId ? { ...placement, deletedAt: now, updatedAt: now } : placement,
+        ),
+        // Nothing may keep referring to a series that is gone.
+        exceptions: prev.exceptions.map((exception) =>
+          exception.placementId === placementId && !exception.deletedAt
+            ? { ...exception, deletedAt: now, updatedAt: now }
+            : exception,
         ),
       }));
     };
@@ -405,6 +444,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       upsertPlacement,
       movePlacement,
       checkPlacement,
+      applyClassEdit,
       deletePlacement,
       loadSampleTimetable,
       resetPrototype,

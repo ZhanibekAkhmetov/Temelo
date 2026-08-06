@@ -4,19 +4,15 @@
  * from exactly one resolution rule.
  */
 
-import { occursOn } from "@/domain/recurrence";
+import { resolveOccurrences, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
 import type { Weekday } from "@/domain/week";
-import type { Course, Placement, TimeSlot } from "@/types/models";
+import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
-export interface ScheduledClass {
-  placement: Placement;
-  course: Course;
-}
+/** One meeting of a class: what the grid draws and what an edit is about. */
+export type ScheduledClass = Occurrence;
 
 /** A class as it is drawn in one week: which column, which rows. */
 export interface WeekBlock extends ScheduledClass {
-  weekday: Weekday;
-  date: string;
   /** Column index within the displayed weekdays. */
   dayIndex: number;
   /** Row index of the first period it occupies. */
@@ -31,7 +27,10 @@ export interface ResolveWeekInput {
   dates: Record<Weekday, string>;
   placements: Placement[];
   courses: Course[];
+  exceptions: OccurrenceException[];
   timeSlots: TimeSlot[];
+  /** An edit awaiting a scope choice, drawn where it would land. */
+  preview?: OccurrencePreview | null;
 }
 
 /** Stable key for a grid cell: one weekday of the shown week × one period. */
@@ -51,22 +50,12 @@ export function occupiedSlotIds(timeSlots: TimeSlot[], startSlotId: string, slot
   return timeSlots.slice(startIndex, end).map((slot) => slot.id);
 }
 
-function activeClassesInWeek({ weekdays, dates, placements, courses }: ResolveWeekInput): ScheduledClass[] {
-  const shownWeekdays = new Set(weekdays);
-  const found: ScheduledClass[] = [];
-
-  for (const placement of placements) {
-    if (placement.deletedAt) continue;
-    if (!shownWeekdays.has(placement.weekday)) continue;
-    if (!occursOn(placement, dates[placement.weekday])) continue;
-
-    const course = courses.find((candidate) => candidate.id === placement.courseId && !candidate.deletedAt);
-    if (!course) continue;
-
-    found.push({ placement, course });
-  }
-
-  return found;
+function occurrencesInWeek(input: ResolveWeekInput): Occurrence[] {
+  const dates = input.weekdays.map((weekday) => input.dates[weekday]);
+  const shown = new Set(input.weekdays);
+  // An occurrence can only be drawn on a day the week actually shows — a
+  // class moved onto a hidden weekend day is simply not in this week.
+  return resolveOccurrences(input, dates).filter((occurrence) => shown.has(occurrence.weekday));
 }
 
 /**
@@ -74,18 +63,16 @@ function activeClassesInWeek({ weekdays, dates, placements, courses }: ResolveWe
  * them as absolutely placed blocks.
  */
 export function resolveWeekBlocks(input: ResolveWeekInput): WeekBlock[] {
-  const { weekdays, dates, timeSlots } = input;
+  const { weekdays, timeSlots } = input;
 
-  return activeClassesInWeek(input).flatMap((scheduled) => {
-    const startIndex = timeSlots.findIndex((slot) => slot.id === scheduled.placement.timeSlotId);
+  return occurrencesInWeek(input).flatMap((occurrence) => {
+    const startIndex = timeSlots.findIndex((slot) => slot.id === occurrence.placement.timeSlotId);
     if (startIndex < 0) return [];
-    const span = Math.max(1, Math.min(scheduled.placement.slotSpan, timeSlots.length - startIndex));
+    const span = Math.max(1, Math.min(occurrence.placement.slotSpan, timeSlots.length - startIndex));
     return [
       {
-        ...scheduled,
-        weekday: scheduled.placement.weekday,
-        date: dates[scheduled.placement.weekday],
-        dayIndex: weekdays.indexOf(scheduled.placement.weekday),
+        ...occurrence,
+        dayIndex: weekdays.indexOf(occurrence.weekday),
         startIndex,
         span,
       },
@@ -100,10 +87,10 @@ export function resolveWeekBlocks(input: ResolveWeekInput): WeekBlock[] {
 export function resolveWeekClasses(input: ResolveWeekInput): Map<string, ScheduledClass> {
   const byCell = new Map<string, ScheduledClass>();
 
-  for (const scheduled of activeClassesInWeek(input)) {
-    const slotIds = occupiedSlotIds(input.timeSlots, scheduled.placement.timeSlotId, scheduled.placement.slotSpan);
+  for (const occurrence of occurrencesInWeek(input)) {
+    const slotIds = occupiedSlotIds(input.timeSlots, occurrence.placement.timeSlotId, occurrence.placement.slotSpan);
     for (const slotId of slotIds) {
-      byCell.set(cellKey(scheduled.placement.weekday, slotId), scheduled);
+      byCell.set(cellKey(occurrence.weekday, slotId), occurrence);
     }
   }
 

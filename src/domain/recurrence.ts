@@ -59,6 +59,25 @@ export function occursOn(slot: RecurringSlot, isoDate: string): boolean {
 }
 
 /**
+ * Whether the slot meets at least once inside an inclusive date range.
+ *
+ * Splitting a series asks exactly this of the part that stays behind: a
+ * placement whose remaining range contains no occurrence at all is not a
+ * shortened series, it is one that no longer exists.
+ */
+export function hasOccurrenceBetween(slot: RecurringSlot, from: string, until: string): boolean {
+  if (from > until) return false;
+  if (slot.recurrenceType === "once") return occursOn(slot, slot.startsOn) && slot.startsOn >= from && slot.startsOn <= until;
+
+  let date = firstOccurrenceOnOrAfter(from, slot.weekday);
+  for (let step = 0; date <= until && step < MAX_OCCURRENCE_STEPS; step++) {
+    if (occursOn(slot, date)) return true;
+    date = addDaysIso(date, 7);
+  }
+  return false;
+}
+
+/**
  * True when two placements would overlap on the same day — same weekday, at
  * least one period in common, and at least one date where both meet.
  * Checked date by date rather than by weekday alone, so a one-off and a
