@@ -16,12 +16,11 @@
  * class name in the same sitting.
  */
 
-import { diffInDaysIso } from "@/domain/calendar";
 import { addDaysIso, isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
 import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
 import { findOccurrenceConflict, findPlacementConflict } from "@/domain/conflict";
-import { hasOccurrenceBetween } from "@/domain/recurrence";
+import { hasOccurrenceBetween, seriesRangeMovedTo, type SeriesRange } from "@/domain/recurrence";
 import type { Weekday } from "@/domain/week";
 import type { Course, OccurrenceException, Placement, RecurrenceType, TimeSlot } from "@/types/models";
 
@@ -209,17 +208,21 @@ function conflictMessage(conflict: Occurrence): string {
 }
 
 /**
- * How far the occurrence moved across the week, in days, and zero when the
- * edit did not move it at all.
+ * The series' date range after it follows its edited occurrence, and the
+ * range untouched when the edit did not move the occurrence at all.
  *
- * A series that follows its occurrence onto another weekday is shifted by
- * exactly this — start date included. Re-anchoring the whole range rather
- * than only the weekday is what keeps an every-two-week class on the weeks
- * it already met on: parity is counted from a series' own first occurrence,
- * so a start date that moves with the weekday cannot fall out of step.
+ * The guard matters: an occurrence that already carries a one-off move is
+ * drawn on a date its series does not name, so an edit that only changes,
+ * say, the room would otherwise read as a move of the whole series.
+ *
+ * The shift itself is `seriesRangeMovedTo` — the same rule the move preview
+ * and the store's own move ask, so a drop the grid offered cannot be refused
+ * once it is committed.
  */
-function dayShiftOf(draft: ClassEditDraft): number {
-  return draft.changed.schedule ? diffInDaysIso(draft.occurrenceDate, draft.effectiveDate) : 0;
+function movedRangeOf(draft: ClassEditDraft, base: Placement): SeriesRange {
+  return draft.changed.schedule
+    ? seriesRangeMovedTo(base, draft.occurrenceDate, draft.effectiveDate)
+    : { startsOn: base.startsOn, endsOn: base.endsOn };
 }
 
 /** Only fields the user touched are pushed onto the series' own course. */
@@ -303,7 +306,7 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
     ? draft.effectiveDate
     : draft.changed.recurrence
       ? draft.endsOn
-      : addDaysIso(base.endsOn, dayShiftOf(draft));
+      : movedRangeOf(draft, base).endsOn;
 
   if (!isIsoDateBeforeOrEqual(draft.effectiveDate, endsOn)) {
     return { ok: false, error: "End date cannot be before this occurrence." };
@@ -377,15 +380,15 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
  */
 function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Placement, baseCourse: Course, now: string): EditResult {
   const { changed } = draft;
-  const shift = dayShiftOf(draft);
+  const moved = movedRangeOf(draft, base);
   const nextPlacement: Placement = {
     ...base,
     weekday: changed.schedule ? draft.weekday : base.weekday,
     timeSlotId: changed.schedule ? draft.timeSlotId : base.timeSlotId,
     slotSpan: changed.schedule ? draft.slotSpan : base.slotSpan,
     recurrenceType: changed.recurrence ? draft.recurrenceType : base.recurrenceType,
-    startsOn: changed.recurrence ? draft.startsOn : addDaysIso(base.startsOn, shift),
-    endsOn: changed.recurrence ? draft.endsOn : addDaysIso(base.endsOn, shift),
+    startsOn: changed.recurrence ? draft.startsOn : moved.startsOn,
+    endsOn: changed.recurrence ? draft.endsOn : moved.endsOn,
     updatedAt: now,
   };
 

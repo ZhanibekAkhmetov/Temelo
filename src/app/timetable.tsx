@@ -18,6 +18,7 @@ import {
   TimetableSurface,
   type MoveOutcome,
   type OccurrenceMove,
+  type OccurrencePosition,
   type PlacementPosition,
   type TimetableSurfaceHandle,
 } from "@/features/timetable/TimetableSurface";
@@ -32,7 +33,7 @@ const MONTH_LABEL_DAY_OFFSET = 3;
 
 export default function TimetableScreen() {
   const { colors, spacing, typography } = useTheme();
-  const { state, movePlacement, checkPlacement, applyClassEdit } = useAppState();
+  const { state, movePlacement, checkPlacement, checkOccurrence, applyClassEdit } = useAppState();
   const [selected, setSelected] = useState<SelectedCell | null>(null);
   /**
    * An edit that has been made but not yet applied to anything. It is drawn
@@ -85,6 +86,7 @@ export default function TimetableScreen() {
           weekday: move.weekday,
           timeSlotId: move.timeSlotId,
           slotSpan: move.slotSpan,
+          occurrenceDate: move.occurrence.occurrenceDate,
           date: move.date,
         });
         if (!result.ok) Alert.alert("Cannot move class", result.error);
@@ -120,8 +122,13 @@ export default function TimetableScreen() {
   }
 
   // Asked once per crossed boundary while dragging, so the preview can show
-  // whether the drop would be accepted before the finger lifts.
+  // whether the drop would be accepted before the finger lifts. Both go to
+  // the store, so the answer is the one the commit will give.
   const handleCanPlaceClass = useCallback((input: PlacementPosition) => checkPlacement(input).ok, [checkPlacement]);
+  const handleCanPlaceOccurrence = useCallback(
+    (input: OccurrencePosition) => checkOccurrence(input).ok,
+    [checkOccurrence],
+  );
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={["top", "left", "right", "bottom"]}>
@@ -194,6 +201,7 @@ export default function TimetableScreen() {
             onOpenEditor={setSelected}
             onMoveClass={handleMoveClass}
             canPlaceClass={handleCanPlaceClass}
+            canPlaceOccurrence={handleCanPlaceOccurrence}
           />
         ) : gridSize.width === 0 ? null : (
           <WeekGridHorizontal

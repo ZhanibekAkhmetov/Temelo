@@ -103,8 +103,10 @@ interface TimetableSurfaceProps {
    * for a possible cancel.
    */
   onMoveClass: (move: OccurrenceMove) => MoveOutcome;
-  /** Whether a proposed position is free, checked against recurrence overlap. */
+  /** Whether a proposed position is free for a whole series' recurrence. */
   canPlaceClass: (input: PlacementPosition) => boolean;
+  /** The same, asked of one date only — one occurrence, or a new range. */
+  canPlaceOccurrence: (input: OccurrencePosition) => boolean;
   ref?: Ref<TimetableSurfaceHandle>;
 }
 
@@ -126,8 +128,19 @@ export interface PlacementPosition {
   weekday: Weekday;
   timeSlotId: string;
   slotSpan: number;
+  /** Date the dragged occurrence has in its series — where the move starts. */
+  occurrenceDate: string;
   /** Destination date in the displayed week. */
   date: string;
+}
+
+/** A proposed position judged on one date: one occurrence, or a new range. */
+export interface OccurrencePosition {
+  /** null while the range being dragged out is not a class yet. */
+  occurrenceId: string | null;
+  date: string;
+  timeSlotId: string;
+  slotSpan: number;
 }
 
 /**
@@ -150,6 +163,7 @@ export function TimetableSurface({
   onOpenEditor,
   onMoveClass,
   canPlaceClass,
+  canPlaceOccurrence,
   ref,
 }: TimetableSurfaceProps) {
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -399,36 +413,40 @@ export function TimetableSurface({
   /**
    * Whether a proposed range is free.
    *
-   * A whole series is checked against recurrence overlap through the store,
-   * because it has to hold on every date it meets. A single occurrence that
-   * has already stepped out of its series — and a range that is not a class
-   * yet — only has to be free on the one date on screen, so it is checked
-   * against what actually meets in the visible week.
+   * A whole series is checked against recurrence overlap, because it has to
+   * hold on every date it meets. A single occurrence that has already
+   * stepped out of its series — and a range that is not a class yet — only
+   * has to be free on the one date on screen.
+   *
+   * Both questions go to the store, and from there to the same domain
+   * helpers creation and the scope-apply use. Judging the drag from the
+   * blocks drawn in the visible week instead would be a second, move-only
+   * rule: a week where an alternating class simply does not meet looks
+   * identical to one where it does not clash.
    */
   const rangeIsFree = useCallback(
     (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
       if (dayIndex < 0 || dayIndex >= dayCount || startIndex < 0 || startIndex + span > slotCount) return false;
 
       const page = pageUnderFinger();
+      const weekday = weekdays[dayIndex];
+      const date = page.dates[weekday];
+      const timeSlotId = timeSlots[startIndex].id;
+
       const subject = occurrenceId ? page.blocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
       if (subject && !subject.exception) {
         return canPlaceClass({
-          placementId: subject.placement.id,
-          weekday: weekdays[dayIndex],
-          timeSlotId: timeSlots[startIndex].id,
+          placementId: subject.basePlacement.id,
+          weekday,
+          timeSlotId,
           slotSpan: span,
-          date: page.dates[weekdays[dayIndex]],
+          occurrenceDate: subject.occurrenceDate,
+          date,
         });
       }
-      return !page.blocks.some(
-        (block) =>
-          block.occurrenceId !== occurrenceId &&
-          block.dayIndex === dayIndex &&
-          startIndex < block.startIndex + block.span &&
-          block.startIndex < startIndex + span,
-      );
+      return canPlaceOccurrence({ occurrenceId, date, timeSlotId, slotSpan: span });
     },
-    [canPlaceClass, dayCount, pageUnderFinger, slotCount, timeSlots, weekdays],
+    [canPlaceClass, canPlaceOccurrence, dayCount, pageUnderFinger, slotCount, timeSlots, weekdays],
   );
 
   const openEditorFor = useCallback(

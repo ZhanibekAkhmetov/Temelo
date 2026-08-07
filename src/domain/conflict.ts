@@ -39,8 +39,12 @@ export interface PlacementCandidate {
 }
 
 export interface OccurrenceCandidate {
-  /** The occurrence being moved, so it is never counted against itself. */
-  occurrenceId: string;
+  /**
+   * The occurrence being moved, so it is never counted against itself. null
+   * when the candidate is not a class yet — a range being dragged out on the
+   * empty grid has nothing of its own to exclude.
+   */
+  occurrenceId: string | null;
   date: string;
   timeSlotId: string;
   slotSpan: number;
@@ -93,6 +97,9 @@ export function findPlacementConflict(source: ConflictSource, candidate: Placeme
 /**
  * Whether one occurrence can occupy a slot — checked on its single date, so
  * one lesson may legitimately sit where its own series never could.
+ *
+ * The same question a range being dragged out on empty grid asks, with no
+ * occurrence of its own to exclude.
  */
 export function findOccurrenceConflict(source: ConflictSource, candidate: OccurrenceCandidate): Occurrence | undefined {
   return firstClashOn(
