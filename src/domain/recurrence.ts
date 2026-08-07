@@ -5,7 +5,7 @@
  * "does this class clash with that one".
  */
 
-import { weekdayOfIsoDate, weeksBetweenIso } from "@/domain/calendar";
+import { diffInDaysIso, weekdayOfIsoDate, weeksBetweenIso } from "@/domain/calendar";
 import { addDaysIso, isIsoDateBeforeOrEqual } from "@/domain/date";
 import { ALL_WEEKDAYS_MONDAY_FIRST, type Weekday } from "@/domain/week";
 import type { RecurrenceType } from "@/types/models";
@@ -94,6 +94,32 @@ export function occurrenceDates(slot: RecurringSlot): string[] {
     date = addDaysIso(date, 7);
   }
   return dates;
+}
+
+/** A series' own inclusive date range, apart from how it repeats inside it. */
+export interface SeriesRange {
+  startsOn: string;
+  endsOn: string;
+}
+
+/**
+ * Where a series' date range lands when it follows one of its occurrences
+ * from `fromDate` to `toDate`.
+ *
+ * Both ends move together, by whole days, so the series keeps the same first
+ * occurrence relative to wherever it now meets. That is what preserves an
+ * every-two-week class's parity across a move: parity is counted from a
+ * placement's own first occurrence, and a start date left behind on the old
+ * weekday would be re-read against the new one — silently re-anchoring the
+ * whole series onto the other half of the fortnight.
+ *
+ * A one-off needs no special case: its range is its single date, so shifting
+ * the range *is* moving it.
+ */
+export function seriesRangeMovedTo(range: SeriesRange, fromDate: string, toDate: string): SeriesRange {
+  const shift = diffInDaysIso(fromDate, toDate);
+  if (shift === 0) return { startsOn: range.startsOn, endsOn: range.endsOn };
+  return { startsOn: addDaysIso(range.startsOn, shift), endsOn: addDaysIso(range.endsOn, shift) };
 }
 
 /**

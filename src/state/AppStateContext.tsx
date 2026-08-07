@@ -1,10 +1,11 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { applyClassEditScope, type ClassEditDraft, type EditScope } from "@/domain/classEdit";
-import { findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
+import { findOccurrenceConflict, findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
 import type { Occurrence } from "@/domain/occurrence";
+import { seriesRangeMovedTo } from "@/domain/recurrence";
 import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
@@ -72,12 +73,23 @@ export interface MovePlacementInput {
   weekday: Weekday;
   timeSlotId: string;
   slotSpan: number;
+  /** Date the dragged occurrence has in its series — where the move starts. */
+  occurrenceDate: string;
   /**
-   * Destination date in the week the drag happened in. A repeating class
-   * ignores it — its dates come from its rule — but a one-off *is* its date,
-   * so dropping it on another day has to move the date with it.
+   * Destination date in the week the drag happened in. Together with
+   * `occurrenceDate` this is how far the series moves, which is what keeps
+   * an every-two-week class on its own half of the fortnight.
    */
   date: string;
+}
+
+/** A drag or resize judged on one date only: one occurrence, or a new range. */
+export interface OccurrencePositionInput {
+  /** null while the range is not a class yet. */
+  occurrenceId: string | null;
+  date: string;
+  timeSlotId: string;
+  slotSpan: number;
 }
 
 interface AppStateContextValue {
@@ -89,8 +101,10 @@ interface AppStateContextValue {
   updateTermInfo: (input: TermInfoInput) => ActionResult;
   upsertPlacement: (input: UpsertPlacementInput) => ActionResult;
   movePlacement: (input: MovePlacementInput) => ActionResult;
-  /** Read-only: whether a proposed position is free. Changes nothing. */
+  /** Read-only: whether a proposed position is free for a whole series. */
   checkPlacement: (input: MovePlacementInput) => ActionResult;
+  /** Read-only: the same question asked of a single date. Changes nothing. */
+  checkOccurrence: (input: OccurrencePositionInput) => ActionResult;
   /**
    * The only way a drafted edit to a recurring class reaches the store —
    * and only ever with a scope the user has chosen.
@@ -326,6 +340,27 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
 
     /**
+     * The series a move would produce: the same placement, at the proposed
+     * position, with its date range carried along by the move.
+     *
+     * The range has to travel with it. Parity of an every-two-week class is
+     * counted from its own first occurrence, which is derived from its start
+     * date *and* its weekday — so a candidate that took the new weekday but
+     * kept the stored start date would be judged on a fortnight half the
+     * series was never on. `applyClassEditScope` shifts the range for the
+     * same reason, through the same helper, so the check and the commit
+     * cannot disagree.
+     */
+    const movedCandidate = (existing: Placement, input: MovePlacementInput): PlacementCandidate => ({
+      placementId: existing.id,
+      weekday: input.weekday,
+      timeSlotId: input.timeSlotId,
+      slotSpan: Math.max(1, input.slotSpan),
+      recurrenceType: existing.recurrenceType,
+      ...seriesRangeMovedTo(existing, input.occurrenceDate, input.date),
+    });
+
+    /**
      * The same validation `movePlacement` applies, without applying it —
      * so a drag in progress can show whether where it is hovering would be
      * accepted, using one rule rather than two.
@@ -334,45 +369,45 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
       if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
 
-      const oneOff = existing.recurrenceType === "once";
-      const conflict = findConflict(state, {
-        placementId: input.placementId,
-        weekday: input.weekday,
+      const conflict = findConflict(state, movedCandidate(existing, input));
+      return conflict ? conflictError(conflict) : { ok: true };
+    };
+
+    /**
+     * Whether one occurrence — or a range that is not a class yet — can sit
+     * at a position on a single date. The whole-series check would be the
+     * wrong question for both: an occurrence that has already stepped out of
+     * its series answers only for its own date.
+     */
+    const checkOccurrence: AppStateContextValue["checkOccurrence"] = (input) => {
+      const conflict = findOccurrenceConflict(state, {
+        occurrenceId: input.occurrenceId,
+        date: input.date,
         timeSlotId: input.timeSlotId,
         slotSpan: Math.max(1, input.slotSpan),
-        recurrenceType: existing.recurrenceType,
-        startsOn: oneOff ? input.date : existing.startsOn,
-        endsOn: oneOff ? input.date : existing.endsOn,
       });
       return conflict ? conflictError(conflict) : { ok: true };
     };
 
     /**
      * The settled result of a grid drag or resize. Only the position moves,
-     * so the course, recurrence and dates are deliberately left untouched.
+     * so the course and the recurrence rule are left untouched; the date
+     * range travels with the move rather than staying behind.
      */
     const movePlacement: AppStateContextValue["movePlacement"] = (input) => {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
       if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
 
-      const slotSpan = Math.max(1, input.slotSpan);
-      const oneOff = existing.recurrenceType === "once";
-      const dates = oneOff ? { startsOn: input.date, endsOn: input.date } : { startsOn: existing.startsOn, endsOn: existing.endsOn };
+      const candidate = movedCandidate(existing, input);
+      const dates = { startsOn: candidate.startsOn, endsOn: candidate.endsOn };
       const unchanged =
         existing.weekday === input.weekday &&
         existing.timeSlotId === input.timeSlotId &&
-        existing.slotSpan === slotSpan &&
+        existing.slotSpan === candidate.slotSpan &&
         existing.startsOn === dates.startsOn;
       if (unchanged) return { ok: true };
 
-      const conflict = findConflict(state, {
-        placementId: input.placementId,
-        weekday: input.weekday,
-        timeSlotId: input.timeSlotId,
-        slotSpan,
-        recurrenceType: existing.recurrenceType,
-        ...dates,
-      });
+      const conflict = findConflict(state, candidate);
       if (conflict) return conflictError(conflict);
 
       const now = new Date().toISOString();
@@ -380,7 +415,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ...prev,
         placements: prev.placements.map((placement) =>
           placement.id === input.placementId
-            ? { ...placement, weekday: input.weekday, timeSlotId: input.timeSlotId, slotSpan, ...dates, updatedAt: now }
+            ? {
+                ...placement,
+                weekday: input.weekday,
+                timeSlotId: input.timeSlotId,
+                slotSpan: candidate.slotSpan,
+                ...dates,
+                updatedAt: now,
+              }
             : placement,
         ),
       }));
@@ -449,6 +491,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       upsertPlacement,
       movePlacement,
       checkPlacement,
+      checkOccurrence,
       applyClassEdit,
       deletePlacement,
       loadSampleTimetable,
