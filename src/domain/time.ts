@@ -158,25 +158,39 @@ export interface PeriodProgress {
 }
 
 /**
- * Where "now" sits inside the period currently in progress, for the
- * current-time marker. Returns null outside lesson time (before the day
- * starts, during a break, after the last period) — the marker is only
- * meaningful within a period, since the grid's rows are periods rather than
- * uniform clock hours.
+ * Where "now" sits in the configured day, for the current-time marker.
+ *
+ * Defined for the whole configured range — from the first period's start to
+ * the last one's end — and null outside it, which is the one case where
+ * having no marker is the honest answer.
+ *
+ * Breaks are inside that range and used to return null, so the marker
+ * vanished for the whole of every break: twenty minutes out of every hundred
+ * and ten on the default academic day, which reads as the indicator being
+ * broken rather than as the day being between periods. The grid's rows are
+ * periods and a break is given no height of its own, so there is nowhere for
+ * the marker to travel during one; it rests on the line above the period
+ * about to start, and moves again once that period begins.
  */
 export function findPeriodProgress(
   slots: { startTime: string; endTime: string }[],
   nowTime: string,
 ): PeriodProgress | null {
   const nowMinutes = parseHHmmToMinutes(nowTime);
-  if (nowMinutes === null) return null;
+  if (nowMinutes === null || slots.length === 0) return null;
+
+  const dayStart = parseHHmmToMinutes(slots[0].startTime);
+  const dayEnd = parseHHmmToMinutes(slots[slots.length - 1].endTime);
+  if (dayStart === null || dayEnd === null) return null;
+  if (nowMinutes < dayStart || nowMinutes >= dayEnd) return null;
 
   for (let i = 0; i < slots.length; i++) {
     const start = parseHHmmToMinutes(slots[i].startTime);
     const end = parseHHmmToMinutes(slots[i].endTime);
     if (start === null || end === null || end <= start) continue;
-    if (nowMinutes < start || nowMinutes >= end) continue;
-    return { index: i, fraction: (nowMinutes - start) / (end - start) };
+    // Before this period, and past the previous one: in the break between.
+    if (nowMinutes < start) return { index: i, fraction: 0 };
+    if (nowMinutes < end) return { index: i, fraction: (nowMinutes - start) / (end - start) };
   }
   return null;
 }

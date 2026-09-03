@@ -1,6 +1,7 @@
 import { addDaysIso, todayIsoDate } from "@/domain/date";
 import { generateTimeSlots } from "@/domain/time";
 import { createId } from "@/domain/id";
+import { DEFAULT_REMINDER_MINUTES } from "@/domain/reminder";
 import type { AcademicTerm, Settings, TimeSlot } from "@/types/models";
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -10,6 +11,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultLessonDurationMinutes: 90,
   defaultBreakDurationMinutes: 20,
   slotCount: 8,
+  defaultReminderMinutes: DEFAULT_REMINDER_MINUTES,
   onboardingCompleted: false,
 };
 

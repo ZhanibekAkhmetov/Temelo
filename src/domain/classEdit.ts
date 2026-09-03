@@ -21,6 +21,7 @@ import { createId } from "@/domain/id";
 import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
 import { findOccurrenceConflict, findPlacementConflict } from "@/domain/conflict";
 import { hasOccurrenceBetween, seriesRangeMovedTo, type SeriesRange } from "@/domain/recurrence";
+import { reminderOverrideFor, type ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { Course, OccurrenceException, Placement, RecurrenceType, TimeSlot } from "@/types/models";
 
@@ -48,6 +49,8 @@ export interface EditedFields {
   notes: boolean;
   /** Repetition rule or the series' own date range. */
   recurrence: boolean;
+  /** Lead time before the class its reminder fires at, or no reminder. */
+  reminder: boolean;
 }
 
 export interface ClassEditDraft {
@@ -69,6 +72,7 @@ export interface ClassEditDraft {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  reminderMinutes: ReminderMinutes;
   changed: EditedFields;
   source: EditSource;
 }
@@ -96,14 +100,21 @@ export interface ClassEditInput {
   recurrenceType?: RecurrenceType;
   startsOn?: string;
   endsOn?: string;
+  /** Omitted means "as this occurrence is already reminded about". */
+  reminderMinutes?: ReminderMinutes;
 }
 
+/**
+ * Whether the edit touched the course record itself. The reminder is
+ * deliberately not one of these: it belongs to the placement, so changing it
+ * never has to clone a course the way a renamed one does.
+ */
 function courseFieldsChanged(changed: EditedFields): boolean {
   return changed.name || changed.room || changed.teacher || changed.notes;
 }
 
 export function draftHasChanges(draft: ClassEditDraft): boolean {
-  return draft.changed.schedule || draft.changed.recurrence || courseFieldsChanged(draft.changed);
+  return draft.changed.schedule || draft.changed.recurrence || draft.changed.reminder || courseFieldsChanged(draft.changed);
 }
 
 /**
@@ -121,6 +132,10 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
   const recurrenceType = input.recurrenceType ?? base.recurrenceType;
   const startsOn = input.startsOn ?? base.startsOn;
   const endsOn = input.endsOn ?? base.endsOn;
+  // `??` would read a deliberate "None" as "not supplied", so the presence
+  // of the key is what decides whether the caller had an opinion.
+  const reminderMinutes =
+    input.reminderMinutes !== undefined ? input.reminderMinutes : occurrence.placement.reminderMinutes;
 
   const changed: EditedFields = {
     schedule:
@@ -133,6 +148,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
     teacher: teacher !== occurrence.course.teacher,
     notes: notes !== occurrence.course.notes,
     recurrence: recurrenceType !== base.recurrenceType || startsOn !== base.startsOn || endsOn !== base.endsOn,
+    reminder: reminderMinutes !== occurrence.placement.reminderMinutes,
   };
 
   const draft: ClassEditDraft = {
@@ -150,6 +166,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
     recurrenceType,
     startsOn,
     endsOn,
+    reminderMinutes,
     changed,
     source: input.source,
   };
@@ -163,6 +180,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
       weekday: draft.weekday,
       timeSlotId: draft.timeSlotId,
       slotSpan: draft.slotSpan,
+      reminderMinutes: draft.reminderMinutes,
     },
     course: { ...occurrence.course, name: draft.name, room: draft.room, teacher: draft.teacher, notes: draft.notes },
   };
@@ -264,6 +282,8 @@ function applyOnlyThis(current: EditableTimetable, draft: ClassEditDraft, base: 
     room: overrideOf(draft.room.trim(), baseCourse.room),
     teacher: overrideOf(draft.teacher.trim(), baseCourse.teacher),
     notes: overrideOf(draft.notes.trim(), baseCourse.notes),
+    // Not `overrideOf`: "no reminder" is a value here, not the absence of one.
+    reminderMinutes: reminderOverrideFor(draft.reminderMinutes, base.reminderMinutes),
     updatedAt: now,
   };
 
@@ -331,6 +351,7 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
     recurrenceType: draft.recurrenceType,
     startsOn: draft.effectiveDate,
     endsOn,
+    reminderMinutes: draft.reminderMinutes,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -389,6 +410,7 @@ function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Place
     recurrenceType: changed.recurrence ? draft.recurrenceType : base.recurrenceType,
     startsOn: changed.recurrence ? draft.startsOn : moved.startsOn,
     endsOn: changed.recurrence ? draft.endsOn : moved.endsOn,
+    reminderMinutes: changed.reminder ? draft.reminderMinutes : base.reminderMinutes,
     updatedAt: now,
   };
 

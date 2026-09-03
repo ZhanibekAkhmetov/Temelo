@@ -1,3 +1,4 @@
+import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
 import type { Weekday, WeekendMode } from "@/domain/week";
 
 export type RecurrenceType = "weekly" | "biweekly" | "once";
@@ -16,6 +17,11 @@ export interface Settings {
   defaultLessonDurationMinutes: number;
   defaultBreakDurationMinutes: number;
   slotCount: number;
+  /**
+   * Lead time a newly created class starts out with. Existing classes carry
+   * their own reminder, so changing this never reaches back into them.
+   */
+  defaultReminderMinutes: ReminderMinutes;
   onboardingCompleted: boolean;
 }
 
@@ -78,6 +84,8 @@ export interface OccurrenceException {
   room: string | null;
   teacher: string | null;
   notes: string | null;
+  /** Reminder override; null follows the series, "none" silences this one. */
+  reminderMinutes: ReminderOverride;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -99,6 +107,12 @@ export interface Placement {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  /**
+   * Minutes before the class starts that its reminder fires, or null for no
+   * reminder. A lead time rather than a moment, so moving the class carries
+   * its reminder with it.
+   */
+  reminderMinutes: ReminderMinutes;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
