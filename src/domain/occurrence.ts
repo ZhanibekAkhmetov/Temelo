@@ -12,6 +12,7 @@
 
 import { weekdayOfIsoDate } from "@/domain/calendar";
 import { occursOn } from "@/domain/recurrence";
+import { resolveReminder } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { Course, OccurrenceException, Placement } from "@/types/models";
 
@@ -76,6 +77,9 @@ export function placementWithOverrides(base: Placement, exception: OccurrenceExc
     weekday: weekdayOfIsoDate(exception.effectiveDate),
     timeSlotId: exception.timeSlotId ?? base.timeSlotId,
     slotSpan: exception.slotSpan ?? base.slotSpan,
+    // The reminder cannot use the plain `?? base` form the others do: null
+    // is a reminder the user deliberately turned off, not an absent override.
+    reminderMinutes: resolveReminder(base.reminderMinutes, exception.reminderMinutes),
   };
 }
 
