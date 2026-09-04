@@ -157,7 +157,47 @@ const addClassReminders: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [createInitialSchema, addClassReminders];
+/**
+ * The reminder delivery ledger: what Temelo has already done about each
+ * concrete occurrence's reminder.
+ *
+ * This is bookkeeping, not timetable data, and deliberately not a mirror of
+ * the OS. It never records what Android is holding, whether a notification
+ * was seen, or what permission is granted — those are the platform's to
+ * answer and are still read live. It records only the one thing the platform
+ * cannot tell us after a reboot: whether *we* already dealt with this
+ * occurrence.
+ *
+ * Keyed by the reminder key alone — placement, occurrence date and course,
+ * built by `planReminders` from the same stable occurrence identity the grid
+ * uses. One row per occurrence, because "this occurrence has already
+ * reminded" has to survive the reminder's moment being changed by a later
+ * move or edit; `remind_at` rides along as data about that row, not as part
+ * of its identity.
+ *
+ * No foreign key to placements. A cascade from a hard-deleted placement
+ * would erase exactly the memory that stops a duplicate, and rows are
+ * cheap to age out by `start_at` instead.
+ */
+const addReminderLedger: Migration = {
+  version: 3,
+  description: "Reminder delivery ledger for cross-restart deduplication",
+  up: async (db) => {
+    await db.execAsync(`
+      CREATE TABLE reminder_deliveries (
+        reminder_key TEXT PRIMARY KEY NOT NULL,
+        remind_at    INTEGER NOT NULL,
+        start_at     INTEGER NOT NULL,
+        state        TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_reminder_deliveries_start_at ON reminder_deliveries (start_at);
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [createInitialSchema, addClassReminders, addReminderLedger];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(
   (highest, migration) => Math.max(highest, migration.version),

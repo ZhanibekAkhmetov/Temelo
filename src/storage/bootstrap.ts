@@ -1,19 +1,20 @@
 /**
- * Startup: open, migrate, import-if-needed, load — in that order, once.
+ * Startup: open, migrate, load — in that order, once.
  *
  * The memoized promise is not an optimization. React mounts effects twice in
  * development, and any remount would otherwise start a second startup while
- * the first was still deciding whether the database was empty. Two runs that
- * both saw "empty" would both import the legacy seed, each with its own
- * freshly generated IDs, and the timetable would come back doubled. One
- * shared promise makes that impossible regardless of how many callers ask.
+ * the first was still opening and migrating the database. One shared promise
+ * makes that impossible regardless of how many callers ask.
+ *
+ * Nothing here writes. A database that has never held a timetable stays
+ * empty and `timetable` comes back null, which is what sends a fresh
+ * install to onboarding rather than into someone else's term.
  */
 
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { openTemeloDatabase } from "@/storage/database";
 import { logDatabaseDiagnostics } from "@/storage/diagnostics";
-import { importLegacySeedIfNeeded } from "@/storage/legacySeedMigration";
 import { loadTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
 
 export interface StorageBootstrap {
@@ -21,22 +22,17 @@ export interface StorageBootstrap {
   schemaVersion: number;
   /** Null when this database has never held a timetable. */
   timetable: PersistedTimetable | null;
-  legacySeedImported: boolean;
 }
 
 let bootstrapPromise: Promise<StorageBootstrap> | null = null;
 
 async function runBootstrap(): Promise<StorageBootstrap> {
   const { db, schemaVersion } = await openTemeloDatabase();
-
-  const legacy = await importLegacySeedIfNeeded(db);
-  // The import already has the timetable it just wrote, so it is used
-  // directly rather than read straight back out again.
-  const timetable = legacy.imported ? legacy.timetable : await loadTimetable(db);
+  const timetable = await loadTimetable(db);
 
   await logDatabaseDiagnostics(db);
 
-  return { db, schemaVersion, timetable, legacySeedImported: legacy.imported };
+  return { db, schemaVersion, timetable };
 }
 
 export function bootstrapStorage(): Promise<StorageBootstrap> {

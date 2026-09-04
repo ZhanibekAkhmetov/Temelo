@@ -16,7 +16,8 @@ import { readMeta, META_KEYS } from "@/storage/timetableRepository";
 export interface DatabaseDiagnostics {
   databaseName: string;
   schemaVersion: number;
-  legacySeedImportedAt: string | null;
+  /** Whether the first save has ever happened here. */
+  initializedAt: string | null;
   counts: Record<string, number>;
 }
 
@@ -27,6 +28,7 @@ const COUNTED_TABLES = [
   "courses",
   "placements",
   "occurrence_exceptions",
+  "reminder_deliveries",
 ] as const;
 
 export async function readDatabaseDiagnostics(db: SQLiteDatabase): Promise<DatabaseDiagnostics> {
@@ -40,7 +42,7 @@ export async function readDatabaseDiagnostics(db: SQLiteDatabase): Promise<Datab
   return {
     databaseName: DATABASE_NAME,
     schemaVersion: await readSchemaVersion(db),
-    legacySeedImportedAt: await readMeta(db, META_KEYS.legacySeedImported),
+    initializedAt: await readMeta(db, META_KEYS.initialized),
     counts,
   };
 }

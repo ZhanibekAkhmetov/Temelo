@@ -48,11 +48,11 @@ current implementation status.
    first render, and every successful `AppState` mutation written back as a
    transactional diff. See "Local persistence" in
    [ARCHITECTURE.md](ARCHITECTURE.md).
-   *Temporary:* a one-time import seeds a never-initialized database from
-   the legacy in-memory sample timetable
-   (`src/storage/legacySeedMigration.ts`); it is to be removed together with
-   `src/state/seed.ts` once the personal timetable has been confirmed
-   migrated on device.
+   The one-time legacy seed import that carried the original in-memory
+   timetable onto the device has served its purpose and is gone; a
+   never-initialized database now starts at onboarding. What remains is
+   `src/state/sampleTimetable.ts`, invented placeholder classes offered only
+   under `__DEV__` and only when asked for from Settings.
 
 6. **Empty timetable grid**
    A timetable screen renders the generated time slots as an empty weekly

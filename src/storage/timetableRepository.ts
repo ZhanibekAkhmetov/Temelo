@@ -55,11 +55,16 @@ export interface PersistedTimetable {
   exceptions: OccurrenceException[];
 }
 
+/*
+ * A device upgraded from an earlier build may still carry a
+ * `legacy_seed_imported` row here, written by a one-time sample import that
+ * no longer exists. It is deliberately left where it is: nothing reads it,
+ * and deleting rows out of a user's database to tidy up a key we stopped
+ * using would be a migration of their data for our convenience.
+ */
 export const META_KEYS = {
   /** Set once the database holds a usable timetable, whatever its origin. */
   initialized: "initialized",
-  /** Set by the one-time legacy seed import; see `legacySeedMigration.ts`. */
-  legacySeedImported: "legacy_seed_imported",
 } as const;
 
 const UPSERT_META = `
@@ -70,26 +75,6 @@ const UPSERT_META = `
 export async function readMeta(db: SQLiteDatabase, key: string): Promise<string | null> {
   const row = await db.getFirstAsync<{ value: string }>("SELECT value FROM meta WHERE key = ?", key);
   return row?.value ?? null;
-}
-
-export async function writeMeta(db: SQLiteDatabase, key: string, value: string): Promise<void> {
-  await db.runAsync(UPSERT_META, key, value);
-}
-
-/**
- * Whether this database has ever been filled in.
- *
- * The settings row is the marker: it is written by the first save and by the
- * legacy import, and by nothing else. A database that has been migrated but
- * never written to has tables and no settings row, which is exactly the
- * "never initialized" case the one-time import is allowed to act on.
- */
-export async function hasStoredTimetable(db: SQLiteDatabase): Promise<boolean> {
-  const row = await db.getFirstAsync<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM settings WHERE id = ?",
-    SETTINGS_ROW_ID,
-  );
-  return (row?.count ?? 0) > 0;
 }
 
 /** The stored timetable, or null when nothing has ever been stored. */

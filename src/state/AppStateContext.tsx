@@ -12,7 +12,7 @@ import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
 import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
-import { createSeedState } from "@/state/seed";
+import { createSampleTimetable } from "@/state/sampleTimetable";
 import { bootstrapStorage } from "@/storage/bootstrap";
 import { saveTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
 import type {
@@ -133,6 +133,7 @@ interface AppStateContextValue {
    */
   applyClassEdit: (draft: ClassEditDraft, scope: EditScope) => ActionResult;
   deletePlacement: (placementId: string) => void;
+  /** Development only; see `createSampleTimetable`. No-op in a release build. */
   loadSampleTimetable: () => void;
   resetPrototype: () => void;
 }
@@ -585,8 +586,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }));
     };
 
+    /*
+     * A developer convenience, and gated here as well as in the UI that
+     * offers it. Sample classes must never be able to appear in a real
+     * user's timetable, and one guard that lives next to the call is worth
+     * more than an assumption about which screens ship.
+     */
     const loadSampleTimetable: AppStateContextValue["loadSampleTimetable"] = () => {
-      setState(createSeedState());
+      if (!__DEV__) return;
+      setState(createSampleTimetable());
     };
 
     const resetPrototype: AppStateContextValue["resetPrototype"] = () => {

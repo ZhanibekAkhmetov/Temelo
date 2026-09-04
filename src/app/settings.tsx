@@ -74,7 +74,7 @@ export default function SettingsScreen() {
   function handleLoadSample() {
     Alert.alert(
       "Load sample timetable?",
-      "This replaces the current term, periods and classes with the sample week used for testing gestures.",
+      "Development only. This replaces the current term, periods and classes with placeholder classes for testing gestures.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -178,13 +178,14 @@ export default function SettingsScreen() {
       <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Academic day</Text>
       <Button label="Edit academic-day setup" variant="secondary" onPress={() => router.push("/onboarding/academic-day")} />
 
-      <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.xl, marginBottom: spacing.xs }]}>
-        Sample data
-      </Text>
-      <Button label="Load sample timetable" variant="secondary" onPress={handleLoadSample} />
-
+      {/* Development tools. The sample timetable is invented placeholder
+          data for exercising gestures; it is not offered to real users. */}
       {__DEV__ ? (
         <View style={{ marginTop: spacing.xl, gap: spacing.lg }}>
+          <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>
+            Sample data (development)
+          </Text>
+          <Button label="Load sample timetable" variant="secondary" onPress={handleLoadSample} />
           <HapticsDiagnostics />
           <RemindersDiagnostics />
         </View>
