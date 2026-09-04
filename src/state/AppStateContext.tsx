@@ -1,4 +1,5 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { SQLiteDatabase } from "expo-sqlite";
 
 import { applyClassEditScope, type ClassEditDraft, type EditScope } from "@/domain/classEdit";
 import { findOccurrenceConflict, findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
@@ -11,7 +12,9 @@ import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
 import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
-import { createSeedState } from "@/state/seed";
+import { createSampleTimetable } from "@/state/sampleTimetable";
+import { bootstrapStorage } from "@/storage/bootstrap";
+import { saveTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
 import type {
   AcademicTerm,
   Course,
@@ -97,6 +100,17 @@ export interface OccurrencePositionInput {
 
 interface AppStateContextValue {
   state: AppState;
+  /**
+   * False until the stored timetable has been read back. Nothing that
+   * renders app data may run before this is true — see `BootGate`.
+   */
+  hydrated: boolean;
+  /**
+   * Set when storage could not be opened at all. The app still runs, in
+   * memory only, rather than refusing to start; the message is for
+   * development and for deciding whether to warn the user.
+   */
+  storageError: string | null;
   setWeekendMode: (input: { weekendMode: WeekendMode }) => void;
   setGridOrientation: (input: { gridOrientation: GridOrientation }) => void;
   /**
@@ -119,6 +133,7 @@ interface AppStateContextValue {
    */
   applyClassEdit: (draft: ClassEditDraft, scope: EditScope) => ActionResult;
   deletePlacement: (placementId: string) => void;
+  /** Development only; see `createSampleTimetable`. No-op in a release build. */
   loadSampleTimetable: () => void;
   resetPrototype: () => void;
 }
@@ -135,12 +150,16 @@ function buildEmptyState(): AppState {
 }
 
 /**
- * The prototype opens on the sample timetable so gestures can be tried
- * immediately; "Reset prototype" still clears everything back to
- * onboarding, and Settings can reload the sample at any time.
+ * What the app holds before storage has answered.
+ *
+ * Empty, deliberately. This value is never rendered — `BootGate` holds the
+ * UI back until hydration finishes — and it is never written, because the
+ * persistence effect below does nothing until then. Seeding it instead
+ * would mean that any hiccup in hydration showed one particular person's
+ * timetable to whoever was holding the phone.
  */
 function buildInitialState(): AppState {
-  return createSeedState();
+  return buildEmptyState();
 }
 
 /**
@@ -160,6 +179,83 @@ const AppStateContext = createContext<AppStateContextValue | null>(null);
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(buildInitialState);
+  const [hydrated, setHydrated] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+
+  const databaseRef = useRef<SQLiteDatabase | null>(null);
+  /**
+   * The last state handed to the write queue — the baseline every diff is
+   * taken against. Null means "the database's contents are unknown", which
+   * makes the next save write everything.
+   */
+  const persistedRef = useRef<PersistedTimetable | null>(null);
+  /** Serializes writes, so two quick gestures cannot interleave. */
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  /**
+   * Hydration. Runs once: `bootstrapStorage` memoizes the whole open →
+   * migrate → import → load sequence, so a development double-mount joins
+   * the run already in progress rather than starting a second one.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    bootstrapStorage()
+      .then(({ db, timetable }) => {
+        if (cancelled) return;
+        databaseRef.current = db;
+
+        if (timetable) {
+          // The very same object becomes both the state and the diff
+          // baseline, so the first persistence pass after hydration sees
+          // nothing changed and writes nothing back.
+          persistedRef.current = timetable;
+          setState(timetable);
+        }
+        setHydrated(true);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // Storage is unavailable — most likely a development build that
+        // predates expo-sqlite. Carry on in memory rather than presenting a
+        // dead app, but never pretend the data is being saved.
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[temelo/storage] could not open the database; running in memory only", error);
+        setStorageError(message);
+        setHydrated(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Persistence. Every successful action produces a new state object, and
+   * every new state object is diffed against the last one written and saved
+   * in a single transaction. Actions that fail their validation return
+   * without calling `setState`, so the state is unchanged and there is
+   * nothing here to write — which is exactly the "only successful mutations
+   * are persisted" rule, enforced by construction rather than by
+   * remembering to add a save call to each new action.
+   */
+  useEffect(() => {
+    const db = databaseRef.current;
+    if (!hydrated || !db) return;
+
+    const previous = persistedRef.current;
+    if (previous === state) return;
+    persistedRef.current = state;
+
+    writeQueueRef.current = writeQueueRef.current
+      .then(() => saveTimetable(db, state, previous))
+      .catch((error: unknown) => {
+        // The baseline is no longer trustworthy, so the next save is made a
+        // full write rather than a diff against a state that never landed.
+        persistedRef.current = null;
+        console.warn("[temelo/storage] failed to persist a change", error);
+      });
+  }, [state, hydrated]);
 
   const value = useMemo<AppStateContextValue>(() => {
     const setWeekendMode: AppStateContextValue["setWeekendMode"] = (input) => {
@@ -490,8 +586,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }));
     };
 
+    /*
+     * A developer convenience, and gated here as well as in the UI that
+     * offers it. Sample classes must never be able to appear in a real
+     * user's timetable, and one guard that lives next to the call is worth
+     * more than an assumption about which screens ship.
+     */
     const loadSampleTimetable: AppStateContextValue["loadSampleTimetable"] = () => {
-      setState(createSeedState());
+      if (!__DEV__) return;
+      setState(createSampleTimetable());
     };
 
     const resetPrototype: AppStateContextValue["resetPrototype"] = () => {
@@ -500,6 +603,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     return {
       state,
+      hydrated,
+      storageError,
       setWeekendMode,
       setGridOrientation,
       setDefaultReminder,
@@ -515,7 +620,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       loadSampleTimetable,
       resetPrototype,
     };
-  }, [state]);
+  }, [state, hydrated, storageError]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

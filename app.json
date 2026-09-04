@@ -35,6 +35,7 @@
           "imageWidth": 76
         }
       ],
+      "expo-sqlite",
       [
         "expo-notifications",
         {

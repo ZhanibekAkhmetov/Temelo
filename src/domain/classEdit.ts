@@ -16,6 +16,7 @@
  * class name in the same sitting.
  */
 
+import { diffInDaysIso } from "@/domain/calendar";
 import { addDaysIso, isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
 import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
@@ -256,6 +257,195 @@ function courseWithEdits(course: Course, draft: ClassEditDraft, now: string): Co
 }
 
 /**
+ * Whether an exception still says anything its series does not.
+ *
+ * A cancellation always does: removing an occurrence is not something any
+ * set of null overrides could express. A modification only does while it
+ * still moves its occurrence or overrides at least one field — once a
+ * series-wide edit has absorbed the last of them, what is left is an empty
+ * delta that would go on holding an occurrence outside its own series for
+ * no reason at all.
+ */
+function exceptionStillDiffers(exception: OccurrenceException): boolean {
+  if (exception.state === "cancelled") return true;
+  return (
+    exception.effectiveDate !== exception.originalDate ||
+    exception.timeSlotId !== null ||
+    exception.slotSpan !== null ||
+    exception.name !== null ||
+    exception.room !== null ||
+    exception.teacher !== null ||
+    exception.notes !== null ||
+    exception.reminderMinutes !== null
+  );
+}
+
+/**
+ * The date the edited occurrence has in the series once a series-wide edit
+ * has landed.
+ *
+ * A move carries the whole range with it by whole days — `movedRangeOf` —
+ * so the occurrence the user dragged ends up in the series exactly where
+ * they dropped it. An edit that left the schedule alone leaves it on the
+ * date it already had.
+ */
+function seriesDateAfterAll(draft: ClassEditDraft): string {
+  return draft.changed.schedule ? draft.effectiveDate : draft.occurrenceDate;
+}
+
+/**
+ * Where a rebased exception ends up: which series now holds it, on which of
+ * that series' dates, and whether that series has taken the occurrence's own
+ * schedule as its own.
+ *
+ * `scheduleTaken` is what separates the two edits that rebase. A series-wide
+ * move takes the occurrence's position only when the user actually moved it,
+ * so an untouched one-off move stays a one-off move. A split *always* takes
+ * it: the new series is built at the edited occurrence's destination, in its
+ * period, which is exactly what keeps an every-two-week class in step across
+ * the split — so there is nothing left for the occurrence to override.
+ */
+interface RebaseTarget {
+  placementId: string;
+  seriesDate: string;
+  scheduleTaken: boolean;
+}
+
+/**
+ * The edited occurrence's own exception, rebased onto the edit it initiated.
+ *
+ * An edit made from an occurrence has to reach that occurrence, and its own
+ * overrides are exactly what would stop it: one moved to Wednesday by an
+ * earlier "only this" would sit out its series' move, and a series renamed
+ * from a one-off-renamed occurrence would keep reading the old name. So
+ * every field this edit changed gives up its override here.
+ *
+ * Only those fields, though. The rest are departures the user has not
+ * revisited and was not asked about, and they survive — a room set on this
+ * one lesson is still set on it after the series around it is renamed, split
+ * or moved. Losing them is not a smaller edit than the user asked for, it is
+ * a different one.
+ *
+ * `originalDate` moves to the date the occurrence has in the series that now
+ * holds it. It is what ties the exception to an occurrence of a base rule,
+ * and a series that has shifted — or a new half that starts elsewhere — no
+ * longer has the date it used to name. Left behind, the exception would stop
+ * suppressing the occurrence it replaces and the class would be drawn twice.
+ */
+function rebaseEditedException(
+  exception: OccurrenceException,
+  draft: ClassEditDraft,
+  target: RebaseTarget,
+  now: string,
+): OccurrenceException {
+  const { changed } = draft;
+  const { seriesDate, scheduleTaken } = target;
+  const rebased: OccurrenceException = {
+    ...exception,
+    placementId: target.placementId,
+    originalDate: seriesDate,
+    effectiveDate: scheduleTaken ? seriesDate : exception.effectiveDate,
+    timeSlotId: scheduleTaken ? null : exception.timeSlotId,
+    slotSpan: scheduleTaken ? null : exception.slotSpan,
+    name: changed.name ? null : exception.name,
+    room: changed.room ? null : exception.room,
+    teacher: changed.teacher ? null : exception.teacher,
+    notes: changed.notes ? null : exception.notes,
+    reminderMinutes: changed.reminder ? null : exception.reminderMinutes,
+    updatedAt: now,
+  };
+
+  // An exception with nothing left to say is not a silent occurrence; it is
+  // an occurrence that has rejoined its series, and the series draws it.
+  return exceptionStillDiffers(rebased) ? rebased : { ...rebased, deletedAt: now };
+}
+
+/**
+ * The two dates an exception holds, carried across a whole-day shift of the
+ * series it is anchored to.
+ *
+ * They are not the same kind of date and do not travel the same way.
+ *
+ * `originalDate` is not a date anyone chose. It is the anchor that says
+ * which occurrence of the base rule this exception stands in for, and it is
+ * what `resolveOccurrences` matches on to stop the series drawing that
+ * occurrence a second time. It always shifts. Move a series to another
+ * weekday and leave the anchors behind, and every one of them stops
+ * suppressing anything: the one-off is drawn where it was put, and the
+ * lesson the series now meets appears next to it.
+ *
+ * `effectiveDate` shifts only where it has nothing of its own to say. Equal
+ * to `originalDate`, it means "wherever the series puts this one" — a
+ * rename, a room, a silenced reminder, and no opinion at all about the day —
+ * so it has to travel, or that lesson would be left behind alone on the old
+ * weekday. Different from `originalDate`, it is precisely the day the user
+ * dragged that lesson to, and it stays: a Monday class whose 14th was moved
+ * to Tuesday the 15th still meets on Tuesday the 15th once the series shifts
+ * to Wednesdays. Only which Wednesday it stands in for changes.
+ */
+function shiftedExceptionDates(
+  exception: OccurrenceException,
+  shift: number,
+): Pick<OccurrenceException, "originalDate" | "effectiveDate"> {
+  const originalDate = addDaysIso(exception.originalDate, shift);
+  const followsTheSeries = exception.effectiveDate === exception.originalDate;
+  return { originalDate, effectiveDate: followsTheSeries ? originalDate : exception.effectiveDate };
+}
+
+/**
+ * Whole days every occurrence of the series moves by, and 0 when the grid of
+ * dates it meets on does not move at all.
+ *
+ * This is the same shift `movedRangeOf` applies to the series' own range —
+ * asked once, so that the exceptions hanging off the series cannot drift out
+ * of step with the dates they are anchored to.
+ *
+ * An edit that also rewrites the recurrence rule is deliberately not a shift:
+ * there the range is whatever the user typed into the editor rather than the
+ * old one carried along, so there is no single delta the occurrences moved
+ * by and nothing an exception could honestly follow.
+ */
+function seriesShiftDays(draft: ClassEditDraft): number {
+  if (!draft.changed.schedule || draft.changed.recurrence) return 0;
+  return diffInDaysIso(draft.occurrenceDate, draft.effectiveDate);
+}
+
+/**
+ * Every exception of the series, carried across a series-wide edit.
+ *
+ * Two different things happen here, and they are different on purpose.
+ *
+ * The occurrence the edit was *made on* is rebased: it gives up the
+ * overrides for the fields this edit changed, because those are the fields
+ * the user has just expressed a new opinion about — `rebaseEditedException`.
+ *
+ * Every other exception only follows the shift, on the terms
+ * `shiftedExceptionDates` sets out. Nothing else about them is touched: the
+ * departures they record are still departures, and an edit made from another
+ * week is not the user revisiting them.
+ */
+function exceptionsAfterAll(
+  current: EditableTimetable,
+  draft: ClassEditDraft,
+  base: Placement,
+  now: string,
+): OccurrenceException[] {
+  const shift = seriesShiftDays(draft);
+  if (shift === 0 && !draft.exceptionId) return current.exceptions;
+
+  return current.exceptions.map((exception) => {
+    // Another series' one-offs are none of this edit's business.
+    if (exception.deletedAt || exception.placementId !== base.id) return exception;
+    if (exception.id === draft.exceptionId) {
+      const target = { placementId: base.id, seriesDate: seriesDateAfterAll(draft), scheduleTaken: draft.changed.schedule };
+      return rebaseEditedException(exception, draft, target, now);
+    }
+    if (shift === 0) return exception;
+    return { ...exception, ...shiftedExceptionDates(exception, shift), updatedAt: now };
+  });
+}
+
+/**
  * A single occurrence steps out of line with an exception — a delta against
  * the series, not a copy of it. Anything the draft agrees with the series
  * about is stored as null, so a later series-wide edit still reaches it.
@@ -351,7 +541,11 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
     recurrenceType: draft.recurrenceType,
     startsOn: draft.effectiveDate,
     endsOn,
-    reminderMinutes: draft.reminderMinutes,
+    // The draft carries the edited occurrence's *effective* reminder, which
+    // may be a one-off override. Promoting that to the whole new series would
+    // silence every future lesson because one of them was silenced, so an
+    // untouched reminder stays the series' own; the override stays a one-off.
+    reminderMinutes: draft.changed.reminder ? draft.reminderMinutes : base.reminderMinutes,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -369,17 +563,43 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
 
   /*
    * One-off exceptions from the split point onwards belonged to the old
-   * series. They follow it to the new one where the new series still meets
-   * on the same date, and are dropped where it does not — the occurrence
-   * they described no longer exists. The exception at the split point itself
-   * is always dropped: its edit has just become the new series.
+   * series, and follow it into the new one.
+   *
+   * They cannot follow it by date, because the new series starts wherever
+   * the edited occurrence was dropped and may meet on another weekday
+   * entirely: an anchor left on the old Monday names a date the new series
+   * has no occurrence for, so it would suppress nothing and be drawn as a
+   * lesson of its own. They follow it by the same whole-day shift the split
+   * itself applied — the distance from the occurrence the user split at to
+   * where they put it — which is what carries a fortnight's parity across
+   * the move as well, both dates moving by one delta.
+   *
+   * An exception is still dropped where the shifted anchor is not a date the
+   * new series meets at all: a shortened range, or a rule that no longer
+   * repeats, really has stopped holding that occurrence, and an exception
+   * anchored to nothing is a lesson conjured out of a deletion.
+   *
+   * The exception at the split point is the occurrence the user was looking
+   * at, and it is rebased rather than dropped. What it said about the fields
+   * this edit changed has become the new series and is gone; what it said
+   * about anything else — a room set on this one lesson, a reminder silenced
+   * for it alone — was never part of the question that was asked, and is
+   * still true of the first lesson of the new series. It is dropped only
+   * when the rebase leaves it saying nothing at all.
    */
+  const splitShift = diffInDaysIso(splitDate, draft.effectiveDate);
+  // The new series is built at this occurrence's own position and period, so
+  // its schedule is already said there and needs no override.
+  const splitTarget = { placementId: nextPlacement.id, seriesDate: draft.effectiveDate, scheduleTaken: true };
+
   const exceptions = current.exceptions.map((exception) => {
     if (exception.deletedAt || exception.placementId !== base.id) return exception;
     if (exception.originalDate < splitDate) return exception;
-    if (exception.originalDate === splitDate) return { ...exception, deletedAt: now, updatedAt: now };
-    return hasOccurrenceBetween(nextPlacement, exception.originalDate, exception.originalDate)
-      ? { ...exception, placementId: nextPlacement.id, updatedAt: now }
+    if (exception.originalDate === splitDate) return rebaseEditedException(exception, draft, splitTarget, now);
+
+    const dates = shiftedExceptionDates(exception, splitShift);
+    return hasOccurrenceBetween(nextPlacement, dates.originalDate, dates.originalDate)
+      ? { ...exception, ...dates, placementId: nextPlacement.id, updatedAt: now }
       : { ...exception, deletedAt: now, updatedAt: now };
   });
 
@@ -395,9 +615,12 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
 }
 
 /**
- * The series itself changes. One-off exceptions are left exactly as they
- * are: they record deliberate departures from the series, and a series-wide
- * edit is not a reason to undo them.
+ * The series itself changes.
+ *
+ * Its one-off exceptions come along — see `exceptionsAfterAll`. The
+ * departures they record are not undone by an edit made elsewhere, but they
+ * are anchored to occurrences of the series, and a series whose dates have
+ * moved no longer has the occurrences they name.
  */
 function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Placement, baseCourse: Course, now: string): EditResult {
   const { changed } = draft;
@@ -424,12 +647,15 @@ function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Place
   const conflict = findPlacementConflict(current, { ...nextPlacement, placementId: base.id });
   if (conflict) return { ok: false, error: conflictMessage(conflict) };
 
+  const exceptions = exceptionsAfterAll(current, draft, base, now);
+
   return {
     ok: true,
     next: {
       ...current,
       courses: current.courses.map((course) => (course.id === baseCourse.id ? courseWithEdits(course, draft, now) : course)),
       placements: current.placements.map((placement) => (placement.id === base.id ? nextPlacement : placement)),
+      exceptions,
     },
   };
 }

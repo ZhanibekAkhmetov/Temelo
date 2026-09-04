@@ -1,9 +1,20 @@
 /**
- * A ready-made timetable so the prototype can be exercised without typing
- * every class in by hand. It uses the default academic day (07:30 start,
- * 90-minute periods, 20-minute breaks — exactly the DS grid these entries
- * came from), and anchors the term two weeks before the current week so
- * paging backwards and forwards both land on real data.
+ * A generic sample timetable, for development only.
+ *
+ * Its only job is to give a developer something to drag, resize and edit
+ * without typing a term in by hand. Nothing loads it automatically: the one
+ * caller is the "Load sample timetable" action in Settings, which is itself
+ * hidden outside `__DEV__`, and it never touches a database that has not
+ * been through the ordinary save path afterwards.
+ *
+ * The entries are deliberately invented — placeholder subjects and room
+ * numbers that belong to nobody. A real timetable must only ever get into
+ * the app the way a user puts it there.
+ *
+ * It uses the default academic day and anchors the term two weeks before the
+ * current week, so paging backwards and forwards both land on real data. The
+ * mix of weekly and every-two-week entries is there so recurrence behaviour
+ * is exercised, not because it means anything.
  */
 
 import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
@@ -17,9 +28,9 @@ import type { AcademicTerm, Course, OccurrenceException, Placement, RecurrenceTy
 const TERM_STARTS_WEEKS_AGO = 2;
 const TERM_LENGTH_WEEKS = 18;
 
-interface SeedEntry {
+interface SampleEntry {
   weekday: Weekday;
-  /** 1-based DS number. */
+  /** 1-based period number. */
   period: number;
   name: string;
   room: string;
@@ -28,20 +39,24 @@ interface SeedEntry {
   cycle?: "even" | "odd";
 }
 
-const SEED_ENTRIES: SeedEntry[] = [
-  { weekday: "monday", period: 3, name: "V SWT", room: "HSZ/2", recurrence: "weekly" },
-  { weekday: "monday", period: 5, name: "Ü Proga", room: "HSZ/3", recurrence: "weekly" },
-  { weekday: "tuesday", period: 2, name: "V IKT", room: "HSZ/4", recurrence: "weekly" },
-  { weekday: "tuesday", period: 3, name: "V Mathe", room: "HSZ/2", recurrence: "biweekly", cycle: "even" },
-  { weekday: "tuesday", period: 4, name: "Ü Mathe", room: "WIL/A124", recurrence: "weekly" },
-  { weekday: "wednesday", period: 4, name: "Ü SWT", room: "APB/E001", recurrence: "weekly" },
-  { weekday: "wednesday", period: 5, name: "Ü IKT", room: "APB/E007", recurrence: "biweekly", cycle: "odd" },
-  { weekday: "thursday", period: 4, name: "V ECG", room: "HSZ/4", recurrence: "weekly" },
-  { weekday: "friday", period: 2, name: "V Proga", room: "HSZ/3", recurrence: "weekly" },
-  { weekday: "friday", period: 3, name: "V Mathe", room: "HSZ/02/E", recurrence: "weekly" },
+const SAMPLE_ENTRIES: SampleEntry[] = [
+  { weekday: "monday", period: 3, name: "Mathematics", room: "Room 101", recurrence: "weekly" },
+  { weekday: "monday", period: 5, name: "Physics", room: "Room 204", recurrence: "weekly" },
+  { weekday: "tuesday", period: 2, name: "Chemistry", room: "Lab A", recurrence: "weekly" },
+  { weekday: "tuesday", period: 3, name: "History", room: "Room 101", recurrence: "biweekly", cycle: "even" },
+  { weekday: "tuesday", period: 4, name: "Mathematics", room: "Room 101", recurrence: "weekly" },
+  { weekday: "wednesday", period: 4, name: "Biology", room: "Lab B", recurrence: "weekly" },
+  { weekday: "wednesday", period: 5, name: "Geography", room: "Room 302", recurrence: "biweekly", cycle: "odd" },
+  { weekday: "thursday", period: 4, name: "English", room: "Room 205", recurrence: "weekly" },
+  { weekday: "friday", period: 2, name: "Physics", room: "Lab A", recurrence: "weekly" },
+  { weekday: "friday", period: 3, name: "Music", room: "Room 118", recurrence: "weekly" },
 ];
 
-export interface SeededState {
+/**
+ * Structurally the same as `AppState`, declared here rather than imported so
+ * that this module does not depend on the React layer that consumes it.
+ */
+export interface SampleTimetable {
   settings: Settings;
   term: AcademicTerm;
   timeSlots: TimeSlot[];
@@ -51,11 +66,11 @@ export interface SeededState {
 }
 
 /**
- * Courses are keyed by name so the two Mathe lectures and the lecture and
- * exercise of the same subject keep distinct colours, while a repeated name
- * reuses one course record — placements are reusable per course by design.
+ * Courses are keyed by name and room, so two entries for the same subject in
+ * the same room reuse one course record — placements are reusable per course
+ * by design — while the same subject taught elsewhere stays distinct.
  */
-export function createSeedState(): SeededState {
+export function createSampleTimetable(): SampleTimetable {
   const now = new Date().toISOString();
   const termStart = addWeeksIso(startOfWeekIso(todayIsoDate()), -TERM_STARTS_WEEKS_AGO);
   const termEnd = addWeeksIso(termStart, TERM_LENGTH_WEEKS);
@@ -64,7 +79,7 @@ export function createSeedState(): SeededState {
   const courses: Course[] = [];
   const courseIdsByKey = new Map<string, string>();
 
-  function courseIdFor(entry: SeedEntry): string {
+  function courseIdFor(entry: SampleEntry): string {
     const key = `${entry.name}|${entry.room}`;
     const existing = courseIdsByKey.get(key);
     if (existing) return existing;
@@ -85,7 +100,7 @@ export function createSeedState(): SeededState {
     return course.id;
   }
 
-  const placements: Placement[] = SEED_ENTRIES.flatMap((entry) => {
+  const placements: Placement[] = SAMPLE_ENTRIES.flatMap((entry) => {
     const slot = timeSlots[entry.period - 1];
     if (!slot) return [];
 
@@ -117,8 +132,8 @@ export function createSeedState(): SeededState {
     timeSlots,
     courses,
     placements,
-    // The sample timetable is a plain series set; exceptions only ever come
-    // from an "only this occurrence" edit the user makes.
+    // A plain series set; exceptions only ever come from an "only this
+    // occurrence" edit the user makes.
     exceptions: [],
   };
 }

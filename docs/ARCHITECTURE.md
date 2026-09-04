@@ -21,8 +21,8 @@ Read from the repository's actual configuration, not assumed:
   (see [tsconfig.json](../tsconfig.json))
 - Linting: `eslint-config-expo` via flat config
   ([eslint.config.js](../eslint.config.js))
-- No test runner, state management library, or persistence library is
-  currently installed.
+- No test runner or state management library is currently installed.
+- Persistence is `expo-sqlite`, accessed only through `src/storage/`.
 
 Consult the versioned Expo docs for this exact release before writing
 framework-dependent code: https://docs.expo.dev/versions/v57.0.0/
@@ -83,14 +83,26 @@ when persistence is actually implemented.
   lesson time is a weekday + time-of-day. Mixing the two into one timestamp
   model would make both harder to reason about and edit independently.
 
-## Anticipated local persistence direction
+## Local persistence
 
-No persistence library is installed yet. The anticipated direction is
-**SQLite** (via Expo's SQLite support) for on-device storage, accessed
-exclusively through the storage/repository boundary described above. This is
-a direction, not a decision to install anything now — no database dependency
-should be added until an actual persistence milestone is being implemented
-(see [ROADMAP.md](ROADMAP.md)).
+On-device storage is **SQLite** via `expo-sqlite`, reached exclusively
+through the storage boundary described above. No ORM.
+
+- `src/storage/database.ts` opens the database and sets `journal_mode=WAL`,
+  `foreign_keys=ON` and a busy timeout on the one connection everything
+  else uses.
+- `src/storage/migrations.ts` holds an ordered, versioned migration list
+  keyed off SQLite's own `PRAGMA user_version`. Schema changes are appended
+  as a new version; shipped migrations are never edited in place.
+- `src/storage/timetableRepository.ts` is the only module that writes SQL
+  for timetable data. It loads the whole timetable and saves whole-timetable
+  diffs in a single transaction, because one recurring edit can touch
+  several records at once and none of them may land without the others.
+- `src/storage/bootstrap.ts` memoizes startup so the open/migrate/load
+  sequence runs exactly once per launch.
+- `AppStateProvider` is the only consumer. `BootGate` holds rendering back
+  until hydration finishes, so no screen ever sees an empty state that could
+  then be written over stored data.
 
 ## Future synchronization considerations
 
@@ -133,7 +145,6 @@ into a corner:
 The following are recognized as open questions, deliberately not decided
 yet:
 
-- Exact SQLite access layer/ORM (if any) for persistence.
 - State management approach for cross-screen app state, if `src/domain/` +
   local component state turns out to be insufficient.
 - Test runner choice and configuration.

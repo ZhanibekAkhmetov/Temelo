@@ -43,9 +43,16 @@ current implementation status.
    restart.
    *Done when:* completing onboarding, then closing and reopening the app,
    shows the same term, slots, and settings without re-running onboarding.
-   *Status: not started.* All state in the current prototype is in-memory
-   only and resets on a full application restart, by design — this
-   milestone implements the persistence layer behind that boundary.
+   *Status: done.* SQLite (`expo-sqlite`) behind `src/storage/`, with
+   versioned migrations, WAL and foreign keys on, hydration gated before
+   first render, and every successful `AppState` mutation written back as a
+   transactional diff. See "Local persistence" in
+   [ARCHITECTURE.md](ARCHITECTURE.md).
+   The one-time legacy seed import that carried the original in-memory
+   timetable onto the device has served its purpose and is gone; a
+   never-initialized database now starts at onboarding. What remains is
+   `src/state/sampleTimetable.ts`, invented placeholder classes offered only
+   under `__DEV__` and only when asked for from Settings.
 
 6. **Empty timetable grid**
    A timetable screen renders the generated time slots as an empty weekly
