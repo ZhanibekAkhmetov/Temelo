@@ -118,7 +118,46 @@ const createInitialSchema: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [createInitialSchema];
+/**
+ * Class reminders, which arrived after v1 had already shipped.
+ *
+ * All three columns are added nullable, so the `ALTER TABLE` statements need
+ * no table rebuild and existing rows are valid the moment they land.
+ *
+ * The backfill values are written as literals rather than imported from
+ * `domain/reminder`. A migration has to keep doing what it did on the day it
+ * shipped: if this read `DEFAULT_REMINDER_MINUTES` and that constant were
+ * ever retuned, two devices that upgraded from v1 at different times would
+ * end up with different data from the same migration.
+ *
+ * Why the two backfills differ:
+ *
+ * - `settings.default_reminder_minutes` and `placements.reminder_minutes`
+ *   are filled with 30, the default a fresh install gets. Leaving them NULL
+ *   would read as "None", so an upgrading user would find the reminder
+ *   feature present, its default apparently set, and not one class actually
+ *   reminding them.
+ * - `occurrence_exceptions.reminder_minutes` is deliberately left NULL,
+ *   because NULL there does not mean "no reminder" — it means "follow the
+ *   series". A v1 exception never expressed an opinion about reminders, so
+ *   inheriting is exactly right, and the column needs no backfill at all.
+ */
+const addClassReminders: Migration = {
+  version: 2,
+  description: "Class reminder lead times on settings, placements and exceptions",
+  up: async (db) => {
+    await db.execAsync(`
+      ALTER TABLE settings ADD COLUMN default_reminder_minutes INTEGER;
+      ALTER TABLE placements ADD COLUMN reminder_minutes INTEGER;
+      ALTER TABLE occurrence_exceptions ADD COLUMN reminder_minutes TEXT;
+
+      UPDATE settings SET default_reminder_minutes = 30;
+      UPDATE placements SET reminder_minutes = 30;
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [createInitialSchema, addClassReminders];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(
   (highest, migration) => Math.max(highest, migration.version),

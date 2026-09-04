@@ -6,6 +6,7 @@
  * ever sees a snake_cased row.
  */
 
+import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import type {
   AcademicTerm,
@@ -29,6 +30,8 @@ export interface SettingsRow {
   default_lesson_duration_minutes: number;
   default_break_duration_minutes: number;
   slot_count: number;
+  /** Nullable: NULL is the real value "None", not a missing setting. */
+  default_reminder_minutes: number | null;
   onboarding_completed: number;
 }
 
@@ -67,6 +70,8 @@ export interface PlacementRow {
   recurrence_type: string;
   starts_on: string;
   ends_on: string;
+  /** Minutes of lead time; NULL is "no reminder". */
+  reminder_minutes: number | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -84,6 +89,8 @@ export interface OccurrenceExceptionRow {
   room: string | null;
   teacher: string | null;
   notes: string | null;
+  /** Three-state; see `reminderOverrideToColumn`. TEXT, never INTEGER. */
+  reminder_minutes: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -115,6 +122,56 @@ const GRID_ORIENTATIONS: GridOrientation[] = ["vertical", "horizontal"];
 const RECURRENCE_TYPES: RecurrenceType[] = ["weekly", "biweekly", "once"];
 const EXCEPTION_STATES: OccurrenceExceptionState[] = ["modified", "cancelled"];
 
+/** The stored spelling of a deliberately silenced occurrence. */
+const REMINDER_NONE = "none";
+
+/*
+ * An occurrence's reminder override is the one field on the table with three
+ * states rather than two, and the only one where SQL NULL cannot carry the
+ * whole meaning:
+ *
+ *   null     follow the series          ->  SQL NULL
+ *   "none"   silenced, deliberately     ->  the text 'none'
+ *   number   an explicit lead time      ->  that number as text, e.g. '45'
+ *
+ * Every other override on this table can say "untouched" with NULL because
+ * its own values are never null. A reminder's value *can* be null — that is
+ * what "None" means — so storing it in an INTEGER column would make "the
+ * user turned this occurrence's reminder off" and "the user never touched
+ * this occurrence's reminder" the same row, and a reminder the user
+ * deliberately silenced would come back switched on. Hence TEXT, and hence
+ * a sentinel that a number can never collide with.
+ */
+export function reminderOverrideToColumn(value: ReminderOverride): string | null {
+  if (value === null) return null;
+  return value === REMINDER_NONE ? REMINDER_NONE : String(value);
+}
+
+export function reminderOverrideFromColumn(value: string | null): ReminderOverride {
+  if (value === null) return null;
+
+  // SQLite hands back whatever is in the cell; a TEXT-affinity column has
+  // always converted a bound number to text, but reading defensively costs
+  // one comparison and keeps a hand-edited row from throwing.
+  const text = String(value).trim();
+  if (text === "") return null;
+  if (text === REMINDER_NONE) return REMINDER_NONE;
+
+  const minutes = Number(text);
+  // An unreadable value falls back to "follow the series" — the same
+  // untouched default a v1 row upgrades with, and never a silent silencing.
+  return Number.isFinite(minutes) ? minutes : null;
+}
+
+/**
+ * A series-level lead time is plain `number | null`, so the INTEGER column
+ * carries it directly. Only the guard against a non-numeric cell is worth
+ * writing down.
+ */
+function reminderMinutesFromColumn(value: number | null): ReminderMinutes {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function settingsToRow(settings: Settings): SettingsRow {
   return {
     id: SETTINGS_ROW_ID,
@@ -124,6 +181,7 @@ export function settingsToRow(settings: Settings): SettingsRow {
     default_lesson_duration_minutes: settings.defaultLessonDurationMinutes,
     default_break_duration_minutes: settings.defaultBreakDurationMinutes,
     slot_count: settings.slotCount,
+    default_reminder_minutes: settings.defaultReminderMinutes,
     onboarding_completed: settings.onboardingCompleted ? 1 : 0,
   };
 }
@@ -136,6 +194,7 @@ export function settingsFromRow(row: SettingsRow): Settings {
     defaultLessonDurationMinutes: row.default_lesson_duration_minutes,
     defaultBreakDurationMinutes: row.default_break_duration_minutes,
     slotCount: row.slot_count,
+    defaultReminderMinutes: reminderMinutesFromColumn(row.default_reminder_minutes),
     onboardingCompleted: row.onboarding_completed !== 0,
   };
 }
@@ -204,6 +263,7 @@ export function placementToRow(placement: Placement): PlacementRow {
     recurrence_type: placement.recurrenceType,
     starts_on: placement.startsOn,
     ends_on: placement.endsOn,
+    reminder_minutes: placement.reminderMinutes,
     created_at: placement.createdAt,
     updated_at: placement.updatedAt,
     deleted_at: placement.deletedAt,
@@ -220,6 +280,7 @@ export function placementFromRow(row: PlacementRow): Placement {
     recurrenceType: narrow(row.recurrence_type, RECURRENCE_TYPES, "weekly"),
     startsOn: row.starts_on,
     endsOn: row.ends_on,
+    reminderMinutes: reminderMinutesFromColumn(row.reminder_minutes),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
@@ -239,6 +300,7 @@ export function exceptionToRow(exception: OccurrenceException): OccurrenceExcept
     room: exception.room,
     teacher: exception.teacher,
     notes: exception.notes,
+    reminder_minutes: reminderOverrideToColumn(exception.reminderMinutes),
     created_at: exception.createdAt,
     updated_at: exception.updatedAt,
     deleted_at: exception.deletedAt,
@@ -258,6 +320,7 @@ export function exceptionFromRow(row: OccurrenceExceptionRow): OccurrenceExcepti
     room: row.room,
     teacher: row.teacher,
     notes: row.notes,
+    reminderMinutes: reminderOverrideFromColumn(row.reminder_minutes),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,

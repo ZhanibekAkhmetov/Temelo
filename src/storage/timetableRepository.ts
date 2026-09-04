@@ -169,8 +169,8 @@ const UPSERT_SETTINGS = `
   INSERT INTO settings (
     id, weekend_mode, grid_orientation, academic_day_start,
     default_lesson_duration_minutes, default_break_duration_minutes,
-    slot_count, onboarding_completed
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    slot_count, default_reminder_minutes, onboarding_completed
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     weekend_mode = excluded.weekend_mode,
     grid_orientation = excluded.grid_orientation,
@@ -178,6 +178,7 @@ const UPSERT_SETTINGS = `
     default_lesson_duration_minutes = excluded.default_lesson_duration_minutes,
     default_break_duration_minutes = excluded.default_break_duration_minutes,
     slot_count = excluded.slot_count,
+    default_reminder_minutes = excluded.default_reminder_minutes,
     onboarding_completed = excluded.onboarding_completed
 `;
 
@@ -216,8 +217,8 @@ const UPSERT_COURSE = `
 const UPSERT_PLACEMENT = `
   INSERT INTO placements (
     id, course_id, weekday, time_slot_id, slot_span, recurrence_type,
-    starts_on, ends_on, created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    starts_on, ends_on, reminder_minutes, created_at, updated_at, deleted_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     course_id = excluded.course_id,
     weekday = excluded.weekday,
@@ -226,6 +227,7 @@ const UPSERT_PLACEMENT = `
     recurrence_type = excluded.recurrence_type,
     starts_on = excluded.starts_on,
     ends_on = excluded.ends_on,
+    reminder_minutes = excluded.reminder_minutes,
     updated_at = excluded.updated_at,
     deleted_at = excluded.deleted_at
 `;
@@ -233,8 +235,9 @@ const UPSERT_PLACEMENT = `
 const UPSERT_EXCEPTION = `
   INSERT INTO occurrence_exceptions (
     id, placement_id, original_date, effective_date, state, time_slot_id,
-    slot_span, name, room, teacher, notes, created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    slot_span, name, room, teacher, notes, reminder_minutes,
+    created_at, updated_at, deleted_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     placement_id = excluded.placement_id,
     original_date = excluded.original_date,
@@ -246,6 +249,7 @@ const UPSERT_EXCEPTION = `
     room = excluded.room,
     teacher = excluded.teacher,
     notes = excluded.notes,
+    reminder_minutes = excluded.reminder_minutes,
     updated_at = excluded.updated_at,
     deleted_at = excluded.deleted_at
 `;
@@ -311,6 +315,7 @@ export async function saveTimetable(
         row.default_lesson_duration_minutes,
         row.default_break_duration_minutes,
         row.slot_count,
+        row.default_reminder_minutes,
         row.onboarding_completed,
       );
     }
@@ -363,6 +368,7 @@ export async function saveTimetable(
         row.recurrence_type,
         row.starts_on,
         row.ends_on,
+        row.reminder_minutes,
         row.created_at,
         row.updated_at,
         row.deleted_at,
@@ -384,6 +390,7 @@ export async function saveTimetable(
         row.room,
         row.teacher,
         row.notes,
+        row.reminder_minutes,
         row.created_at,
         row.updated_at,
         row.deleted_at,

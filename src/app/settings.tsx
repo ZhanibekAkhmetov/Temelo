@@ -4,11 +4,15 @@ import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
 import { InlineDateField } from "@/components/InlineDateField";
+import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { TextField } from "@/components/TextField";
+import type { ReminderMinutes } from "@/domain/reminder";
 import { ALL_WEEKEND_MODES, WEEKEND_MODE_LABEL, type WeekendMode } from "@/domain/week";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
+import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
+import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 import type { GridOrientation } from "@/types/models";
@@ -25,10 +29,22 @@ const GRID_ORIENTATION_OPTIONS: { label: string; value: GridOrientation }[] = [
 
 export default function SettingsScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
-  const { state, setWeekendMode, setGridOrientation, updateTermInfo, loadSampleTimetable, resetPrototype } = useAppState();
+  const {
+    state,
+    setWeekendMode,
+    setGridOrientation,
+    setDefaultReminder,
+    updateTermInfo,
+    loadSampleTimetable,
+    resetPrototype,
+  } = useAppState();
+  const reminderStatus = useReminderStatus();
 
   const [weekendMode, setWeekendModeLocal] = useState<WeekendMode>(state.settings.weekendMode);
   const [gridOrientation, setGridOrientationLocal] = useState<GridOrientation>(state.settings.gridOrientation);
+  const [defaultReminderMinutes, setDefaultReminderLocal] = useState<ReminderMinutes>(
+    state.settings.defaultReminderMinutes,
+  );
   const [termName, setTermName] = useState(state.term.name);
   const [estimatedEndDate, setEstimatedEndDate] = useState(state.term.estimatedEndDate);
   const [endDatePickerOpen, setEndDatePickerOpen] = useState(false);
@@ -42,6 +58,7 @@ export default function SettingsScreen() {
     setSaved(false);
     setWeekendMode({ weekendMode });
     setGridOrientation({ gridOrientation });
+    setDefaultReminder({ reminderMinutes: defaultReminderMinutes });
     const result = updateTermInfo({ name: termName, estimatedEndDate });
     if (!result.ok) {
       if (result.error.toLowerCase().includes("name")) {
@@ -124,6 +141,20 @@ export default function SettingsScreen() {
         Hidden days are left out of the grid. Pick &ldquo;Show all&rdquo; to keep the full seven-day week.
       </Text>
 
+      <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.xs }]}>
+        Reminders
+      </Text>
+      <ReminderField
+        label="Default for new classes"
+        value={defaultReminderMinutes}
+        onChange={setDefaultReminderLocal}
+        helperText={
+          reminderStatus.permission === "denied"
+            ? "Reminders are disabled until notification permission is granted in system settings. Classes still save normally."
+            : "Classes that already exist keep their own reminder."
+        }
+      />
+
       <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.xs }]}>Term</Text>
       <TextField label="Term name" value={termName} onChangeText={setTermName} error={termNameError} />
       <InlineDateField
@@ -153,8 +184,9 @@ export default function SettingsScreen() {
       <Button label="Load sample timetable" variant="secondary" onPress={handleLoadSample} />
 
       {__DEV__ ? (
-        <View style={{ marginTop: spacing.xl }}>
+        <View style={{ marginTop: spacing.xl, gap: spacing.lg }}>
           <HapticsDiagnostics />
+          <RemindersDiagnostics />
         </View>
       ) : null}
 

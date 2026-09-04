@@ -103,6 +103,7 @@ export function createSeedState(): SeededState {
         recurrenceType: entry.recurrence,
         startsOn,
         endsOn: termEnd,
+        reminderMinutes: DEFAULT_SETTINGS.defaultReminderMinutes,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,

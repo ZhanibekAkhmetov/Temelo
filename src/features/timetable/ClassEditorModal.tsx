@@ -4,7 +4,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
 import { InlineDateField } from "@/components/InlineDateField";
+import { ReminderField } from "@/components/ReminderField";
 import { SegmentedControl } from "@/components/SegmentedControl";
+import { SwitchRow } from "@/components/SwitchRow";
 import { TextField } from "@/components/TextField";
 import { formatIsoLong } from "@/domain/calendar";
 import {
@@ -14,8 +16,10 @@ import {
   type PendingClassEdit,
 } from "@/domain/classEdit";
 import { defaultSeriesStartDate } from "@/domain/recurrence";
+import { formatReminderLabel, type ReminderMinutes } from "@/domain/reminder";
 import { WEEKDAY_LABEL, type Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
+import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 import type { AcademicTerm, RecurrenceType, TimeSlot } from "@/types/models";
@@ -98,7 +102,10 @@ function ClassEditorForm({
   onRequestScope,
 }: Omit<ClassEditorModalProps, "visible">) {
   const { colors, spacing, typography, borderWidth } = useTheme();
-  const { upsertPlacement, deletePlacement } = useAppState();
+  const { state, upsertPlacement, deletePlacement, setDefaultReminder } = useAppState();
+  const reminderStatus = useReminderStatus();
+
+  const defaultReminderMinutes = state.settings.defaultReminderMinutes;
 
   const [name, setName] = useState(existing?.course.name ?? "");
   const [room, setRoom] = useState(existing?.course.room ?? "");
@@ -124,6 +131,15 @@ function ClassEditorForm({
   const [onceDate, setOnceDate] = useState(
     existing?.basePlacement.recurrenceType === "once" ? existing.basePlacement.startsOn : date,
   );
+  /**
+   * A new class starts at the current global default; an existing one shows
+   * the reminder *this occurrence* has, which a one-off edit may have set
+   * apart from the rest of its series.
+   */
+  const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes>(
+    existing ? existing.placement.reminderMinutes : defaultReminderMinutes,
+  );
+  const [makeReminderDefault, setMakeReminderDefault] = useState(false);
   const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
   const [openPicker, setOpenPicker] = useState<OpenPicker>(null);
   const [nameError, setNameError] = useState<string | undefined>();
@@ -132,6 +148,15 @@ function ClassEditorForm({
   const isOneOff = recurrenceType === "once";
   const effectiveStartsOn = isOneOff ? onceDate : startsOn;
   const effectiveEndsOn = isOneOff ? onceDate : endsOn;
+
+  /*
+   * Offered only when the choice actually differs from what new classes
+   * already get — compared against the current default, whatever it now is,
+   * rather than against the value it started life as. Picking the default
+   * again is not a decision worth asking a question about.
+   */
+  const reminderDiffersFromDefault = reminderMinutes !== defaultReminderMinutes;
+  const remindersBlocked = reminderStatus.permission === "denied";
 
   const summaryText = isOneOff
     ? `One time on ${formatIsoLong(onceDate)}`
@@ -169,6 +194,11 @@ function ClassEditorForm({
     setNameError(undefined);
     setFormError(undefined);
 
+    // The global default is a separate decision from this class's reminder,
+    // and it is not scoped to a series — so it is committed on its own,
+    // whichever of the two paths below the class itself takes.
+    if (makeReminderDefault) setDefaultReminder({ reminderMinutes });
+
     /*
      * A class that repeats cannot be saved outright: the same form could
      * mean a change to one lesson, to the rest of the term, or to the whole
@@ -191,6 +221,7 @@ function ClassEditorForm({
         recurrenceType,
         startsOn: effectiveStartsOn,
         endsOn: effectiveEndsOn,
+        reminderMinutes,
       });
 
       const check = validateClassEditDraft(pending.draft);
@@ -216,6 +247,7 @@ function ClassEditorForm({
       recurrenceType,
       startsOn: effectiveStartsOn,
       endsOn: effectiveEndsOn,
+      reminderMinutes,
     });
 
     if (!result.ok) {
@@ -274,7 +306,27 @@ function ClassEditorForm({
           />
           <TextField label="Room" value={room} onChangeText={setRoom} placeholder="Optional" />
 
-          <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: spacing.md }]}>{summaryText}</Text>
+          {/* Compact and above the fold: a reminder is part of what a class
+              is, not one of the details worth folding away. */}
+          <ReminderField
+            label="Reminder"
+            value={reminderMinutes}
+            onChange={setReminderMinutes}
+            helperText={remindersBlocked ? "Reminders are off until notification permission is granted." : undefined}
+          />
+
+          {reminderDiffersFromDefault ? (
+            <SwitchRow
+              label="Use as default for new classes"
+              description={`New classes currently start at ${formatReminderLabel(defaultReminderMinutes)}.`}
+              value={makeReminderDefault}
+              onValueChange={setMakeReminderDefault}
+            />
+          ) : null}
+
+          <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.md, marginBottom: spacing.md }]}>
+            {summaryText}
+          </Text>
 
           <Pressable
             onPress={() => setMoreDetailsOpen((open) => !open)}

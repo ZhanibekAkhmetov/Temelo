@@ -10,7 +10,7 @@ import {
   type EditScope,
   type PendingClassEdit,
 } from "@/domain/classEdit";
-import { addDaysIso, todayIsoDate } from "@/domain/date";
+import { addDaysIso } from "@/domain/date";
 import { getOrderedWeekdays } from "@/domain/week";
 import { ClassEditorModal } from "@/features/timetable/ClassEditorModal";
 import { EditScopeSheet } from "@/features/timetable/EditScopeSheet";
@@ -23,7 +23,7 @@ import {
   type TimetableSurfaceHandle,
 } from "@/features/timetable/TimetableSurface";
 import { WeekGridHorizontal } from "@/features/timetable/WeekGridHorizontal";
-import { useNowMinute } from "@/features/timetable/useNowMinute";
+import { useNow } from "@/features/timetable/useNow";
 import type { SelectedCell } from "@/features/timetable/types";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
@@ -43,10 +43,11 @@ export default function TimetableScreen() {
   const [pendingEdit, setPendingEdit] = useState<PendingClassEdit | null>(null);
   const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
 
-  // The minute tick is also what carries the timetable over midnight: both
-  // of these are re-read on every render it causes.
-  const now = useNowMinute();
-  const today = todayIsoDate();
+  // The tick is also what carries the timetable over midnight, so the date
+  // comes from it rather than from a bare call here: everything below is
+  // derived from state and re-read whenever the moment actually changes.
+  const now = useNow();
+  const today = now.date;
   const currentWeekStart = startOfWeekIso(today);
   const [visibleWeekStart, setVisibleWeekStart] = useState(currentWeekStart);
 
@@ -196,7 +197,7 @@ export default function TimetableScreen() {
             exceptions={state.exceptions}
             preview={pendingEdit?.preview ?? null}
             today={today}
-            now={now}
+            now={now.time}
             onVisibleWeekChange={setVisibleWeekStart}
             onOpenEditor={setSelected}
             onMoveClass={handleMoveClass}
@@ -213,7 +214,7 @@ export default function TimetableScreen() {
             exceptions={state.exceptions}
             preview={pendingEdit?.preview ?? null}
             today={today}
-            now={now}
+            now={now.time}
             width={gridSize.width}
             height={gridSize.height}
             onCellPress={setSelected}

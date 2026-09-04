@@ -7,6 +7,7 @@ import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
 import type { Occurrence } from "@/domain/occurrence";
 import { seriesRangeMovedTo } from "@/domain/recurrence";
+import type { ReminderMinutes } from "@/domain/reminder";
 import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import { APPEARANCE_PALETTE } from "@/theme/tokens";
@@ -68,6 +69,8 @@ export interface UpsertPlacementInput {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  /** Lead time before the class starts, or null for no reminder. */
+  reminderMinutes: ReminderMinutes;
 }
 
 /** A drag or resize in the grid: position only, nothing else changes. */
@@ -110,6 +113,11 @@ interface AppStateContextValue {
   storageError: string | null;
   setWeekendMode: (input: { weekendMode: WeekendMode }) => void;
   setGridOrientation: (input: { gridOrientation: GridOrientation }) => void;
+  /**
+   * The reminder newly created classes start with. Existing classes keep
+   * whatever they were given, so this is never retroactive.
+   */
+  setDefaultReminder: (input: { reminderMinutes: ReminderMinutes }) => void;
   setAcademicDayConfig: (input: AcademicDayConfigInput) => ActionResult;
   setTermConfig: (input: TermConfigInput) => ActionResult;
   updateTermInfo: (input: TermInfoInput) => ActionResult;
@@ -263,6 +271,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }));
     };
 
+    const setDefaultReminder: AppStateContextValue["setDefaultReminder"] = (input) => {
+      setState((prev) => ({
+        ...prev,
+        settings: { ...prev.settings, defaultReminderMinutes: input.reminderMinutes },
+      }));
+    };
+
     const setAcademicDayConfig: AppStateContextValue["setAcademicDayConfig"] = (input) => {
       const result = generateTimeSlots({
         dayStart: input.academicDayStart,
@@ -392,6 +407,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                   recurrenceType: input.recurrenceType,
                   startsOn: input.startsOn,
                   endsOn: input.endsOn,
+                  reminderMinutes: input.reminderMinutes,
                   updatedAt: now,
                 }
               : placement,
@@ -421,6 +437,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         recurrenceType: input.recurrenceType,
         startsOn: input.startsOn,
         endsOn: input.endsOn,
+        reminderMinutes: input.reminderMinutes,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -582,6 +599,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       storageError,
       setWeekendMode,
       setGridOrientation,
+      setDefaultReminder,
       setAcademicDayConfig,
       setTermConfig,
       updateTermInfo,
