@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { BootGate } from "@/components/BootGate";
 import { AppStateProvider } from "@/state/AppStateContext";
 
 export default function RootLayout() {
@@ -11,7 +12,11 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AppStateProvider>
-          <Stack screenOptions={{ headerShown: false }} />
+          {/* Nothing that reads app state may render before storage has
+              been read back — the onboarding redirect least of all. */}
+          <BootGate>
+            <Stack screenOptions={{ headerShown: false }} />
+          </BootGate>
         </AppStateProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
