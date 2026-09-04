@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 
@@ -7,7 +7,12 @@ import type { OccurrencePreview } from "@/domain/occurrence";
 import { findMajorBoundaries, findPeriodProgress } from "@/domain/time";
 import { resolveWeekBlocks } from "@/domain/timetable";
 import { isWeekendDay, WEEKDAY_LABEL, WEEKDAY_SHORT_LABEL, type Weekday } from "@/domain/week";
-import { DAY_HEADER_HEIGHT, MAX_SLOT_HEIGHT, TIME_GUTTER_WIDTH } from "@/features/timetable/geometry";
+import {
+  DAY_HEADER_HEIGHT,
+  MAX_COLUMN_WIDTH,
+  MAX_SLOT_HEIGHT,
+  TIME_GUTTER_WIDTH,
+} from "@/features/timetable/geometry";
 import { GridBlock, SelectionOutline } from "@/features/timetable/GridBlock";
 import type { PageOverlay } from "@/features/timetable/types";
 import { getAppearanceColors } from "@/theme/tokens";
@@ -23,6 +28,26 @@ const DATE_BADGE_SIZE = 28;
 const MINOR_LINE_ALPHA = "59";
 const MAJOR_LINE_ALPHA = "B3";
 const COLUMN_RULE_ALPHA = "40";
+
+/** Line box of `typography.gridText`, and the block's vertical padding. */
+const NAME_LINE_HEIGHT = 16;
+const BLOCK_TEXT_PADDING = 6;
+/** Room takes the line under the name, so the name never claims the last one. */
+const ROOM_LINE_HEIGHT = 14;
+const MAX_NAME_LINES = 5;
+
+/**
+ * How many lines a name may wrap to in a block of this many periods.
+ *
+ * Derived from the *settled* slot height, never from the live one: a pinch
+ * moves the box on the UI thread, and re-deriving this every frame would
+ * put a React render in the middle of the gesture. Between pinches the
+ * block simply has whatever line budget its height affords.
+ */
+function nameLinesFor(span: number, settledSlotHeight: number): number {
+  const textHeight = span * settledSlotHeight - BLOCK_TEXT_PADDING - ROOM_LINE_HEIGHT;
+  return Math.max(1, Math.min(MAX_NAME_LINES, Math.floor(textHeight / NAME_LINE_HEIGHT)));
+}
 
 interface WeekPageProps {
   /** Immutable for the lifetime of this page — everything below derives from it. */
@@ -41,8 +66,17 @@ interface WeekPageProps {
   today: string;
   now: string;
   width: number;
-  columnWidth: number;
+  /** Settled day-column width; changes once, when a pinch ends. */
+  columnWidth: SharedValue<number>;
+  /** How far the week is shifted sideways inside its own page, in live pixels. */
+  offsetX: SharedValue<number>;
+  /** Settled period height; changes once, when a pinch ends. */
   slotHeight: SharedValue<number>;
+  /** Slot height as of the last settled zoom, for text that cannot re-flow per frame. */
+  settledSlotHeight: number;
+  /** Transient pinch scale, 1 unless two fingers are on the grid right now. */
+  pinchScaleX: SharedValue<number>;
+  pinchScaleY: SharedValue<number>;
   scrollY: SharedValue<number>;
   /** Set while a block on this page is being dragged, so it is drawn by the overlay instead. */
   hiddenOccurrenceId: string | null;
@@ -60,7 +94,9 @@ interface WeekPageProps {
  *
  * It also places itself: the horizontal offset is `(pageIndex - pos)`
  * pages, which means mounting or unmounting a neighbour can never shift the
- * pages that stay.
+ * pages that stay. Zoom is a second, independent horizontal offset applied
+ * *inside* the page, so a week that is wider than the viewport still slides
+ * as one page.
  */
 function WeekPageComponent({
   weekStart,
@@ -76,7 +112,11 @@ function WeekPageComponent({
   now,
   width,
   columnWidth,
+  offsetX,
   slotHeight,
+  settledSlotHeight,
+  pinchScaleX,
+  pinchScaleY,
   scrollY,
   hiddenOccurrenceId,
   overlay,
@@ -101,46 +141,82 @@ function WeekPageComponent({
   const nowProgress = todayColumn >= 0 ? findPeriodProgress(timeSlots, now) : null;
   const majorBoundaries = useMemo(() => findMajorBoundaries(timeSlots), [timeSlots]);
 
+  // The scrolled box, fixed for the life of the page and sized for the
+  // deepest zoom, so it never needs a layout pass itself — only the boxes
+  // inside it, once, when a pinch commits. Its centre is also what the
+  // pinch transform below has to correct for.
+  const boxWidth = TIME_GUTTER_WIDTH + weekdays.length * MAX_COLUMN_WIDTH;
+  const boxHeight = timeSlots.length * MAX_SLOT_HEIGHT;
+
   const pageStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: (pageIndex - pos.get()) * width }],
   }));
 
-  const bodyStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -scrollY.get() }],
+  /**
+   * The one node that moves while a pinch is running.
+   *
+   * Both scroll axes and the whole transient zoom ride here, so every
+   * absolutely positioned child below only has to know its own row and
+   * column, in settled coordinates, and none of them re-measure while the
+   * fingers are down. A child laid out at settled `X` has to land at
+   * `X * scale - offset`, and RN scales about a view's centre, so the
+   * centre's own contribution — `centre * (1 - scale)` — is subtracted back
+   * out. That is what makes this equivalent to scaling about the grid's
+   * top-left corner without depending on `transformOrigin`.
+   *
+   * `TIME_GUTTER_WIDTH * (1 - scale)` holds the gutter's edge still: the
+   * columns start there, and that offset must not be magnified with them.
+   */
+  const bodyStyle = useAnimatedStyle(() => {
+    const scaleX = pinchScaleX.get();
+    const scaleY = pinchScaleY.get();
+    return {
+      transform: [
+        { translateX: (TIME_GUTTER_WIDTH - boxWidth / 2) * (1 - scaleX) - offsetX.get() },
+        { translateY: -scrollY.get() - (boxHeight / 2) * (1 - scaleY) },
+        { scaleX },
+        { scaleY },
+      ],
+    };
+  });
+
+  const headerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -offsetX.get() }],
   }));
 
   return (
     <Animated.View style={[styles.page, { width }, pageStyle]}>
+      {/* Clipped, because a zoomed-in week is wider than its own page and
+          must not spill onto the neighbouring one. */}
       <View style={[styles.header, { height: DAY_HEADER_HEIGHT, borderBottomWidth: borderWidth.thin, borderColor: colors.border }]}>
-        <View style={{ width: TIME_GUTTER_WIDTH }} />
-        {weekdays.map((day) => {
-          const date = dates[day];
-          const isToday = date === today;
-          const dayColor = isWeekendDay(day) ? colors.destructive : colors.textMuted;
-          return (
-            <View key={day} style={[styles.headerCell, { width: columnWidth }]}>
-              <Text style={[typography.gridSecondary, styles.weekdayLabel, { color: dayColor }]} numberOfLines={1}>
-                {WEEKDAY_SHORT_LABEL[day].toUpperCase()}
-              </Text>
-              <View style={[styles.dateBadge, { borderRadius: radii.lg, backgroundColor: isToday ? colors.accent : "transparent" }]}>
-                <Text
-                  style={[
-                    styles.dateText,
-                    { color: isToday ? colors.background : isWeekendDay(day) ? colors.destructive : colors.textPrimary },
-                  ]}
-                >
-                  {dayOfMonth(date)}
+        <Animated.View style={[styles.headerRow, { width: weekdays.length * MAX_COLUMN_WIDTH }, headerStyle]}>
+          {weekdays.map((day, index) => {
+            const date = dates[day];
+            const isToday = date === today;
+            const dayColor = isWeekendDay(day) ? colors.destructive : colors.textMuted;
+            return (
+              <DayHeaderCell key={day} index={index} columnWidth={columnWidth} pinchScaleX={pinchScaleX}>
+                <Text style={[typography.gridSecondary, styles.weekdayLabel, { color: dayColor }]} numberOfLines={1}>
+                  {WEEKDAY_SHORT_LABEL[day].toUpperCase()}
                 </Text>
-              </View>
-            </View>
-          );
-        })}
+                <View style={[styles.dateBadge, { borderRadius: radii.lg, backgroundColor: isToday ? colors.accent : "transparent" }]}>
+                  <Text
+                    style={[
+                      styles.dateText,
+                      { color: isToday ? colors.background : isWeekendDay(day) ? colors.destructive : colors.textPrimary },
+                    ]}
+                  >
+                    {dayOfMonth(date)}
+                  </Text>
+                </View>
+              </DayHeaderCell>
+            );
+          })}
+        </Animated.View>
       </View>
 
       <View style={styles.bodyViewport}>
-        {/* Tall enough for any zoom level, so the scrolled container itself
-            never needs a layout pass while zooming. */}
-        <Animated.View style={[styles.body, { height: timeSlots.length * MAX_SLOT_HEIGHT }, bodyStyle]}>
+        <Animated.View style={[styles.body, { height: boxHeight, width: boxWidth }, bodyStyle]}>
           {timeSlots.map((slot, index) => (
             <PeriodLine
               key={slot.id}
@@ -152,16 +228,12 @@ function WeekPageComponent({
           ))}
 
           {weekdays.map((day, index) => (
-            <View
+            <ColumnRule
               key={day}
-              style={[
-                styles.columnRule,
-                {
-                  left: TIME_GUTTER_WIDTH + index * columnWidth,
-                  borderLeftWidth: borderWidth.thin,
-                  borderColor: `${colors.border}${COLUMN_RULE_ALPHA}`,
-                },
-              ]}
+              index={index}
+              columnWidth={columnWidth}
+              thickness={borderWidth.thin}
+              color={`${colors.border}${COLUMN_RULE_ALPHA}`}
             />
           ))}
 
@@ -173,12 +245,13 @@ function WeekPageComponent({
                 key={`${block.occurrenceId}|${block.date}`}
                 startIndex={block.startIndex}
                 span={block.span}
-                left={TIME_GUTTER_WIDTH + block.dayIndex * columnWidth}
-                width={columnWidth}
+                dayIndex={block.dayIndex}
+                columnWidth={columnWidth}
                 slotHeight={slotHeight}
                 appearanceId={block.course.appearanceId}
                 name={block.course.name}
                 room={block.course.room}
+                nameLines={nameLinesFor(block.span, settledSlotHeight)}
                 variant="class"
                 accessibilityLabel={`${block.course.name}, ${WEEKDAY_LABEL[block.weekday]}, period ${
                   timeSlots[block.startIndex].position
@@ -191,8 +264,8 @@ function WeekPageComponent({
             <GridBlock
               startIndex={overlay.startIndex}
               span={overlay.span}
-              left={TIME_GUTTER_WIDTH + overlay.dayIndex * columnWidth}
-              width={columnWidth}
+              dayIndex={overlay.dayIndex}
+              columnWidth={columnWidth}
               slotHeight={slotHeight}
               variant="provisional"
               accessibilityLabel="New class position, tap again to set it up"
@@ -203,8 +276,8 @@ function WeekPageComponent({
             <NowLine
               slotIndex={nowProgress.index}
               fraction={nowProgress.fraction}
-              left={TIME_GUTTER_WIDTH + todayColumn * columnWidth}
-              width={columnWidth}
+              dayIndex={todayColumn}
+              columnWidth={columnWidth}
               slotHeight={slotHeight}
               color={colors.destructive}
             />
@@ -216,8 +289,8 @@ function WeekPageComponent({
             <SelectionOutline
               startIndex={overlay.startIndex}
               span={overlay.span}
-              left={TIME_GUTTER_WIDTH + overlay.dayIndex * columnWidth}
-              width={columnWidth}
+              dayIndex={overlay.dayIndex}
+              columnWidth={columnWidth}
               slotHeight={slotHeight}
               color={overlayStroke}
               withHandles={overlay.kind === "selected"}
@@ -230,6 +303,34 @@ function WeekPageComponent({
 }
 
 export const WeekPage = memo(WeekPageComponent);
+
+/**
+ * One day of the weekday strip.
+ *
+ * A fixed-width box that is *centred* on its column rather than sized to
+ * it. Nothing about it is a layout prop, so a pinch moves it with a
+ * transform and never re-measures the label or the date badge — and,
+ * because the box does not stretch, neither of them is ever drawn
+ * distorted the way scaling the strip as a whole would draw them. The
+ * boxes overlap at low zoom, which is harmless: they are transparent, the
+ * strip takes no touches, and only their centres are ever visible.
+ */
+function DayHeaderCell({
+  index,
+  columnWidth,
+  pinchScaleX,
+  children,
+}: {
+  index: number;
+  columnWidth: SharedValue<number>;
+  pinchScaleX: SharedValue<number>;
+  children: ReactNode;
+}) {
+  const style = useAnimatedStyle(() => ({
+    transform: [{ translateX: (index + 0.5) * columnWidth.get() * pinchScaleX.get() - MAX_COLUMN_WIDTH / 2 }],
+  }));
+  return <Animated.View style={[styles.headerCell, style]}>{children}</Animated.View>;
+}
 
 function PeriodLine({
   index,
@@ -246,6 +347,26 @@ function PeriodLine({
   return <Animated.View pointerEvents="none" style={[styles.periodLine, { borderTopWidth: thickness, borderColor: color }, style]} />;
 }
 
+function ColumnRule({
+  index,
+  columnWidth,
+  thickness,
+  color,
+}: {
+  index: number;
+  columnWidth: SharedValue<number>;
+  thickness: number;
+  color: string;
+}) {
+  const style = useAnimatedStyle(() => ({ transform: [{ translateX: index * columnWidth.get() }] }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.columnRule, { borderLeftWidth: thickness, borderColor: color }, style]}
+    />
+  );
+}
+
 /**
  * The current time, drawn only inside today's column so it reads as "now,
  * here" rather than as a marker running through every day of the week.
@@ -253,21 +374,27 @@ function PeriodLine({
 function NowLine({
   slotIndex,
   fraction,
-  left,
-  width,
+  dayIndex,
+  columnWidth,
   slotHeight,
   color,
 }: {
   slotIndex: number;
   fraction: number;
-  left: number;
-  width: number;
+  dayIndex: number;
+  columnWidth: SharedValue<number>;
   slotHeight: SharedValue<number>;
   color: string;
 }) {
-  const style = useAnimatedStyle(() => ({ transform: [{ translateY: (slotIndex + fraction) * slotHeight.get() - 1 }] }));
+  const style = useAnimatedStyle(() => {
+    const width = columnWidth.get();
+    return {
+      width,
+      transform: [{ translateX: dayIndex * width }, { translateY: (slotIndex + fraction) * slotHeight.get() - 1 }],
+    };
+  });
   return (
-    <Animated.View pointerEvents="none" style={[styles.nowLine, { left, width }, style]}>
+    <Animated.View pointerEvents="none" style={[styles.nowLine, style]}>
       <View style={[styles.nowDot, { backgroundColor: color }]} />
       <View style={[styles.nowRule, { backgroundColor: color }]} />
     </Animated.View>
@@ -280,11 +407,25 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     bottom: 0,
+    overflow: "hidden",
   },
   header: {
-    flexDirection: "row",
+    overflow: "hidden",
+  },
+  // Wide enough for the largest zoom, so every cell stays inside its own
+  // parent and nothing depends on how a platform clips an overflowing child.
+  headerRow: {
+    position: "absolute",
+    left: TIME_GUTTER_WIDTH,
+    top: 0,
+    bottom: 0,
   },
   headerCell: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: MAX_COLUMN_WIDTH,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -317,11 +458,13 @@ const styles = StyleSheet.create({
   },
   columnRule: {
     position: "absolute",
+    left: TIME_GUTTER_WIDTH,
     top: 0,
     bottom: 0,
   },
   nowLine: {
     position: "absolute",
+    left: TIME_GUTTER_WIDTH,
     top: 0,
     height: 2,
     zIndex: 2,

@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 
+import { TIME_GUTTER_WIDTH } from "@/features/timetable/geometry";
 import { getAppearanceColors } from "@/theme/tokens";
 import { useTheme } from "@/theme/useTheme";
 
@@ -18,12 +19,16 @@ interface GridBlockProps {
   spanShared?: SharedValue<number>;
   /** Live start during a resize or move, so the top edge follows the finger. */
   startShared?: SharedValue<number>;
-  left: number;
-  width: number;
+  /** Column the block sits in; the drag overlay draws in its own column and passes 0. */
+  dayIndex: number;
+  /** Live column width, so a horizontal zoom widens the block itself. */
+  columnWidth: SharedValue<number>;
   slotHeight: SharedValue<number>;
   appearanceId?: string;
   name?: string;
   room?: string;
+  /** Lines the name may use at the settled zoom level; taller blocks get more. */
+  nameLines?: number;
   variant: BlockVariant;
   accessibilityLabel?: string;
 }
@@ -31,8 +36,10 @@ interface GridBlockProps {
 /**
  * One block on the grid.
  *
- * Vertical placement is a transform and only the height is a layout prop,
- * so a pinch costs one measured node per block instead of a full re-render.
+ * Both of its dimensions are real layout props driven from shared values,
+ * and only its position is a transform. A pinch therefore gives the block's
+ * text genuinely more room — it re-wraps inside the wider, taller box —
+ * rather than magnifying a box whose text layout was fixed at the old size.
  * Not touchable itself: the surface owns all hit-testing, which keeps taps,
  * drags and paging inside one arbitration.
  */
@@ -41,12 +48,13 @@ export function GridBlock({
   span,
   spanShared,
   startShared,
-  left,
-  width,
+  dayIndex,
+  columnWidth,
   slotHeight,
   appearanceId,
   name,
   room,
+  nameLines,
   variant,
   accessibilityLabel,
 }: GridBlockProps) {
@@ -59,9 +67,11 @@ export function GridBlock({
     const currentSpan = spanShared ? spanShared.get() : span;
     const currentStart = startShared ? startShared.get() : startIndex;
     const height = slotHeight.get();
+    const width = columnWidth.get();
     return {
+      width: Math.max(0, width - BLOCK_INSET * 2),
       height: Math.max(0, currentSpan * height - BLOCK_INSET * 2),
-      transform: [{ translateY: currentStart * height + BLOCK_INSET }],
+      transform: [{ translateX: dayIndex * width }, { translateY: currentStart * height + BLOCK_INSET }],
     };
   });
 
@@ -73,8 +83,7 @@ export function GridBlock({
       style={[
         styles.block,
         {
-          left: left + BLOCK_INSET,
-          width: Math.max(0, width - BLOCK_INSET * 2),
+          left: TIME_GUTTER_WIDTH + BLOCK_INSET,
           borderRadius: radii.sm,
           // A proposed range is a translucent wash, so it can never be
           // mistaken for a class that is actually there.
@@ -101,7 +110,10 @@ export function GridBlock({
         // Name at the top-left, room under it: the shape of the block is
         // what says how long the class is, so the text stays out of the way.
         <View style={styles.content}>
-          <Text style={[typography.gridText, { color: appearance ? appearance.ink : colors.textPrimary }]} numberOfLines={2}>
+          <Text
+            style={[typography.gridText, { color: appearance ? appearance.ink : colors.textPrimary }]}
+            numberOfLines={nameLines ?? 2}
+          >
             {name}
           </Text>
           {room ? (
@@ -129,8 +141,8 @@ interface SelectionOutlineProps {
   spanShared?: SharedValue<number>;
   /** Live start during a resize or move, so the outline tracks the finger. */
   startShared?: SharedValue<number>;
-  left: number;
-  width: number;
+  dayIndex: number;
+  columnWidth: SharedValue<number>;
   slotHeight: SharedValue<number>;
   color?: string;
   /** Draws the circular start/end handles of a selected class. */
@@ -148,8 +160,8 @@ export function SelectionOutline({
   span,
   spanShared,
   startShared,
-  left,
-  width,
+  dayIndex,
+  columnWidth,
   slotHeight,
   color,
   withHandles,
@@ -161,9 +173,11 @@ export function SelectionOutline({
     const currentSpan = spanShared ? spanShared.get() : span;
     const currentStart = startShared ? startShared.get() : startIndex;
     const height = slotHeight.get();
+    const width = columnWidth.get();
     return {
+      width: Math.max(0, width - OUTLINE_INSET * 2),
       height: Math.max(0, currentSpan * height - OUTLINE_INSET * 2),
-      transform: [{ translateY: currentStart * height + OUTLINE_INSET }],
+      transform: [{ translateX: dayIndex * width }, { translateY: currentStart * height + OUTLINE_INSET }],
     };
   });
 
@@ -173,8 +187,7 @@ export function SelectionOutline({
       style={[
         styles.outline,
         {
-          left: left + OUTLINE_INSET,
-          width: Math.max(0, width - OUTLINE_INSET * 2),
+          left: TIME_GUTTER_WIDTH + OUTLINE_INSET,
           borderColor: stroke,
           borderWidth: OUTLINE_WIDTH,
           borderRadius: radii.sm,
