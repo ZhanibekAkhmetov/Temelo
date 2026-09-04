@@ -34,8 +34,11 @@ export function InlineDateField({ label, value, onChange, expanded, onToggle, er
       helperText={helperText}
     >
       {/* Opening the field re-anchors the pager on the selected month;
-          browsing away from it inside one session is left alone. */}
-      <MonthPager key={`${expanded}-${selected.slice(0, 7)}`} value={selected} today={today} onSelect={onChange} />
+          browsing away from it inside one session is left alone. Keyed on
+          the open state alone, so that picking a date — a day of the next
+          month off the end of the grid, above all — leaves the pager where
+          the user put it instead of remounting it a month along. */}
+      <MonthPager key={String(expanded)} value={selected} today={today} onSelect={onChange} />
     </CollapsibleField>
   );
 }
