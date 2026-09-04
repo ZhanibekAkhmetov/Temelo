@@ -13,7 +13,10 @@ interface TimeGutterProps {
   showNowLabel: boolean;
   /** Continuous page position, so the label fades out as another week is dragged in. */
   pageDistanceFromToday: SharedValue<number>;
+  /** Settled period height; changes once, when a pinch ends. */
   slotHeight: SharedValue<number>;
+  /** Transient pinch scale, 1 unless two fingers are on the grid right now. */
+  pinchScaleY: SharedValue<number>;
   scrollY: SharedValue<number>;
 }
 
@@ -21,8 +24,22 @@ interface TimeGutterProps {
  * The hour column. It stays put while weeks page sideways — the times are
  * the same in every week — and scrolls and zooms with the grid. Kept narrow
  * with almost no right padding so the grid keeps the width.
+ *
+ * Unlike the grid body, this is not scaled as a whole: a stretched column of
+ * times would be unreadable, and it is the one part of the surface whose
+ * width is meant to stay fixed. Each label instead re-derives its own
+ * offset, which is a transform and so still costs no layout — the labels
+ * spread apart during a pinch while staying exactly the size they were.
  */
-export function TimeGutter({ timeSlots, now, showNowLabel, pageDistanceFromToday, slotHeight, scrollY }: TimeGutterProps) {
+export function TimeGutter({
+  timeSlots,
+  now,
+  showNowLabel,
+  pageDistanceFromToday,
+  slotHeight,
+  pinchScaleY,
+  scrollY,
+}: TimeGutterProps) {
   const { colors } = useTheme();
   const nowProgress = showNowLabel ? findPeriodProgress(timeSlots, now) : null;
 
@@ -38,7 +55,14 @@ export function TimeGutter({ timeSlots, now, showNowLabel, pageDistanceFromToday
       <View style={styles.viewport}>
         <Animated.View style={[{ height: timeSlots.length * MAX_SLOT_HEIGHT }, contentStyle]}>
           {timeSlots.map((slot, index) => (
-            <GutterLabel key={slot.id} index={index} slotHeight={slotHeight} text={slot.startTime} color={colors.textMuted} />
+            <GutterLabel
+              key={slot.id}
+              index={index}
+              slotHeight={slotHeight}
+              pinchScaleY={pinchScaleY}
+              text={slot.startTime}
+              color={colors.textMuted}
+            />
           ))}
 
           {nowProgress ? (
@@ -46,6 +70,7 @@ export function TimeGutter({ timeSlots, now, showNowLabel, pageDistanceFromToday
               slotIndex={nowProgress.index}
               fraction={nowProgress.fraction}
               slotHeight={slotHeight}
+              pinchScaleY={pinchScaleY}
               distance={pageDistanceFromToday}
               text={now}
               color={colors.destructive}
@@ -61,16 +86,20 @@ export function TimeGutter({ timeSlots, now, showNowLabel, pageDistanceFromToday
 function GutterLabel({
   index,
   slotHeight,
+  pinchScaleY,
   text,
   color,
 }: {
   index: number;
   slotHeight: SharedValue<number>;
+  pinchScaleY: SharedValue<number>;
   text: string;
   color: string;
 }) {
   const { typography } = useTheme();
-  const style = useAnimatedStyle(() => ({ transform: [{ translateY: index * slotHeight.get() + 2 }] }));
+  const style = useAnimatedStyle(() => ({
+    transform: [{ translateY: index * slotHeight.get() * pinchScaleY.get() + 2 }],
+  }));
   return (
     <Animated.View style={[styles.label, style]}>
       {/* The gutter is a fixed-width axis; a scaled-up label would be
@@ -92,6 +121,7 @@ function NowLabel({
   slotIndex,
   fraction,
   slotHeight,
+  pinchScaleY,
   distance,
   text,
   color,
@@ -100,6 +130,7 @@ function NowLabel({
   slotIndex: number;
   fraction: number;
   slotHeight: SharedValue<number>;
+  pinchScaleY: SharedValue<number>;
   distance: SharedValue<number>;
   text: string;
   color: string;
@@ -107,7 +138,7 @@ function NowLabel({
 }) {
   const { typography } = useTheme();
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: (slotIndex + fraction) * slotHeight.get() - 7 }],
+    transform: [{ translateY: (slotIndex + fraction) * slotHeight.get() * pinchScaleY.get() - 7 }],
     opacity: Math.max(0, 1 - Math.abs(distance.get()) * 3),
   }));
 

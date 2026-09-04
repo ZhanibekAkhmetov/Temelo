@@ -22,7 +22,10 @@ interface ManipulationOverlayProps {
   interaction: Interaction;
   subject: ManipulationSubject | null;
   timeSlots: TimeSlot[];
-  columnWidth: number;
+  /** Live day-column width, so the dragged block keeps the grid's proportions. */
+  columnWidth: SharedValue<number>;
+  /** How far the week is shifted sideways inside its page. */
+  offsetX: SharedValue<number>;
   slotHeight: SharedValue<number>;
   scrollY: SharedValue<number>;
   dayIndex: SharedValue<number>;
@@ -44,6 +47,7 @@ export function ManipulationOverlay({
   subject,
   timeSlots,
   columnWidth,
+  offsetX,
   slotHeight,
   scrollY,
   dayIndex,
@@ -53,8 +57,10 @@ export function ManipulationOverlay({
 }: ManipulationOverlayProps) {
   const { colors, radii, typography, scheme } = useTheme();
 
+  // The layer carries the column and both scroll axes, so the block inside
+  // it only has to know its row — exactly as a block on a page does.
   const containerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: dayIndex.get() * columnWidth }, { translateY: -scrollY.get() }],
+    transform: [{ translateX: dayIndex.get() * columnWidth.get() - offsetX.get() }, { translateY: -scrollY.get() }],
   }));
 
   // Above the range while it grows downwards, below it while it grows
@@ -91,8 +97,8 @@ export function ManipulationOverlay({
             startShared={startIndex}
             span={interaction.span}
             spanShared={span}
-            left={TIME_GUTTER_WIDTH}
-            width={columnWidth}
+            dayIndex={0}
+            columnWidth={columnWidth}
             slotHeight={slotHeight}
             variant="provisional"
           />
@@ -102,8 +108,8 @@ export function ManipulationOverlay({
             startShared={startIndex}
             span={interaction.span}
             spanShared={span}
-            left={TIME_GUTTER_WIDTH}
-            width={columnWidth}
+            dayIndex={0}
+            columnWidth={columnWidth}
             slotHeight={slotHeight}
             appearanceId={subject?.appearanceId}
             name={subject?.name}
@@ -117,8 +123,8 @@ export function ManipulationOverlay({
           startShared={startIndex}
           span={interaction.span}
           spanShared={span}
-          left={TIME_GUTTER_WIDTH}
-          width={columnWidth}
+          dayIndex={0}
+          columnWidth={columnWidth}
           slotHeight={slotHeight}
           color={stroke}
           withHandles={kind !== "creatingRange"}
