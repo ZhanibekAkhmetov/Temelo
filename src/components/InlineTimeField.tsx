@@ -3,6 +3,7 @@ import { StyleSheet, Text } from "react-native";
 import { CollapsibleField } from "@/components/CollapsibleField";
 import { WheelGroup, WheelPicker, WHEEL_HEIGHT } from "@/components/WheelPicker";
 import { joinHHmm, splitHHmm } from "@/domain/time";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 
 /** Lesson times are set to the nearest five minutes, as in the reference design. */
@@ -34,6 +35,7 @@ function roundToStep(minutes: number): number {
  */
 export function InlineTimeField({ label, value, onChange, expanded, onToggle, helperText }: InlineTimeFieldProps) {
   const { colors, typography } = useTheme();
+  const { t } = useI18n();
 
   const parsed = splitHHmm(value) ?? { hours: 8, minutes: 0 };
   const hours = parsed.hours;
@@ -49,13 +51,13 @@ export function InlineTimeField({ label, value, onChange, expanded, onToggle, he
       helperText={helperText}
     >
       <WheelGroup>
-        <WheelPicker values={HOURS} value={hours} onChange={(hour) => onChange(joinHHmm(hour, minutes))} accessibilityLabel="Hour" />
+        <WheelPicker values={HOURS} value={hours} onChange={(hour) => onChange(joinHHmm(hour, minutes))} accessibilityLabel={t("durationPicker.hour")} />
         <Text style={[typography.title, styles.separator, { color: colors.textPrimary }]}>:</Text>
         <WheelPicker
           values={MINUTES}
           value={minutes}
           onChange={(minute) => onChange(joinHHmm(hours, minute))}
-          accessibilityLabel="Minute"
+          accessibilityLabel={t("durationPicker.minute")}
         />
       </WheelGroup>
     </CollapsibleField>

@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { getAppearanceColors } from "@/theme/tokens";
+import { getClassColors } from "@/theme/classColors";
 import { useTheme } from "@/theme/useTheme";
 
 interface GridCellContent {
@@ -22,9 +22,9 @@ interface GridCellProps {
 const ROOM_LINE_MIN_HEIGHT = 52;
 
 export function GridCell({ width, height, isToday, content, onPress, accessibilityLabel }: GridCellProps) {
-  const { colors, radii, typography, borderWidth, scheme } = useTheme();
+  const { colors, radii, typography, borderWidth } = useTheme();
 
-  const appearance = content ? getAppearanceColors(content.appearanceId, scheme) : null;
+  const appearance = content ? getClassColors(content.appearanceId) : null;
   const showRoom = Boolean(content?.room) && height >= ROOM_LINE_MIN_HEIGHT;
 
   return (
@@ -37,10 +37,10 @@ export function GridCell({ width, height, isToday, content, onPress, accessibili
         {
           width,
           height,
-          borderColor: colors.border,
+          borderColor: colors.gridMinor,
           borderRightWidth: borderWidth.thin,
           borderBottomWidth: borderWidth.thin,
-          backgroundColor: isToday ? colors.todayBackground : "transparent",
+          backgroundColor: isToday ? colors.accentSubtle : "transparent",
           opacity: pressed ? 0.6 : 1,
         },
       ]}

@@ -2,8 +2,9 @@ import { useMemo, useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { Button } from "@/components/Button";
+import { FieldRow, FieldValue } from "@/components/FieldRow";
 import { WheelGroup, WheelPicker } from "@/components/WheelPicker";
-import { formatDurationMinutes } from "@/domain/time";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 
 /** Durations are set to the nearest five minutes, as lesson times are. */
@@ -42,6 +43,7 @@ export function DurationField({
   helperText,
 }: DurationFieldProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  const { t, format } = useI18n();
   const [isOpen, setOpen] = useState(false);
   const [draftHours, setDraftHours] = useState(0);
   const [draftMinutes, setDraftMinutes] = useState(0);
@@ -69,85 +71,89 @@ export function DurationField({
   }
 
   return (
-    <View style={{ borderBottomWidth: borderWidth.thin, borderColor: colors.border }}>
-      <Pressable
-        onPress={openPicker}
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${formatDurationMinutes(valueMinutes)}`}
-        style={[styles.row, { paddingVertical: spacing.sm }]}
-      >
-        <Text style={[typography.label, { color: colors.textSecondary }]}>{label}</Text>
-        <Text style={[typography.body, { color: colors.textPrimary }]}>{formatDurationMinutes(valueMinutes)}</Text>
-      </Pressable>
+    <FieldRow
+      label={label}
+      onPress={openPicker}
+      accessibilityLabel={`${label}, ${format.duration(valueMinutes)}`}
+      helperText={helperText}
+      panel={
+        <Modal visible={isOpen} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+          <View style={[styles.scrim, { backgroundColor: colors.overlay, padding: spacing.lg }]}>
+            {/* Dismiss-on-tap sits behind the card rather than around it, so it
+                never competes with the wheels for the touch responder. */}
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setOpen(false)}
+              accessibilityLabel={t("common.close")}
+            />
 
-      {helperText ? (
-        <Text style={[typography.caption, { color: colors.textMuted, paddingBottom: spacing.xs }]}>{helperText}</Text>
-      ) : null}
-
-      <Modal visible={isOpen} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <View style={[styles.scrim, { padding: spacing.lg }]}>
-          {/* Dismiss-on-tap sits behind the card rather than around it, so it
-              never competes with the wheels for the touch responder. */}
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} accessibilityLabel="Close" />
-
-          <View
-            style={[
-              styles.card,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderWidth: borderWidth.thin,
-                borderRadius: radii.lg,
-                padding: spacing.lg,
-              },
-            ]}
-          >
-            <Text style={[typography.subtitle, { color: colors.textPrimary, marginBottom: spacing.md }]}>{label}</Text>
-            <Text style={[typography.body, { color: colors.textSecondary, marginBottom: spacing.sm }]}>
-              {formatDurationMinutes(draftTotal)}
-            </Text>
-
-            <WheelGroup>
-              <WheelPicker values={hours} value={draftHours} onChange={setDraftHours} accessibilityLabel="Hours" />
-              <Text style={[typography.label, styles.unit, { color: colors.textSecondary }]}>h</Text>
-              <WheelPicker values={MINUTES} value={draftMinutes} onChange={setDraftMinutes} accessibilityLabel="Minutes" />
-              <Text style={[typography.label, styles.unit, { color: colors.textSecondary }]}>min</Text>
-            </WheelGroup>
-
-            {canSave ? null : (
-              <Text style={[typography.caption, { color: colors.destructive, marginTop: spacing.xs }]}>
-                Must be at least {formatDurationMinutes(minimumMinutes)}.
+            <View
+              style={[
+                styles.card,
+                {
+                  backgroundColor: colors.surfaceElevated,
+                  borderColor: colors.divider,
+                  borderWidth: borderWidth.thin,
+                  borderRadius: radii.lg,
+                  padding: spacing.lg,
+                },
+              ]}
+            >
+              <Text style={[typography.subtitle, { color: colors.textPrimary, marginBottom: spacing.md }]}>{label}</Text>
+              <Text style={[typography.body, { color: colors.textSecondary, marginBottom: spacing.sm }]}>
+                {format.duration(draftTotal)}
               </Text>
-            )}
 
-            <View style={[styles.actions, { marginTop: spacing.lg, gap: spacing.sm }]}>
-              <View style={styles.action}>
-                <Button label="Cancel" variant="ghost" onPress={() => setOpen(false)} />
-              </View>
-              <View style={styles.action}>
-                <Button label="Save" variant="primary" onPress={handleSave} disabled={!canSave} />
+              <WheelGroup>
+                <WheelPicker
+                  values={hours}
+                  value={draftHours}
+                  onChange={setDraftHours}
+                  accessibilityLabel={t("durationPicker.hours")}
+                />
+                <Text style={[typography.label, styles.unit, { color: colors.textSecondary }]}>
+                  {t("common.hoursUnit")}
+                </Text>
+                <WheelPicker
+                  values={MINUTES}
+                  value={draftMinutes}
+                  onChange={setDraftMinutes}
+                  accessibilityLabel={t("durationPicker.minutes")}
+                />
+                <Text style={[typography.label, styles.unit, { color: colors.textSecondary }]}>
+                  {t("common.minutesUnit")}
+                </Text>
+              </WheelGroup>
+
+              {canSave ? null : (
+                <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.xs }]}>
+                  {t("durationPicker.minimum", { value: format.duration(minimumMinutes) })}
+                </Text>
+              )}
+
+              <View style={[styles.actions, { marginTop: spacing.lg, gap: spacing.sm }]}>
+                <View style={styles.action}>
+                  <Button label={t("common.cancel")} variant="ghost" onPress={() => setOpen(false)} />
+                </View>
+                <View style={styles.action}>
+                  <Button label={t("common.save")} variant="primary" onPress={handleSave} disabled={!canSave} />
+                </View>
               </View>
             </View>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      }
+    >
+      <FieldValue>{format.duration(valueMinutes)}</FieldValue>
+    </FieldRow>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    minHeight: 48,
-  },
   scrim: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#00000066",
   },
   card: {
     width: "100%",

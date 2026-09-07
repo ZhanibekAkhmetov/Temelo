@@ -1,19 +1,23 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SQLiteDatabase } from "expo-sqlite";
 
+import { nextClassColorId } from "@/domain/classColor";
 import { applyClassEditScope, type ClassEditDraft, type EditScope } from "@/domain/classEdit";
 import { findOccurrenceConflict, findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
+import { domainError, type DomainError } from "@/domain/errors";
 import { createId } from "@/domain/id";
 import type { Occurrence } from "@/domain/occurrence";
 import { seriesRangeMovedTo } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
-import { APPEARANCE_PALETTE } from "@/theme/tokens";
+import type { LanguagePreference } from "@/i18n/language";
+import type { AppearancePreference } from "@/theme/appearance";
 import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
 import { createSampleTimetable } from "@/state/sampleTimetable";
 import { bootstrapStorage } from "@/storage/bootstrap";
+import { readStorageReport as readStorageReport_, type StorageReport } from "@/storage/diagnostics";
 import { saveTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
 import type {
   AcademicTerm,
@@ -36,7 +40,34 @@ export interface AppState {
   exceptions: OccurrenceException[];
 }
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult = { ok: true } | { ok: false; error: DomainError };
+
+/**
+ * Whether what the user is looking at has actually reached the disk.
+ *
+ * Storage used to report only one thing — whether the database could be
+ * *opened* — and a database that opens perfectly well can still refuse every
+ * write. That gap is exactly how a session can look saved and come back empty,
+ * so the outcome of the writes themselves is tracked too, and surfaced.
+ */
+export interface PersistenceStatus {
+  /** Null until the first write has been attempted this launch. */
+  lastWriteOk: boolean | null;
+  lastWriteAt: number | null;
+  /** The SQLite message from the most recent failure, verbatim. */
+  lastError: string | null;
+  failureCount: number;
+  /** Write attempts settled this launch, successful or not. */
+  writeCount: number;
+}
+
+const INITIAL_PERSISTENCE: PersistenceStatus = {
+  lastWriteOk: null,
+  lastWriteAt: null,
+  lastError: null,
+  failureCount: 0,
+  writeCount: 0,
+};
 
 export interface AcademicDayConfigInput {
   academicDayStart: string;
@@ -66,6 +97,8 @@ export interface UpsertPlacementInput {
   room: string;
   teacher: string;
   notes: string;
+  /** Palette id; omitted lets a brand-new class take the next colour in turn. */
+  appearanceId?: string;
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
@@ -111,8 +144,24 @@ interface AppStateContextValue {
    * development and for deciding whether to warn the user.
    */
   storageError: string | null;
+  /**
+   * Whether writes are actually landing. A screen that tells the user their
+   * change was saved has to consult this, not merely the fact that the action
+   * passed its validation.
+   */
+  persistence: PersistenceStatus;
+  /** Development only: what the database on this device really looks like. */
+  readStorageReport: () => Promise<StorageReport | null>;
   setWeekendMode: (input: { weekendMode: WeekendMode }) => void;
   setGridOrientation: (input: { gridOrientation: GridOrientation }) => void;
+  /**
+   * Light, dark or follow-the-device. Applied the moment it is called —
+   * there is no draft and no "Save changes" between the tap and the theme,
+   * because an appearance choice is its own confirmation.
+   */
+  setAppearancePreference: (input: { appearancePreference: AppearancePreference }) => void;
+  /** The UI language, applied immediately for the same reason. */
+  setLanguagePreference: (input: { languagePreference: LanguagePreference }) => void;
   /**
    * The reminder newly created classes start with. Existing classes keep
    * whatever they were given, so this is never retroactive.
@@ -172,7 +221,7 @@ function findConflict(state: AppState, candidate: PlacementCandidate): Occurrenc
 }
 
 function conflictError(conflict: Occurrence): ActionResult {
-  return { ok: false, error: `This slot is already used by ${conflict.course.name}.` };
+  return { ok: false, error: domainError("errors.slotInUse", { name: conflict.course.name }) };
 }
 
 const AppStateContext = createContext<AppStateContextValue | null>(null);
@@ -181,14 +230,36 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(buildInitialState);
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [persistence, setPersistence] = useState<PersistenceStatus>(INITIAL_PERSISTENCE);
 
   const databaseRef = useRef<SQLiteDatabase | null>(null);
+  /** What `openTemeloDatabase` reported, kept for the diagnostics panel. */
+  const bootstrapRef = useRef<{ schemaVersion: number; repairedColumns: string[] } | null>(null);
   /**
    * The last state handed to the write queue — the baseline every diff is
    * taken against. Null means "the database's contents are unknown", which
    * makes the next save write everything.
    */
   const persistedRef = useRef<PersistedTimetable | null>(null);
+  /**
+   * The last state that is *known* to be on the disk.
+   *
+   * The same object as `persistedRef` while writes are succeeding, and the
+   * difference between them is the whole recovery story: `persistedRef` is
+   * cleared by a failure, because the database's contents stop being known the
+   * moment a transaction is rolled back, while this keeps naming the last
+   * state that definitely reached it. That is what a failed save is put back
+   * to, so the app never keeps showing an academic day the database does not
+   * have.
+   */
+  const lastKnownGoodRef = useRef<AppState | null>(null);
+  /**
+   * The state as of the most recent render, readable from inside the write
+   * queue. A failed write may only revert what is still on screen; if the user
+   * has done something since, that newer state is theirs to keep and the
+   * database is reconciled to it instead.
+   */
+  const latestStateRef = useRef<AppState>(state);
   /** Serializes writes, so two quick gestures cannot interleave. */
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -201,15 +272,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     bootstrapStorage()
-      .then(({ db, timetable }) => {
+      .then(({ db, timetable, schemaVersion, repairedColumns }) => {
         if (cancelled) return;
         databaseRef.current = db;
+        bootstrapRef.current = { schemaVersion, repairedColumns };
 
         if (timetable) {
           // The very same object becomes both the state and the diff
           // baseline, so the first persistence pass after hydration sees
           // nothing changed and writes nothing back.
           persistedRef.current = timetable;
+          lastKnownGoodRef.current = timetable;
           setState(timetable);
         }
         setHydrated(true);
@@ -231,6 +304,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
+   * What the user is currently looking at, kept where the write queue can read
+   * it. Its own effect rather than an assignment during render, so it is
+   * updated for every state — including the one a revert puts back, which the
+   * persistence effect below deliberately returns from early.
+   */
+  useEffect(() => {
+    latestStateRef.current = state;
+  }, [state]);
+
+  /**
    * Persistence. Every successful action produces a new state object, and
    * every new state object is diffed against the last one written and saved
    * in a single transaction. Actions that fail their validation return
@@ -242,22 +325,101 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const db = databaseRef.current;
     if (!hydrated || !db) return;
+    if (persistedRef.current === state) return;
 
-    const previous = persistedRef.current;
-    if (previous === state) return;
-    persistedRef.current = state;
+    writeQueueRef.current = writeQueueRef.current.then(async () => {
+      // Re-read the baseline inside the queue: an earlier write in this chain
+      // may have advanced it, or failed and cleared it, since this effect ran.
+      const previous = persistedRef.current;
+      if (previous === state) return;
 
-    writeQueueRef.current = writeQueueRef.current
-      .then(() => saveTimetable(db, state, previous))
-      .catch((error: unknown) => {
-        // The baseline is no longer trustworthy, so the next save is made a
-        // full write rather than a diff against a state that never landed.
+      try {
+        await saveTimetable(db, state, previous);
+        /*
+         * Both baselines advance only here, after the transaction has actually
+         * committed. The diff baseline used to advance optimistically before
+         * the write, which meant a state that never reached the disk was
+         * nonetheless treated as the thing on disk — so a later diff was taken
+         * against a fiction.
+         */
+        persistedRef.current = state;
+        lastKnownGoodRef.current = state;
+        setPersistence((current) => ({
+          lastWriteOk: true,
+          lastWriteAt: Date.now(),
+          lastError: null,
+          failureCount: current.failureCount,
+          writeCount: current.writeCount + 1,
+        }));
+      } catch (error: unknown) {
+        // The baseline is no longer trustworthy, so the next save is a full
+        // write rather than a diff against a state that never landed. That is
+        // also what makes this self-healing: once the underlying fault is
+        // gone, the next successful write carries everything the failed ones
+        // did not.
         persistedRef.current = null;
-        console.warn("[temelo/storage] failed to persist a change", error);
-      });
+        const message = error instanceof Error ? error.message : String(error);
+
+        /*
+         * The transaction rolled back, so the database still holds the last
+         * state that committed — and the app has to go back to agreeing with
+         * it. Leaving the rejected state on screen is what made a failed
+         * academic-day save so damaging: the grid drew seven periods, SQLite
+         * held eight, every later diff was taken against the wrong side of
+         * that, and a restart silently threw the session away.
+         *
+         * Two conditions, both load-bearing:
+         *
+         *  - only when there *is* a known-good state. Before the first
+         *    successful write there is nothing to go back to, and inventing
+         *    one would discard the user's only copy of their work.
+         *  - only when the rejected state is still the one on screen. If the
+         *    user has changed something since, that is a decision made after
+         *    the failure and is not ours to undo; the cleared baseline above
+         *    makes the next attempt a full write, which converges the database
+         *    on it instead.
+         *
+         * Reverting cannot loop. `persistedRef` is set to the very object the
+         * state is being put back to, so the effect that this `setState`
+         * schedules finds `persistedRef.current === state` and writes nothing.
+         */
+        const knownGood = lastKnownGoodRef.current;
+        if (knownGood && knownGood !== state && latestStateRef.current === state) {
+          persistedRef.current = knownGood;
+          setState(knownGood);
+        }
+
+        /*
+         * `console.error`, not `warn`. A failed write means the app is running
+         * in memory only and everything the user does will be gone when the
+         * process dies — which is the single most damaging thing that can go
+         * wrong here, and it used to be one grey line in a log nobody reads.
+         */
+        console.error("[temelo/storage] a change was NOT saved; the app is running in memory only:", message, error);
+
+        setPersistence((current) => ({
+          lastWriteOk: false,
+          lastWriteAt: Date.now(),
+          lastError: message,
+          failureCount: current.failureCount + 1,
+          writeCount: current.writeCount + 1,
+        }));
+      }
+    });
   }, [state, hydrated]);
 
   const value = useMemo<AppStateContextValue>(() => {
+    /*
+     * Reads the database's real shape, on demand, for the development
+     * diagnostics panel. Deliberately a function rather than state: it hits
+     * the disk, and nothing outside that panel should be paying for it.
+     */
+    const readStorageReport: AppStateContextValue["readStorageReport"] = async () => {
+      const db = databaseRef.current;
+      if (!db) return null;
+      return readStorageReport_(db, bootstrapRef.current?.repairedColumns ?? []);
+    };
+
     const setWeekendMode: AppStateContextValue["setWeekendMode"] = (input) => {
       setState((prev) => ({
         ...prev,
@@ -270,6 +432,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ...prev,
         settings: { ...prev.settings, gridOrientation: input.gridOrientation },
       }));
+    };
+
+    const setAppearancePreference: AppStateContextValue["setAppearancePreference"] = (input) => {
+      setState((prev) =>
+        prev.settings.appearancePreference === input.appearancePreference
+          ? prev
+          : { ...prev, settings: { ...prev.settings, appearancePreference: input.appearancePreference } },
+      );
+    };
+
+    const setLanguagePreference: AppStateContextValue["setLanguagePreference"] = (input) => {
+      setState((prev) =>
+        prev.settings.languagePreference === input.languagePreference
+          ? prev
+          : { ...prev, settings: { ...prev.settings, languagePreference: input.languagePreference } },
+      );
     };
 
     const setDefaultReminder: AppStateContextValue["setDefaultReminder"] = (input) => {
@@ -318,15 +496,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     const setTermConfig: AppStateContextValue["setTermConfig"] = (input) => {
       const name = input.name.trim();
-      if (!name) return { ok: false, error: "Term name is required." };
+      if (!name) return { ok: false, error: domainError("errors.termNameRequired") };
       if (!isValidIsoDate(input.startDate)) {
-        return { ok: false, error: "Start date must be a valid date (DD.MM.YYYY)." };
+        return { ok: false, error: domainError("errors.startDateInvalid") };
       }
       if (!isValidIsoDate(input.estimatedEndDate)) {
-        return { ok: false, error: "Estimated end date must be a valid date (DD.MM.YYYY)." };
+        return { ok: false, error: domainError("errors.estimatedEndDateInvalid") };
       }
       if (!isIsoDateBeforeOrEqual(input.startDate, input.estimatedEndDate)) {
-        return { ok: false, error: "Estimated end date cannot be before the start date." };
+        return { ok: false, error: domainError("errors.estimatedEndBeforeStart") };
       }
 
       setState((prev) => ({
@@ -339,12 +517,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     const updateTermInfo: AppStateContextValue["updateTermInfo"] = (input) => {
       const name = input.name.trim();
-      if (!name) return { ok: false, error: "Term name is required." };
+      if (!name) return { ok: false, error: domainError("errors.termNameRequired") };
       if (!isValidIsoDate(input.estimatedEndDate)) {
-        return { ok: false, error: "Estimated end date must be a valid date (DD.MM.YYYY)." };
+        return { ok: false, error: domainError("errors.estimatedEndDateInvalid") };
       }
       if (!isIsoDateBeforeOrEqual(state.term.startDate, input.estimatedEndDate)) {
-        return { ok: false, error: "Estimated end date cannot be before the term start date." };
+        return { ok: false, error: domainError("errors.estimatedEndBeforeTermStart") };
       }
 
       setState((prev) => ({
@@ -356,15 +534,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     const upsertPlacement: AppStateContextValue["upsertPlacement"] = (input) => {
       const name = input.name.trim();
-      if (!name) return { ok: false, error: "Class name is required." };
+      if (!name) return { ok: false, error: domainError("errors.classNameRequired") };
       if (!isValidIsoDate(input.startsOn)) {
-        return { ok: false, error: "Start date must be a valid date (DD.MM.YYYY)." };
+        return { ok: false, error: domainError("errors.startDateInvalid") };
       }
       if (!isValidIsoDate(input.endsOn)) {
-        return { ok: false, error: "End date must be a valid date (DD.MM.YYYY)." };
+        return { ok: false, error: domainError("errors.endDateInvalid") };
       }
       if (!isIsoDateBeforeOrEqual(input.startsOn, input.endsOn)) {
-        return { ok: false, error: "End date cannot be before the start date." };
+        return { ok: false, error: domainError("errors.endBeforeStart") };
       }
 
       const slotSpan = Math.max(1, input.slotSpan ?? 1);
@@ -383,7 +561,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       if (input.placementId) {
         const existing = state.placements.find((placement) => placement.id === input.placementId);
-        if (!existing) return { ok: false, error: "This class no longer exists." };
+        if (!existing) return { ok: false, error: domainError("errors.classGone") };
 
         setState((prev) => ({
           ...prev,
@@ -395,6 +573,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                   room: input.room.trim(),
                   teacher: input.teacher.trim(),
                   notes: input.notes.trim(),
+                  appearanceId: input.appearanceId ?? course.appearanceId,
                   updatedAt: now,
                 }
               : course,
@@ -424,7 +603,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         room: input.room.trim(),
         teacher: input.teacher.trim(),
         notes: input.notes.trim(),
-        appearanceId: APPEARANCE_PALETTE[state.courses.length % APPEARANCE_PALETTE.length],
+        // The editor always supplies one; the fallback keeps the rotation
+        // correct for any caller that does not care about colour.
+        appearanceId: input.appearanceId ?? nextClassColorId(state.courses),
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -480,7 +661,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      */
     const checkPlacement: AppStateContextValue["checkPlacement"] = (input) => {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
-      if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
+      if (!existing || existing.deletedAt) return { ok: false, error: domainError("errors.classGone") };
 
       const conflict = findConflict(state, movedCandidate(existing, input));
       return conflict ? conflictError(conflict) : { ok: true };
@@ -509,7 +690,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      */
     const movePlacement: AppStateContextValue["movePlacement"] = (input) => {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
-      if (!existing || existing.deletedAt) return { ok: false, error: "This class no longer exists." };
+      if (!existing || existing.deletedAt) return { ok: false, error: domainError("errors.classGone") };
 
       const candidate = movedCandidate(existing, input);
       const dates = { startsOn: candidate.startsOn, endsOn: candidate.endsOn };
@@ -605,8 +786,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       state,
       hydrated,
       storageError,
+      persistence,
+      readStorageReport,
       setWeekendMode,
       setGridOrientation,
+      setAppearancePreference,
+      setLanguagePreference,
       setDefaultReminder,
       setAcademicDayConfig,
       setTermConfig,
@@ -620,7 +805,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       loadSampleTimetable,
       resetPrototype,
     };
-  }, [state, hydrated, storageError]);
+  }, [state, hydrated, storageError, persistence]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

@@ -18,6 +18,7 @@
 
 import { diffInDaysIso } from "@/domain/calendar";
 import { addDaysIso, isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
+import { domainError, type DomainError } from "@/domain/errors";
 import { createId } from "@/domain/id";
 import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
 import { findOccurrenceConflict, findPlacementConflict } from "@/domain/conflict";
@@ -31,13 +32,6 @@ export type EditScope = "onlyThis" | "thisAndFuture" | "all";
 /** Which gesture or screen the edit came from. */
 export type EditSource = "editor" | "move" | "resize";
 
-/** The user-facing wording, defined once so every surface agrees. */
-export const EDIT_SCOPE_LABEL: Record<EditScope, string> = {
-  onlyThis: "Only this occurrence",
-  thisAndFuture: "This and future occurrences",
-  all: "All occurrences",
-};
-
 export const EDIT_SCOPE_ORDER: EditScope[] = ["onlyThis", "thisAndFuture", "all"];
 
 /** Which parts of the class the user actually changed. */
@@ -48,6 +42,8 @@ export interface EditedFields {
   room: boolean;
   teacher: boolean;
   notes: boolean;
+  /** The class's colour, which is a course field like the four above it. */
+  appearance: boolean;
   /** Repetition rule or the series' own date range. */
   recurrence: boolean;
   /** Lead time before the class its reminder fires at, or no reminder. */
@@ -70,6 +66,7 @@ export interface ClassEditDraft {
   room: string;
   teacher: string;
   notes: string;
+  appearanceId: string;
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
@@ -97,6 +94,7 @@ export interface ClassEditInput {
   room?: string;
   teacher?: string;
   notes?: string;
+  appearanceId?: string;
   /** Series fields; omitted means "as the series already repeats". */
   recurrenceType?: RecurrenceType;
   startsOn?: string;
@@ -111,7 +109,7 @@ export interface ClassEditInput {
  * never has to clone a course the way a renamed one does.
  */
 function courseFieldsChanged(changed: EditedFields): boolean {
-  return changed.name || changed.room || changed.teacher || changed.notes;
+  return changed.name || changed.room || changed.teacher || changed.notes || changed.appearance;
 }
 
 export function draftHasChanges(draft: ClassEditDraft): boolean {
@@ -130,6 +128,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
   const room = input.room ?? occurrence.course.room;
   const teacher = input.teacher ?? occurrence.course.teacher;
   const notes = input.notes ?? occurrence.course.notes;
+  const appearanceId = input.appearanceId ?? occurrence.course.appearanceId;
   const recurrenceType = input.recurrenceType ?? base.recurrenceType;
   const startsOn = input.startsOn ?? base.startsOn;
   const endsOn = input.endsOn ?? base.endsOn;
@@ -148,6 +147,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
     room: room !== occurrence.course.room,
     teacher: teacher !== occurrence.course.teacher,
     notes: notes !== occurrence.course.notes,
+    appearance: appearanceId !== occurrence.course.appearanceId,
     recurrence: recurrenceType !== base.recurrenceType || startsOn !== base.startsOn || endsOn !== base.endsOn,
     reminder: reminderMinutes !== occurrence.placement.reminderMinutes,
   };
@@ -164,6 +164,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
     room,
     teacher,
     notes,
+    appearanceId,
     recurrenceType,
     startsOn,
     endsOn,
@@ -183,21 +184,30 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
       slotSpan: draft.slotSpan,
       reminderMinutes: draft.reminderMinutes,
     },
-    course: { ...occurrence.course, name: draft.name, room: draft.room, teacher: draft.teacher, notes: draft.notes },
+    course: {
+      ...occurrence.course,
+      name: draft.name,
+      room: draft.room,
+      teacher: draft.teacher,
+      notes: draft.notes,
+      // Carried into the preview so a colour change is visible on the grid
+      // while the scope question is open, exactly as a rename already is.
+      appearanceId: draft.appearanceId,
+    },
   };
 
   return { draft, preview };
 }
 
-export type EditCheck = { ok: true } | { ok: false; error: string };
+export type EditCheck = { ok: true } | { ok: false; error: DomainError };
 
 /** Field-level validity, checked before the scope question is ever asked. */
 export function validateClassEditDraft(draft: ClassEditDraft): EditCheck {
-  if (!draft.name.trim()) return { ok: false, error: "Class name is required." };
-  if (!isValidIsoDate(draft.startsOn)) return { ok: false, error: "Start date must be a valid date (DD.MM.YYYY)." };
-  if (!isValidIsoDate(draft.endsOn)) return { ok: false, error: "End date must be a valid date (DD.MM.YYYY)." };
+  if (!draft.name.trim()) return { ok: false, error: domainError("errors.classNameRequired") };
+  if (!isValidIsoDate(draft.startsOn)) return { ok: false, error: domainError("errors.startDateInvalid") };
+  if (!isValidIsoDate(draft.endsOn)) return { ok: false, error: domainError("errors.endDateInvalid") };
   if (!isIsoDateBeforeOrEqual(draft.startsOn, draft.endsOn)) {
-    return { ok: false, error: "End date cannot be before the start date." };
+    return { ok: false, error: domainError("errors.endBeforeStart") };
   }
   return { ok: true };
 }
@@ -209,8 +219,8 @@ export function validateClassEditDraft(draft: ClassEditDraft): EditCheck {
  * so quietly writing it onto a single occurrence would silently mean
  * something other than what the user asked for.
  */
-export function onlyThisBlockedReason(draft: ClassEditDraft): string | null {
-  return draft.changed.recurrence ? "Recurrence changes apply to the whole series." : null;
+export function onlyThisBlockedReason(draft: ClassEditDraft): DomainError | null {
+  return draft.changed.recurrence ? domainError("errors.recurrenceWholeSeries") : null;
 }
 
 export interface EditableTimetable {
@@ -220,10 +230,10 @@ export interface EditableTimetable {
   exceptions: OccurrenceException[];
 }
 
-export type EditResult = { ok: true; next: EditableTimetable } | { ok: false; error: string };
+export type EditResult = { ok: true; next: EditableTimetable } | { ok: false; error: DomainError };
 
-function conflictMessage(conflict: Occurrence): string {
-  return `This slot is already used by ${conflict.course.name}.`;
+function conflictMessage(conflict: Occurrence): DomainError {
+  return domainError("errors.slotInUse", { name: conflict.course.name });
 }
 
 /**
@@ -252,6 +262,7 @@ function courseWithEdits(course: Course, draft: ClassEditDraft, now: string): Co
     room: draft.changed.room ? draft.room.trim() : course.room,
     teacher: draft.changed.teacher ? draft.teacher.trim() : course.teacher,
     notes: draft.changed.notes ? draft.notes.trim() : course.notes,
+    appearanceId: draft.changed.appearance ? draft.appearanceId : course.appearanceId,
     updatedAt: now,
   };
 }
@@ -276,6 +287,7 @@ function exceptionStillDiffers(exception: OccurrenceException): boolean {
     exception.room !== null ||
     exception.teacher !== null ||
     exception.notes !== null ||
+    exception.appearanceId !== null ||
     exception.reminderMinutes !== null
   );
 }
@@ -351,6 +363,10 @@ function rebaseEditedException(
     room: changed.room ? null : exception.room,
     teacher: changed.teacher ? null : exception.teacher,
     notes: changed.notes ? null : exception.notes,
+    // The same rule the four fields above follow, and the one that stops an
+    // "All occurrences" colour change leaving the very occurrence it was made
+    // from stuck on the override it used to carry.
+    appearanceId: changed.appearance ? null : exception.appearanceId,
     reminderMinutes: changed.reminder ? null : exception.reminderMinutes,
     updatedAt: now,
   };
@@ -472,6 +488,7 @@ function applyOnlyThis(current: EditableTimetable, draft: ClassEditDraft, base: 
     room: overrideOf(draft.room.trim(), baseCourse.room),
     teacher: overrideOf(draft.teacher.trim(), baseCourse.teacher),
     notes: overrideOf(draft.notes.trim(), baseCourse.notes),
+    appearanceId: overrideOf(draft.appearanceId, baseCourse.appearanceId),
     // Not `overrideOf`: "no reminder" is a value here, not the absence of one.
     reminderMinutes: reminderOverrideFor(draft.reminderMinutes, base.reminderMinutes),
     updatedAt: now,
@@ -519,7 +536,7 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
       : movedRangeOf(draft, base).endsOn;
 
   if (!isIsoDateBeforeOrEqual(draft.effectiveDate, endsOn)) {
-    return { ok: false, error: "End date cannot be before this occurrence." };
+    return { ok: false, error: domainError("errors.endBeforeOccurrence") };
   }
 
   const truncated: Placement = { ...base, endsOn: previousEnd, updatedAt: now };
@@ -638,7 +655,7 @@ function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Place
   };
 
   if (!isIsoDateBeforeOrEqual(nextPlacement.startsOn, nextPlacement.endsOn)) {
-    return { ok: false, error: "End date cannot be before the start date." };
+    return { ok: false, error: domainError("errors.endBeforeStart") };
   }
 
   // Against everything except itself: the stored copy of this very series
@@ -672,10 +689,10 @@ export function applyClassEditScope(
   now: string,
 ): EditResult {
   const base = current.placements.find((placement) => placement.id === draft.placementId && !placement.deletedAt);
-  if (!base) return { ok: false, error: "This class no longer exists." };
+  if (!base) return { ok: false, error: domainError("errors.classGone") };
 
   const baseCourse = current.courses.find((course) => course.id === base.courseId && !course.deletedAt);
-  if (!baseCourse) return { ok: false, error: "This class no longer exists." };
+  if (!baseCourse) return { ok: false, error: domainError("errors.classGone") };
 
   const invalid = validateClassEditDraft(draft);
   if (!invalid.ok) return invalid;

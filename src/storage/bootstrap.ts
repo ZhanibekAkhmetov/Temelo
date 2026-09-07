@@ -20,6 +20,8 @@ import { loadTimetable, type PersistedTimetable } from "@/storage/timetableRepos
 export interface StorageBootstrap {
   db: SQLiteDatabase;
   schemaVersion: number;
+  /** Columns the post-migration guard had to add; empty on a healthy launch. */
+  repairedColumns: string[];
   /** Null when this database has never held a timetable. */
   timetable: PersistedTimetable | null;
 }
@@ -27,12 +29,12 @@ export interface StorageBootstrap {
 let bootstrapPromise: Promise<StorageBootstrap> | null = null;
 
 async function runBootstrap(): Promise<StorageBootstrap> {
-  const { db, schemaVersion } = await openTemeloDatabase();
+  const { db, schemaVersion, repairedColumns } = await openTemeloDatabase();
   const timetable = await loadTimetable(db);
 
   await logDatabaseDiagnostics(db);
 
-  return { db, schemaVersion, timetable };
+  return { db, schemaVersion, repairedColumns, timetable };
 }
 
 export function bootstrapStorage(): Promise<StorageBootstrap> {

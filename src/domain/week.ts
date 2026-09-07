@@ -2,6 +2,10 @@
  * Weekday vocabulary and ordering. The displayed week always runs
  * Monday-first; the only configurable thing is which trailing day(s) are
  * non-class days (see WeekendMode).
+ *
+ * The weekday *names* are not here. They are language-dependent and come from
+ * `Intl` via `i18n/format`; what this module owns is the identity of a day
+ * and the order the week is drawn in.
  */
 
 export type Weekday =
@@ -30,13 +34,6 @@ export const ALL_WEEKDAYS_MONDAY_FIRST: Weekday[] = [
  */
 export type WeekendMode = "saturdaySunday" | "sundayOnly" | "none";
 
-/** Short enough to fit a three-segment control without truncating. */
-export const WEEKEND_MODE_LABEL: Record<WeekendMode, string> = {
-  saturdaySunday: "Sat & Sun",
-  sundayOnly: "Sun only",
-  none: "Show all",
-};
-
 export const ALL_WEEKEND_MODES: WeekendMode[] = ["saturdaySunday", "sundayOnly", "none"];
 
 const WEEKEND_DAYS_BY_MODE: Record<WeekendMode, ReadonlySet<Weekday>> = {
@@ -51,26 +48,6 @@ const WEEKEND_DAYS: ReadonlySet<Weekday> = new Set(["saturday", "sunday"]);
 export function isWeekendDay(day: Weekday): boolean {
   return WEEKEND_DAYS.has(day);
 }
-
-export const WEEKDAY_SHORT_LABEL: Record<Weekday, string> = {
-  monday: "Mon",
-  tuesday: "Tue",
-  wednesday: "Wed",
-  thursday: "Thu",
-  friday: "Fri",
-  saturday: "Sat",
-  sunday: "Sun",
-};
-
-export const WEEKDAY_LABEL: Record<Weekday, string> = {
-  monday: "Monday",
-  tuesday: "Tuesday",
-  wednesday: "Wednesday",
-  thursday: "Thursday",
-  friday: "Friday",
-  saturday: "Saturday",
-  sunday: "Sunday",
-};
 
 export function getOrderedWeekdays(weekendMode: WeekendMode): Weekday[] {
   const weekend = WEEKEND_DAYS_BY_MODE[weekendMode];

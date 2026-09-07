@@ -6,8 +6,11 @@
  * ever sees a snake_cased row.
  */
 
+import { normalizeClassColorId } from "@/domain/classColor";
 import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
 import type { Weekday, WeekendMode } from "@/domain/week";
+import { normalizeLanguagePreference } from "@/i18n/language";
+import { normalizeAppearancePreference } from "@/theme/appearance";
 import type {
   AcademicTerm,
   Course,
@@ -32,6 +35,9 @@ export interface SettingsRow {
   slot_count: number;
   /** Nullable: NULL is the real value "None", not a missing setting. */
   default_reminder_minutes: number | null;
+  /** Nullable only for the instant between the v4 ALTER and its backfill. */
+  appearance_preference: string | null;
+  language_preference: string | null;
   onboarding_completed: number;
 }
 
@@ -89,6 +95,8 @@ export interface OccurrenceExceptionRow {
   room: string | null;
   teacher: string | null;
   notes: string | null;
+  /** Colour override; NULL means "follow the course". */
+  appearance_id: string | null;
   /** Three-state; see `reminderOverrideToColumn`. TEXT, never INTEGER. */
   reminder_minutes: string | null;
   created_at: string;
@@ -182,6 +190,8 @@ export function settingsToRow(settings: Settings): SettingsRow {
     default_break_duration_minutes: settings.defaultBreakDurationMinutes,
     slot_count: settings.slotCount,
     default_reminder_minutes: settings.defaultReminderMinutes,
+    appearance_preference: settings.appearancePreference,
+    language_preference: settings.languagePreference,
     onboarding_completed: settings.onboardingCompleted ? 1 : 0,
   };
 }
@@ -195,6 +205,11 @@ export function settingsFromRow(row: SettingsRow): Settings {
     defaultBreakDurationMinutes: row.default_break_duration_minutes,
     slotCount: row.slot_count,
     defaultReminderMinutes: reminderMinutesFromColumn(row.default_reminder_minutes),
+    // Both normalise a NULL or unrecognised cell to "system", which is what a
+    // fresh install starts at — so a row written before v4, or by a newer
+    // build offering a scheme this one has never heard of, opens safely.
+    appearancePreference: normalizeAppearancePreference(row.appearance_preference),
+    languagePreference: normalizeLanguagePreference(row.language_preference),
     onboardingCompleted: row.onboarding_completed !== 0,
   };
 }
@@ -246,7 +261,10 @@ export function courseFromRow(row: CourseRow): Course {
     room: row.room,
     teacher: row.teacher,
     notes: row.notes,
-    appearanceId: row.appearance_id,
+    // v4 rewrote the two retired palette ids in place, so this only has to
+    // catch what a rewrite cannot reach: a row from a newer build, or one
+    // edited by hand during development.
+    appearanceId: normalizeClassColorId(row.appearance_id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
@@ -300,6 +318,7 @@ export function exceptionToRow(exception: OccurrenceException): OccurrenceExcept
     room: exception.room,
     teacher: exception.teacher,
     notes: exception.notes,
+    appearance_id: exception.appearanceId,
     reminder_minutes: reminderOverrideToColumn(exception.reminderMinutes),
     created_at: exception.createdAt,
     updated_at: exception.updatedAt,
@@ -320,6 +339,10 @@ export function exceptionFromRow(row: OccurrenceExceptionRow): OccurrenceExcepti
     room: row.room,
     teacher: row.teacher,
     notes: row.notes,
+    // NULL stays NULL — "follow the course" — and only a real override is
+    // narrowed, so an unknown id becomes a drawable colour rather than
+    // silently turning into "no override at all".
+    appearanceId: row.appearance_id === null ? null : normalizeClassColorId(row.appearance_id),
     reminderMinutes: reminderOverrideFromColumn(row.reminder_minutes),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

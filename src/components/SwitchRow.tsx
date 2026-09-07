@@ -10,10 +10,15 @@ interface SwitchRowProps {
 }
 
 export function SwitchRow({ label, description, value, onValueChange }: SwitchRowProps) {
-  const { colors, spacing, typography } = useTheme();
+  const { colors, spacing, typography, borderWidth } = useTheme();
 
   return (
-    <View style={[styles.row, { paddingVertical: spacing.sm }]}>
+    <View
+      style={[
+        styles.row,
+        { paddingVertical: spacing.sm, borderBottomWidth: borderWidth.thin, borderColor: colors.divider },
+      ]}
+    >
       <View style={styles.text}>
         <Text style={[typography.body, { color: colors.textPrimary }]}>{label}</Text>
         {description ? (
@@ -25,7 +30,7 @@ export function SwitchRow({ label, description, value, onValueChange }: SwitchRo
         onValueChange={onValueChange}
         accessibilityLabel={label}
         accessibilityRole="switch"
-        trackColor={{ true: colors.accent, false: colors.border }}
+        trackColor={{ true: colors.accent, false: colors.dividerStrong }}
       />
     </View>
   );
@@ -37,6 +42,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
+    // The same row height as every other setting, so a list of them does not
+    // step up and down depending on which control each one carries.
+    minHeight: 48,
   },
   text: {
     flex: 1,

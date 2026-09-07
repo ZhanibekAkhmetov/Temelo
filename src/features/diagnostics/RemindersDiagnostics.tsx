@@ -41,7 +41,7 @@ export function RemindersDiagnostics() {
     <View
       style={[
         styles.panel,
-        { borderColor: colors.border, borderWidth: borderWidth.thin, borderRadius: radii.sm, padding: spacing.md },
+        { borderColor: colors.divider, borderWidth: borderWidth.thin, borderRadius: radii.sm, padding: spacing.md },
       ]}
     >
       <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>

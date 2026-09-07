@@ -5,21 +5,25 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { InlineDateField } from "@/components/InlineDateField";
 import { ReminderField } from "@/components/ReminderField";
-import { SegmentedControl } from "@/components/SegmentedControl";
 import { SwitchRow } from "@/components/SwitchRow";
 import { TextField } from "@/components/TextField";
-import { formatIsoLong } from "@/domain/calendar";
+import { nextClassColorId, type ClassColorId } from "@/domain/classColor";
 import {
   createPendingClassEdit,
   draftHasChanges,
   validateClassEditDraft,
   type PendingClassEdit,
 } from "@/domain/classEdit";
+import type { DomainError } from "@/domain/errors";
 import { defaultSeriesStartDate } from "@/domain/recurrence";
-import { formatReminderLabel, type ReminderMinutes } from "@/domain/reminder";
-import { WEEKDAY_LABEL, type Weekday } from "@/domain/week";
+import type { ReminderMinutes } from "@/domain/reminder";
+import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
+import { ChoiceRowField } from "@/components/ChoiceRowField";
+import { FormSection } from "@/components/FormSection";
+import { ClassColorField } from "@/features/timetable/ClassColorField";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 import type { AcademicTerm, RecurrenceType, TimeSlot } from "@/types/models";
@@ -45,13 +49,7 @@ interface ClassEditorModalProps {
 }
 
 /** Which inline picker is unfolded — at most one at a time. */
-type OpenPicker = "date" | "startsOn" | "endsOn" | null;
-
-const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
-  { label: "Weekly", value: "weekly" },
-  { label: "Every 2 wks", value: "biweekly" },
-  { label: "One time", value: "once" },
-];
+type OpenPicker = "date" | "startsOn" | "endsOn" | "color" | null;
 
 export function ClassEditorModal({
   visible,
@@ -102,6 +100,7 @@ function ClassEditorForm({
   onRequestScope,
 }: Omit<ClassEditorModalProps, "visible">) {
   const { colors, spacing, typography, borderWidth } = useTheme();
+  const { t, format } = useI18n();
   const { state, upsertPlacement, deletePlacement, setDefaultReminder } = useAppState();
   const reminderStatus = useReminderStatus();
 
@@ -111,6 +110,17 @@ function ClassEditorForm({
   const [room, setRoom] = useState(existing?.course.room ?? "");
   const [teacher, setTeacher] = useState(existing?.course.teacher ?? "");
   const [notes, setNotes] = useState(existing?.course.notes ?? "");
+  /*
+   * The colour this occurrence currently reads as — which a previous "only
+   * this occurrence" edit may have set apart from its series — and, for a
+   * brand-new class, the next colour in the rotation.
+   *
+   * Seeded once, when the form mounts, so the suggested colour cannot change
+   * underneath the user while they are typing a name.
+   */
+  const [appearanceId, setAppearanceId] = useState<ClassColorId>(
+    () => (existing?.course.appearanceId as ClassColorId | undefined) ?? nextClassColorId(state.courses),
+  );
   // Recurrence is a property of the series, never of the occurrence that was
   // tapped — so these read from the series even when this occurrence has
   // been moved or altered on its own.
@@ -142,12 +152,18 @@ function ClassEditorForm({
   const [makeReminderDefault, setMakeReminderDefault] = useState(false);
   const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
   const [openPicker, setOpenPicker] = useState<OpenPicker>(null);
-  const [nameError, setNameError] = useState<string | undefined>();
-  const [formError, setFormError] = useState<string | undefined>();
+  const [nameError, setNameError] = useState<DomainError | undefined>();
+  const [formError, setFormError] = useState<DomainError | undefined>();
 
   const isOneOff = recurrenceType === "once";
   const effectiveStartsOn = isOneOff ? onceDate : startsOn;
   const effectiveEndsOn = isOneOff ? onceDate : endsOn;
+
+  const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
+    { label: t("recurrence.weekly"), value: "weekly" },
+    { label: t("recurrence.biweekly"), value: "biweekly" },
+    { label: t("recurrence.once"), value: "once" },
+  ];
 
   /*
    * Offered only when the choice actually differs from what new classes
@@ -159,10 +175,26 @@ function ClassEditorForm({
   const remindersBlocked = reminderStatus.permission === "denied";
 
   const summaryText = isOneOff
-    ? `One time on ${formatIsoLong(onceDate)}`
+    ? t("classEditor.summaryOnce", { date: format.dateLong(onceDate) })
     : recurrenceType === "biweekly"
-      ? `Every two weeks until ${formatIsoLong(effectiveEndsOn)}`
-      : `Every week until ${formatIsoLong(effectiveEndsOn)}`;
+      ? t("classEditor.summaryBiweekly", { date: format.dateLong(effectiveEndsOn) })
+      : t("classEditor.summaryWeekly", { date: format.dateLong(effectiveEndsOn) });
+
+  const slotText =
+    slotSpan > 1
+      ? t("classEditor.slotSpan", {
+          weekday: format.weekdayLong(weekday),
+          from: timeSlot.position,
+          to: timeSlot.position + slotSpan - 1,
+          start: timeSlot.startTime,
+          end: endTime,
+        })
+      : t("classEditor.slot", {
+          weekday: format.weekdayLong(weekday),
+          period: timeSlot.position,
+          start: timeSlot.startTime,
+          end: endTime,
+        });
 
   function togglePicker(picker: Exclude<OpenPicker, null>) {
     setOpenPicker((current) => (current === picker ? null : picker));
@@ -188,7 +220,7 @@ function ClassEditorForm({
   function handleSave() {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setNameError("Class name is required.");
+      setNameError({ key: "errors.classNameRequired" });
       return;
     }
     setNameError(undefined);
@@ -218,6 +250,9 @@ function ClassEditorForm({
         room: room.trim(),
         teacher: teacher.trim(),
         notes: notes.trim(),
+        // Colour goes through the draft like every other course field, so it
+        // is scoped by the same question and rebased by the same rules.
+        appearanceId,
         recurrenceType,
         startsOn: effectiveStartsOn,
         endsOn: effectiveEndsOn,
@@ -244,6 +279,7 @@ function ClassEditorForm({
       room,
       teacher,
       notes,
+      appearanceId,
       recurrenceType,
       startsOn: effectiveStartsOn,
       endsOn: effectiveEndsOn,
@@ -259,10 +295,10 @@ function ClassEditorForm({
 
   function handleDelete() {
     if (!existing) return;
-    Alert.alert("Delete class?", `Remove ${existing.course.name} from the timetable. This cannot be undone.`, [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(t("classEditor.deleteTitle"), t("classEditor.deleteMessage", { name: existing.course.name }), [
+      { text: t("common.cancel"), style: "cancel" },
       {
-        text: "Delete",
+        text: t("common.delete"),
         style: "destructive",
         onPress: () => {
           deletePlacement(existing.basePlacement.id);
@@ -277,84 +313,149 @@ function ClassEditorForm({
       <View
         style={[
           styles.headerRow,
-          { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderBottomWidth: borderWidth.thin, borderColor: colors.border },
+          {
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.sm,
+            backgroundColor: colors.headerBackground,
+            borderBottomWidth: borderWidth.thin,
+            borderColor: colors.divider,
+            gap: spacing.sm,
+          },
         ]}
       >
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Cancel" hitSlop={8}>
-          <Text style={[typography.label, { color: colors.textSecondary }]}>Cancel</Text>
+        {/* Both header actions are full 44-point targets with generous
+            retention: these are the two presses in the app it is least
+            acceptable to lose, and a short word of text is a small thing to
+            aim at. */}
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.cancel")}
+          hitSlop={8}
+          pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+          style={({ pressed }) => [styles.headerAction, { opacity: pressed ? 0.5 : 1 }]}
+        >
+          <Text style={[typography.label, { color: colors.textSecondary }]}>{t("common.cancel")}</Text>
         </Pressable>
-        <Text style={[typography.subtitle, { color: colors.textPrimary }]}>{existing ? "Edit class" : "New class"}</Text>
-        <Pressable onPress={handleSave} accessibilityRole="button" accessibilityLabel="Save" hitSlop={8}>
-          <Text style={[typography.label, { color: colors.accent, fontWeight: "700" }]}>Save</Text>
+        {/* The title takes what is left between the two actions and centres in
+            it, so "Kurs bearbeiten" cannot push Save off the row. */}
+        <Text style={[typography.subtitle, styles.headerTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+          {existing ? t("classEditor.editTitle") : t("classEditor.newTitle")}
+        </Text>
+        <Pressable
+          onPress={handleSave}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.save")}
+          hitSlop={8}
+          pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+          style={({ pressed }) => [styles.headerAction, styles.headerActionEnd, { opacity: pressed ? 0.5 : 1 }]}
+        >
+          <Text style={[typography.label, { color: colors.accentStrong, fontWeight: "700" }]}>{t("common.save")}</Text>
         </Pressable>
       </View>
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg }}>
-          <Text style={[typography.caption, { color: colors.textMuted, marginBottom: spacing.md }]}>
-            {WEEKDAY_LABEL[weekday]} · period {timeSlot.position}
-            {slotSpan > 1 ? `–${timeSlot.position + slotSpan - 1}` : ""} · {timeSlot.startTime}–{endTime}
-          </Text>
+          {/* When and how long, as a subtitle: it is what this form is about,
+              not one of the things it asks for. */}
+          <Text style={[typography.body, { color: colors.textSecondary }]}>{slotText}</Text>
 
+          <FormSection>
           <TextField
-            label="Class name"
+            label={t("classEditor.name")}
             value={name}
             onChangeText={setName}
             autoFocus={!existing}
-            error={nameError}
-            placeholder="e.g. Mathematics"
+            error={nameError ? t(nameError.key, nameError.params) : undefined}
+            placeholder={t("classEditor.namePlaceholder")}
           />
-          <TextField label="Room" value={room} onChangeText={setRoom} placeholder="Optional" />
+          <TextField
+            label={t("classEditor.room")}
+            value={room}
+            onChangeText={setRoom}
+            placeholder={t("common.optional")}
+          />
+
+          {/* Above the fold, next to the room: a class's colour is how it is
+              recognised on the grid, not one of the details worth folding
+              away. Its swatch previews immediately; nothing is written until
+              Save. */}
+          <ClassColorField
+            value={appearanceId}
+            onChange={setAppearanceId}
+            expanded={openPicker === "color"}
+            onToggle={() => togglePicker("color")}
+          />
 
           {/* Compact and above the fold: a reminder is part of what a class
               is, not one of the details worth folding away. */}
           <ReminderField
-            label="Reminder"
+            label={t("classEditor.reminder")}
             value={reminderMinutes}
             onChange={setReminderMinutes}
-            helperText={remindersBlocked ? "Reminders are off until notification permission is granted." : undefined}
+            helperText={remindersBlocked ? t("classEditor.remindersBlocked") : undefined}
           />
 
+          {/* Inside the group, not after it: it is a row about the row above
+              it, and standing outside the run of hairlines made it read as a
+              stray control that belonged to the page rather than to the
+              reminder. */}
           {reminderDiffersFromDefault ? (
             <SwitchRow
-              label="Use as default for new classes"
-              description={`New classes currently start at ${formatReminderLabel(defaultReminderMinutes)}.`}
+              label={t("classEditor.useAsDefaultReminder")}
+              description={t("classEditor.currentDefaultReminder", {
+                value: format.reminderValue(defaultReminderMinutes),
+              })}
               value={makeReminderDefault}
               onValueChange={setMakeReminderDefault}
             />
           ) : null}
+          </FormSection>
 
-          <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.md, marginBottom: spacing.md }]}>
+          <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.lg }]}>
             {summaryText}
           </Text>
 
           <Pressable
             onPress={() => setMoreDetailsOpen((open) => !open)}
             accessibilityRole="button"
-            accessibilityLabel={moreDetailsOpen ? "Hide more details" : "Show more details"}
-            style={{ marginBottom: spacing.sm }}
+            accessibilityLabel={moreDetailsOpen ? t("classEditor.hideMoreDetails") : t("classEditor.showMoreDetails")}
+            hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}
+            pressRetentionOffset={{ top: 16, bottom: 16, left: 24, right: 24 }}
+            style={({ pressed }) => [styles.disclosure, { marginBottom: spacing.sm, opacity: pressed ? 0.5 : 1 }]}
           >
-            <Text style={[typography.label, { color: colors.accent }]}>{moreDetailsOpen ? "Hide details" : "More details"}</Text>
+            <Text style={[typography.label, { color: colors.accentStrong }]}>
+              {moreDetailsOpen ? t("classEditor.hideDetails") : t("classEditor.moreDetails")}
+            </Text>
           </Pressable>
 
           {moreDetailsOpen ? (
-            <View>
-              <TextField label="Teacher" value={teacher} onChangeText={setTeacher} placeholder="Optional" />
-              <TextField label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional" multiline />
+            <FormSection>
+              <TextField
+                label={t("classEditor.teacher")}
+                value={teacher}
+                onChangeText={setTeacher}
+                placeholder={t("common.optional")}
+              />
+              <TextField
+                label={t("classEditor.notes")}
+                value={notes}
+                onChangeText={setNotes}
+                placeholder={t("common.optional")}
+                multiline
+              />
 
-              <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Recurrence</Text>
-              <View style={{ marginBottom: spacing.md }}>
-                <SegmentedControl
-                  options={RECURRENCE_OPTIONS}
-                  value={recurrenceType}
-                  onChange={handleRecurrenceChange}
-                  accessibilityLabel="Recurrence"
-                />
-              </View>
+              <ChoiceRowField
+                label={t("classEditor.recurrence")}
+                value={recurrenceType}
+                options={RECURRENCE_OPTIONS}
+                onChange={handleRecurrenceChange}
+                sheetTitle={t("recurrence.label")}
+              />
 
               {isOneOff ? (
                 <InlineDateField
-                  label="Date"
+                  label={t("classEditor.date")}
                   value={onceDate}
                   onChange={setOnceDate}
                   expanded={openPicker === "date"}
@@ -363,35 +464,35 @@ function ClassEditorForm({
               ) : (
                 <>
                   <InlineDateField
-                    label="Start date"
+                    label={t("classEditor.startDate")}
                     value={startsOn}
                     onChange={handleStartDateChange}
                     expanded={openPicker === "startsOn"}
                     onToggle={() => togglePicker("startsOn")}
-                    helperText={
-                      recurrenceType === "biweekly" ? "Sets which alternating week this class falls on" : undefined
-                    }
+                    helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
                   />
                   <InlineDateField
-                    label="End date"
+                    label={t("classEditor.endDate")}
                     value={endsOn}
                     onChange={setEndsOn}
                     expanded={openPicker === "endsOn"}
                     onToggle={() => togglePicker("endsOn")}
-                    helperText="Estimated — can be changed later"
+                    helperText={t("classEditor.endDateHint")}
                   />
                 </>
               )}
-            </View>
+            </FormSection>
           ) : null}
 
           {formError ? (
-            <Text style={[typography.caption, { color: colors.destructive, marginBottom: spacing.md }]}>{formError}</Text>
+            <Text style={[typography.caption, { color: colors.danger, marginBottom: spacing.md }]}>
+              {t(formError.key, formError.params)}
+            </Text>
           ) : null}
 
           {existing ? (
-            <View style={{ marginTop: spacing.md, borderTopWidth: borderWidth.thin, borderColor: colors.border, paddingTop: spacing.lg }}>
-              <Button label="Delete class" variant="destructive" onPress={handleDelete} />
+            <View style={{ marginTop: spacing.md, borderTopWidth: borderWidth.thin, borderColor: colors.divider, paddingTop: spacing.lg }}>
+              <Button label={t("classEditor.deleteClass")} variant="destructive" onPress={handleDelete} />
             </View>
           ) : null}
         </ScrollView>
@@ -408,5 +509,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+  },
+  headerAction: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: "center",
+  },
+  headerActionEnd: {
+    alignItems: "flex-end",
+  },
+  disclosure: {
+    minHeight: 44,
+    justifyContent: "center",
   },
 });

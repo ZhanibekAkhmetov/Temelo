@@ -1,24 +1,39 @@
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { formatIsoLong } from "@/domain/calendar";
-import { EDIT_SCOPE_LABEL, EDIT_SCOPE_ORDER, type EditScope } from "@/domain/classEdit";
+import { EDIT_SCOPE_ORDER, type EditScope } from "@/domain/classEdit";
+import type { DomainError } from "@/domain/errors";
+import { useI18n } from "@/i18n/I18nProvider";
+import type { TranslationKey } from "@/i18n/translate";
 import { useTheme } from "@/theme/useTheme";
 
 interface EditScopeSheetProps {
   /** The date the edit lands on, named in the first option's explanation. */
   effectiveDate: string;
   /** Why a single-occurrence change cannot be offered, or null when it can. */
-  onlyThisBlockedReason: string | null;
+  onlyThisBlockedReason: DomainError | null;
   onSelect: (scope: EditScope) => void;
   onCancel: () => void;
 }
 
-function explanationFor(scope: EditScope, effectiveDate: string): string {
-  if (scope === "onlyThis") return `Changes ${formatIsoLong(effectiveDate)} only; the rest of the series stays as it is.`;
-  if (scope === "thisAndFuture") return "Splits the series here — earlier occurrences keep their current details.";
-  return "Updates every occurrence of this class, past and future.";
-}
+/**
+ * The three options' wording, as keys rather than sentences.
+ *
+ * Defined here rather than in the domain now that they are translation keys:
+ * the domain owns what a scope *means* and which are offered, and this sheet
+ * owns how each is put to the user.
+ */
+const SCOPE_LABEL_KEY: Record<EditScope, TranslationKey> = {
+  onlyThis: "scopeChooser.onlyThis",
+  thisAndFuture: "scopeChooser.thisAndFuture",
+  all: "scopeChooser.all",
+};
+
+const SCOPE_HINT_KEY: Record<EditScope, TranslationKey> = {
+  onlyThis: "scopeChooser.onlyThisHint",
+  thisAndFuture: "scopeChooser.thisAndFutureHint",
+  all: "scopeChooser.allHint",
+};
 
 /**
  * The one question an edit to a repeating class cannot avoid.
@@ -30,6 +45,7 @@ function explanationFor(scope: EditScope, effectiveDate: string): string {
  */
 export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect, onCancel }: EditScopeSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  const { t, format } = useI18n();
   // A choice takes a frame or two to settle; a second tap in that window
   // would apply the same edit twice, at two different scopes.
   const [committing, setCommitting] = useState(false);
@@ -45,18 +61,27 @@ export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect,
     onCancel();
   }
 
+  function explanationFor(scope: EditScope): string {
+    return t(SCOPE_HINT_KEY[scope], { date: format.dateLong(effectiveDate) });
+  }
+
   return (
     <Modal visible transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
       <View style={styles.root}>
-        <Pressable style={styles.scrim} onPress={dismiss} accessibilityRole="button" accessibilityLabel="Cancel" />
+        <Pressable
+          style={[styles.scrim, { backgroundColor: colors.scrim }]}
+          onPress={dismiss}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.cancel")}
+        />
 
         <View
           style={[
             styles.sheet,
             {
-              backgroundColor: colors.surface,
+              backgroundColor: colors.surfaceElevated,
               borderTopWidth: borderWidth.thin,
-              borderColor: colors.border,
+              borderColor: colors.divider,
               paddingBottom: spacing.xl,
             },
           ]}
@@ -67,39 +92,45 @@ export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect,
               { color: colors.textPrimary, paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md },
             ]}
           >
-            Apply changes to
+            {t("scopeChooser.title")}
           </Text>
 
-          <View style={{ borderTopWidth: borderWidth.thin, borderColor: colors.border }}>
+          <View style={{ borderTopWidth: borderWidth.thin, borderColor: colors.divider }}>
             {EDIT_SCOPE_ORDER.map((scope) => {
               const blocked = scope === "onlyThis" ? onlyThisBlockedReason : null;
+              const blockedText = blocked ? t(blocked.key, blocked.params) : null;
               const disabled = blocked !== null || committing;
+              const label = t(SCOPE_LABEL_KEY[scope]);
               return (
                 <Pressable
                   key={scope}
                   onPress={() => choose(scope)}
                   disabled={disabled}
                   accessibilityRole="button"
-                  accessibilityLabel={EDIT_SCOPE_LABEL[scope]}
-                  accessibilityHint={blocked ?? explanationFor(scope, effectiveDate)}
+                  accessibilityLabel={label}
+                  accessibilityHint={blockedText ?? explanationFor(scope)}
                   accessibilityState={{ disabled }}
+                  pressRetentionOffset={{ top: 12, bottom: 12, left: 16, right: 16 }}
                   style={({ pressed }) => [
                     styles.row,
                     {
                       paddingHorizontal: spacing.lg,
                       paddingVertical: spacing.md,
                       borderBottomWidth: borderWidth.thin,
-                      borderColor: colors.border,
-                      backgroundColor: pressed && !disabled ? colors.surfaceAlt : "transparent",
+                      borderColor: colors.divider,
+                      backgroundColor: pressed && !disabled ? colors.surfaceMuted : "transparent",
                       opacity: blocked ? 0.55 : 1,
                     },
                   ]}
                 >
+                  {/* No line limits on either line. "Diesen und alle folgenden"
+                      and its explanation are a third longer than the English,
+                      and a row that grows is better than one that clips. */}
                   <Text style={[typography.body, { color: blocked ? colors.textMuted : colors.textPrimary }]}>
-                    {EDIT_SCOPE_LABEL[scope]}
+                    {label}
                   </Text>
                   <Text style={[typography.caption, { color: colors.textMuted, marginTop: 2 }]}>
-                    {blocked ?? explanationFor(scope, effectiveDate)}
+                    {blockedText ?? explanationFor(scope)}
                   </Text>
                 </Pressable>
               );
@@ -110,7 +141,9 @@ export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect,
             onPress={dismiss}
             disabled={committing}
             accessibilityRole="button"
-            accessibilityLabel="Cancel"
+            accessibilityLabel={t("common.cancel")}
+            hitSlop={8}
+            pressRetentionOffset={{ top: 16, bottom: 16, left: 24, right: 24 }}
             style={({ pressed }) => [
               styles.cancel,
               {
@@ -122,7 +155,7 @@ export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect,
               },
             ]}
           >
-            <Text style={[typography.label, { color: colors.textSecondary }]}>Cancel</Text>
+            <Text style={[typography.label, { color: colors.textSecondary }]}>{t("common.cancel")}</Text>
           </Pressable>
         </View>
       </View>
@@ -141,17 +174,17 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#00000059",
   },
   sheet: {
     width: "100%",
   },
   row: {
     justifyContent: "center",
+    minHeight: 56,
   },
   cancel: {
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 40,
+    minHeight: 44,
   },
 });

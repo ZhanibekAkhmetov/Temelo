@@ -40,6 +40,7 @@ import {
   type TermRow,
   type TimeSlotRow,
 } from "@/storage/records";
+import { withTransaction } from "@/storage/transaction";
 
 /**
  * The persistable slice of app state. Structurally this is `AppState` minus
@@ -143,6 +144,38 @@ function diffRecords<T extends Identified>(previous: T[], next: T[]): RecordDiff
   return { upserts, deletedIds: [...remaining.keys()] };
 }
 
+/**
+ * The same question asked of the database itself, for when there is no
+ * baseline to diff against.
+ *
+ * A null baseline means "what this database contains is unknown" — which is
+ * where a failed write leaves us. Treating that as an empty baseline, which is
+ * what `diffRecords(previous ?? [], next)` did, gets the upserts right and the
+ * *deletions* silently wrong: nothing is ever removed, because an empty
+ * baseline has nothing left over.
+ *
+ * That is not a harmless approximation. An academic-day change replaces every
+ * period with a freshly generated one, and `time_slots.position` is uniquely
+ * indexed — so a recovery write would insert the new periods alongside the old
+ * ones it failed to delete and die on that index. One failed write therefore
+ * made every later academic-day save fail too, permanently, for reasons that
+ * had nothing to do with the original failure.
+ *
+ * Asking the database which ids it actually holds costs one indexed scan per
+ * table on a path that only runs after a failure, and makes a full write mean
+ * what it says: the database ends up matching `next` exactly.
+ */
+async function fullSyncDiff<T extends Identified>(
+  db: SQLiteDatabase,
+  table: string,
+  next: T[],
+): Promise<RecordDiff<T>> {
+  // The table name is a literal from `saveTimetable`, never user input.
+  const stored = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${table}`);
+  const keep = new Set(next.map((record) => record.id));
+  return { upserts: next, deletedIds: stored.map((row) => row.id).filter((id) => !keep.has(id)) };
+}
+
 /*
  * Upserts are `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`. Replace is
  * a delete followed by an insert, so with foreign keys on it would cascade:
@@ -154,8 +187,9 @@ const UPSERT_SETTINGS = `
   INSERT INTO settings (
     id, weekend_mode, grid_orientation, academic_day_start,
     default_lesson_duration_minutes, default_break_duration_minutes,
-    slot_count, default_reminder_minutes, onboarding_completed
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    slot_count, default_reminder_minutes, appearance_preference,
+    language_preference, onboarding_completed
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     weekend_mode = excluded.weekend_mode,
     grid_orientation = excluded.grid_orientation,
@@ -164,6 +198,8 @@ const UPSERT_SETTINGS = `
     default_break_duration_minutes = excluded.default_break_duration_minutes,
     slot_count = excluded.slot_count,
     default_reminder_minutes = excluded.default_reminder_minutes,
+    appearance_preference = excluded.appearance_preference,
+    language_preference = excluded.language_preference,
     onboarding_completed = excluded.onboarding_completed
 `;
 
@@ -220,9 +256,9 @@ const UPSERT_PLACEMENT = `
 const UPSERT_EXCEPTION = `
   INSERT INTO occurrence_exceptions (
     id, placement_id, original_date, effective_date, state, time_slot_id,
-    slot_span, name, room, teacher, notes, reminder_minutes,
+    slot_span, name, room, teacher, notes, appearance_id, reminder_minutes,
     created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     placement_id = excluded.placement_id,
     original_date = excluded.original_date,
@@ -234,6 +270,7 @@ const UPSERT_EXCEPTION = `
     room = excluded.room,
     teacher = excluded.teacher,
     notes = excluded.notes,
+    appearance_id = excluded.appearance_id,
     reminder_minutes = excluded.reminder_minutes,
     updated_at = excluded.updated_at,
     deleted_at = excluded.deleted_at
@@ -243,6 +280,67 @@ async function deleteByIds(db: SQLiteDatabase, table: string, ids: string[]): Pr
   for (const id of ids) {
     // The table name is a literal from this module; only the id is bound.
     await db.runAsync(`DELETE FROM ${table} WHERE id = ?`, id);
+  }
+}
+
+/**
+ * What has to be true of a timetable before it is worth writing.
+ *
+ * The academic-day configuration is stored in two places that must agree:
+ * `settings.slot_count`, which the grid sizes itself from, and the
+ * `time_slots` rows it addresses. A database where those two disagree renders
+ * a timetable with periods that cannot be reached or rows that are not there —
+ * which is exactly the state a half-applied academic-day change leaves behind.
+ *
+ * So the pair is checked as one invariant rather than trusted because the two
+ * happen to be written by the same action. Checked *before* the transaction
+ * opens, because a payload this wrong is a programming error and there is no
+ * point taking a write lock to discover it; and again inside the transaction
+ * against what the database really holds, because that is the only assertion
+ * that survives a partially-applied write.
+ *
+ * `position` is uniquely indexed, so a duplicate would fail at the index
+ * anyway — but it would fail somewhere in the middle of the write, with an
+ * SQLite message about an index. Saying it here says what is actually wrong.
+ */
+function assertCoherent(timetable: PersistedTimetable): void {
+  const { slotCount } = timetable.settings;
+  const slots = timetable.timeSlots;
+
+  if (slots.length !== slotCount) {
+    throw new Error(
+      `[temelo/storage] refusing to save an incoherent academic day: settings.slotCount is ${slotCount} but there are ${slots.length} time slots.`,
+    );
+  }
+
+  const positions = new Set(slots.map((slot) => slot.position));
+  if (positions.size !== slots.length) {
+    throw new Error(
+      `[temelo/storage] refusing to save ${slots.length} time slots with only ${positions.size} distinct positions.`,
+    );
+  }
+}
+
+/**
+ * The same invariant, asked of the database, inside the transaction that has
+ * just written it.
+ *
+ * This is the assertion that makes an academic-day save atomic in the sense
+ * that matters to the user rather than only in the sense SQLite guarantees. A
+ * transaction commits whatever statements it was given; it has no opinion
+ * about whether they add up. Counting the rows back before the commit means a
+ * save either lands as a whole consistent academic day or lands not at all —
+ * and because it throws, the transaction is rolled back and the in-memory
+ * state is restored from the last known-good snapshot, so neither half of the
+ * app is left believing something the other half does not.
+ */
+async function assertStoredCoherently(db: SQLiteDatabase, timetable: PersistedTimetable): Promise<void> {
+  const row = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM time_slots");
+  const stored = row?.count ?? 0;
+  if (stored !== timetable.settings.slotCount) {
+    throw new Error(
+      `[temelo/storage] academic day did not save coherently: settings.slotCount is ${timetable.settings.slotCount} but the database holds ${stored} time slots. Rolling back.`,
+    );
   }
 }
 
@@ -268,120 +366,177 @@ export async function saveTimetable(
   next: PersistedTimetable,
   previous: PersistedTimetable | null,
 ): Promise<void> {
-  const timeSlots = diffRecords(previous?.timeSlots ?? [], next.timeSlots);
-  const courses = diffRecords(previous?.courses ?? [], next.courses);
-  const placements = diffRecords(previous?.placements ?? [], next.placements);
-  const exceptions = diffRecords(previous?.exceptions ?? [], next.exceptions);
+  assertCoherent(next);
 
-  const settingsChanged = previous?.settings !== next.settings;
-  const termChanged = previous?.term !== next.term;
+  if (previous) {
+    const timeSlots = diffRecords(previous.timeSlots, next.timeSlots);
+    const courses = diffRecords(previous.courses, next.courses);
+    const placements = diffRecords(previous.placements, next.placements);
+    const exceptions = diffRecords(previous.exceptions, next.exceptions);
 
-  const empty = (diff: RecordDiff<unknown>) => diff.upserts.length === 0 && diff.deletedIds.length === 0;
-  if (
-    !settingsChanged &&
-    !termChanged &&
-    empty(timeSlots) &&
-    empty(courses) &&
-    empty(placements) &&
-    empty(exceptions)
-  ) {
+    const settingsChanged = previous.settings !== next.settings;
+    const termChanged = previous.term !== next.term;
+
+    const empty = (diff: RecordDiff<unknown>) => diff.upserts.length === 0 && diff.deletedIds.length === 0;
+    if (
+      !settingsChanged &&
+      !termChanged &&
+      empty(timeSlots) &&
+      empty(courses) &&
+      empty(placements) &&
+      empty(exceptions)
+    ) {
+      return;
+    }
+
+    await writeDiff(db, next, { settingsChanged, termChanged, timeSlots, courses, placements, exceptions });
     return;
   }
 
-  await db.withTransactionAsync(async () => {
-    if (settingsChanged) {
-      const row = settingsToRow(next.settings);
-      await db.runAsync(
-        UPSERT_SETTINGS,
-        row.id,
-        row.weekend_mode,
-        row.grid_orientation,
-        row.academic_day_start,
-        row.default_lesson_duration_minutes,
-        row.default_break_duration_minutes,
-        row.slot_count,
-        row.default_reminder_minutes,
-        row.onboarding_completed,
-      );
-    }
-
-    if (termChanged) {
-      const row = termToRow(next.term);
-      await db.runAsync(UPSERT_TERM, row.id, row.name, row.start_date, row.estimated_end_date);
-      // Exactly one term exists; the one a reset replaced has to go.
-      await db.runAsync("DELETE FROM terms WHERE id <> ?", row.id);
-    }
-
-    // Children first on the way out, so a cascade never surprises us.
-    await deleteByIds(db, "occurrence_exceptions", exceptions.deletedIds);
-    await deleteByIds(db, "placements", placements.deletedIds);
-    await deleteByIds(db, "courses", courses.deletedIds);
-    await deleteByIds(db, "time_slots", timeSlots.deletedIds);
-
-    for (const slot of timeSlots.upserts) {
-      const row = timeSlotToRow(slot);
-      await db.runAsync(UPSERT_TIME_SLOT, row.id, row.position, row.start_time, row.end_time);
-    }
-
-    // Parents first on the way in: a placement's course and an exception's
-    // placement must already exist when the foreign key is checked.
-    for (const course of courses.upserts) {
-      const row = courseToRow(course);
-      await db.runAsync(
-        UPSERT_COURSE,
-        row.id,
-        row.name,
-        row.room,
-        row.teacher,
-        row.notes,
-        row.appearance_id,
-        row.created_at,
-        row.updated_at,
-        row.deleted_at,
-      );
-    }
-
-    for (const placement of placements.upserts) {
-      const row = placementToRow(placement);
-      await db.runAsync(
-        UPSERT_PLACEMENT,
-        row.id,
-        row.course_id,
-        row.weekday,
-        row.time_slot_id,
-        row.slot_span,
-        row.recurrence_type,
-        row.starts_on,
-        row.ends_on,
-        row.reminder_minutes,
-        row.created_at,
-        row.updated_at,
-        row.deleted_at,
-      );
-    }
-
-    for (const exception of exceptions.upserts) {
-      const row = exceptionToRow(exception);
-      await db.runAsync(
-        UPSERT_EXCEPTION,
-        row.id,
-        row.placement_id,
-        row.original_date,
-        row.effective_date,
-        row.state,
-        row.time_slot_id,
-        row.slot_span,
-        row.name,
-        row.room,
-        row.teacher,
-        row.notes,
-        row.reminder_minutes,
-        row.created_at,
-        row.updated_at,
-        row.deleted_at,
-      );
-    }
-
-    await db.runAsync(UPSERT_META, META_KEYS.initialized, "true");
+  /*
+   * No baseline: the database's contents are unknown, so they are read rather
+   * than assumed. Settings and the term are always rewritten here — there is
+   * nothing to compare them against — and every collection is reconciled
+   * against what the database really holds, so this converges on `next`
+   * whatever state a failed write left behind.
+   *
+   * The reads are inside the transaction so nothing can slip in between
+   * deciding what to delete and deleting it.
+   */
+  await withTransaction(db, async () => {
+    await writeDiffWithin(db, next, {
+      settingsChanged: true,
+      termChanged: true,
+      timeSlots: await fullSyncDiff(db, "time_slots", next.timeSlots),
+      courses: await fullSyncDiff(db, "courses", next.courses),
+      placements: await fullSyncDiff(db, "placements", next.placements),
+      exceptions: await fullSyncDiff(db, "occurrence_exceptions", next.exceptions),
+    });
+    await assertStoredCoherently(db, next);
   });
+}
+
+interface TimetableDiff {
+  settingsChanged: boolean;
+  termChanged: boolean;
+  timeSlots: RecordDiff<TimeSlot>;
+  courses: RecordDiff<Course>;
+  placements: RecordDiff<Placement>;
+  exceptions: RecordDiff<OccurrenceException>;
+}
+
+async function writeDiff(db: SQLiteDatabase, next: PersistedTimetable, diff: TimetableDiff): Promise<void> {
+  const touchesAcademicDay =
+    diff.settingsChanged || diff.timeSlots.upserts.length > 0 || diff.timeSlots.deletedIds.length > 0;
+
+  await withTransaction(db, async () => {
+    await writeDiffWithin(db, next, diff);
+    // Only when this write could have moved either half of the pair. Every
+    // other save — a class dragged, a colour changed — leaves both alone, and
+    // counting a table it did not touch is a cost for nothing.
+    if (touchesAcademicDay) await assertStoredCoherently(db, next);
+  });
+}
+
+/** The statements themselves; the caller owns the transaction. */
+async function writeDiffWithin(db: SQLiteDatabase, next: PersistedTimetable, diff: TimetableDiff): Promise<void> {
+  const { settingsChanged, termChanged, timeSlots, courses, placements, exceptions } = diff;
+
+  if (settingsChanged) {
+    const row = settingsToRow(next.settings);
+    await db.runAsync(
+      UPSERT_SETTINGS,
+      row.id,
+      row.weekend_mode,
+      row.grid_orientation,
+      row.academic_day_start,
+      row.default_lesson_duration_minutes,
+      row.default_break_duration_minutes,
+      row.slot_count,
+      row.default_reminder_minutes,
+      row.appearance_preference,
+      row.language_preference,
+      row.onboarding_completed,
+    );
+  }
+
+  if (termChanged) {
+    const row = termToRow(next.term);
+    await db.runAsync(UPSERT_TERM, row.id, row.name, row.start_date, row.estimated_end_date);
+    // Exactly one term exists; the one a reset replaced has to go.
+    await db.runAsync("DELETE FROM terms WHERE id <> ?", row.id);
+  }
+
+  // Children first on the way out, so a cascade never surprises us.
+  await deleteByIds(db, "occurrence_exceptions", exceptions.deletedIds);
+  await deleteByIds(db, "placements", placements.deletedIds);
+  await deleteByIds(db, "courses", courses.deletedIds);
+  await deleteByIds(db, "time_slots", timeSlots.deletedIds);
+
+  for (const slot of timeSlots.upserts) {
+    const row = timeSlotToRow(slot);
+    await db.runAsync(UPSERT_TIME_SLOT, row.id, row.position, row.start_time, row.end_time);
+  }
+
+  // Parents first on the way in: a placement's course and an exception's
+  // placement must already exist when the foreign key is checked.
+  for (const course of courses.upserts) {
+    const row = courseToRow(course);
+    await db.runAsync(
+      UPSERT_COURSE,
+      row.id,
+      row.name,
+      row.room,
+      row.teacher,
+      row.notes,
+      row.appearance_id,
+      row.created_at,
+      row.updated_at,
+      row.deleted_at,
+    );
+  }
+
+  for (const placement of placements.upserts) {
+    const row = placementToRow(placement);
+    await db.runAsync(
+      UPSERT_PLACEMENT,
+      row.id,
+      row.course_id,
+      row.weekday,
+      row.time_slot_id,
+      row.slot_span,
+      row.recurrence_type,
+      row.starts_on,
+      row.ends_on,
+      row.reminder_minutes,
+      row.created_at,
+      row.updated_at,
+      row.deleted_at,
+    );
+  }
+
+  for (const exception of exceptions.upserts) {
+    const row = exceptionToRow(exception);
+    await db.runAsync(
+      UPSERT_EXCEPTION,
+      row.id,
+      row.placement_id,
+      row.original_date,
+      row.effective_date,
+      row.state,
+      row.time_slot_id,
+      row.slot_span,
+      row.name,
+      row.room,
+      row.teacher,
+      row.notes,
+      row.appearance_id,
+      row.reminder_minutes,
+      row.created_at,
+      row.updated_at,
+      row.deleted_at,
+    );
+  }
+
+  await db.runAsync(UPSERT_META, META_KEYS.initialized, "true");
 }
