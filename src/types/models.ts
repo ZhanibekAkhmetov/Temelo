@@ -1,5 +1,7 @@
 import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
 import type { Weekday, WeekendMode } from "@/domain/week";
+import type { LanguagePreference } from "@/i18n/language";
+import type { AppearancePreference } from "@/theme/appearance";
 
 export type RecurrenceType = "weekly" | "biweekly" | "once";
 
@@ -22,6 +24,13 @@ export interface Settings {
    * their own reminder, so changing this never reaches back into them.
    */
   defaultReminderMinutes: ReminderMinutes;
+  /**
+   * Light, dark, or follow the device. The *preference* is stored, never the
+   * scheme it currently resolves to — see `theme/appearance`.
+   */
+  appearancePreference: AppearancePreference;
+  /** The UI language, or follow the device. Again the preference, not the result. */
+  languagePreference: LanguagePreference;
   onboardingCompleted: boolean;
 }
 
@@ -45,6 +54,10 @@ export interface Course {
   room: string;
   teacher: string;
   notes: string;
+  /**
+   * Which palette colour the class is drawn in — a stable id such as "blue",
+   * never a hex value and never an index. See `domain/classColor`.
+   */
   appearanceId: string;
   createdAt: string;
   updatedAt: string;
@@ -84,6 +97,12 @@ export interface OccurrenceException {
   room: string | null;
   teacher: string | null;
   notes: string | null;
+  /**
+   * Colour override for this one occurrence — the "only this occurrence"
+   * edit of the colour field. null follows the course, exactly as the other
+   * course-field overrides above do.
+   */
+  appearanceId: string | null;
   /** Reminder override; null follows the series, "none" silences this one. */
   reminderMinutes: ReminderOverride;
   createdAt: string;

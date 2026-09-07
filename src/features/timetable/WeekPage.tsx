@@ -6,28 +6,22 @@ import { dayOfMonth, weekDatesFrom } from "@/domain/calendar";
 import type { OccurrencePreview } from "@/domain/occurrence";
 import { findMajorBoundaries, findPeriodProgress } from "@/domain/time";
 import { resolveWeekBlocks } from "@/domain/timetable";
-import { isWeekendDay, WEEKDAY_LABEL, WEEKDAY_SHORT_LABEL, type Weekday } from "@/domain/week";
+import { isWeekendDay, type Weekday } from "@/domain/week";
 import {
   DAY_HEADER_HEIGHT,
   MAX_COLUMN_WIDTH,
   MAX_SLOT_HEIGHT,
   TIME_GUTTER_WIDTH,
+  topInsetFor,
 } from "@/features/timetable/geometry";
 import { GridBlock, SelectionOutline } from "@/features/timetable/GridBlock";
 import type { PageOverlay } from "@/features/timetable/types";
-import { getAppearanceColors } from "@/theme/tokens";
+import { useI18n } from "@/i18n/I18nProvider";
+import { getClassColors } from "@/theme/classColors";
 import { useTheme } from "@/theme/useTheme";
 import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 const DATE_BADGE_SIZE = 28;
-
-/**
- * The grid is meant to recede behind the classes: ordinary period lines are
- * barely there, and only a real break in the day gets a line you notice.
- */
-const MINOR_LINE_ALPHA = "59";
-const MAJOR_LINE_ALPHA = "B3";
-const COLUMN_RULE_ALPHA = "40";
 
 /** Line box of `typography.gridText`, and the block's vertical padding. */
 const NAME_LINE_HEIGHT = 16;
@@ -66,6 +60,8 @@ interface WeekPageProps {
   today: string;
   now: string;
   width: number;
+  /** Height of the scrolled body, below the weekday strip — what the grid is centred in. */
+  bodyHeight: number;
   /** Settled day-column width; changes once, when a pinch ends. */
   columnWidth: SharedValue<number>;
   /** How far the week is shifted sideways inside its own page, in live pixels. */
@@ -111,6 +107,7 @@ function WeekPageComponent({
   today,
   now,
   width,
+  bodyHeight,
   columnWidth,
   offsetX,
   slotHeight,
@@ -121,7 +118,8 @@ function WeekPageComponent({
   hiddenOccurrenceId,
   overlay,
 }: WeekPageProps) {
-  const { colors, typography, borderWidth, radii, scheme } = useTheme();
+  const { colors, typography, borderWidth, radii } = useTheme();
+  const { t, format } = useI18n();
 
   const dates = useMemo(() => weekDatesFrom(weekStart), [weekStart]);
   const blocks = useMemo(
@@ -135,7 +133,7 @@ function WeekPageComponent({
     overlay?.kind === "selected"
       ? blocks.find((block) => block.dayIndex === overlay.dayIndex && block.startIndex === overlay.startIndex)
       : undefined;
-  const overlayStroke = selectedBlock ? getAppearanceColors(selectedBlock.course.appearanceId, scheme).outline : colors.accent;
+  const overlayStroke = selectedBlock ? getClassColors(selectedBlock.course.appearanceId).outline : colors.accent;
 
   const todayColumn = weekdays.findIndex((day) => dates[day] === today);
   const nowProgress = todayColumn >= 0 ? findPeriodProgress(timeSlots, now) : null;
@@ -170,10 +168,14 @@ function WeekPageComponent({
   const bodyStyle = useAnimatedStyle(() => {
     const scaleX = pinchScaleX.get();
     const scaleY = pinchScaleY.get();
+    // Added to the translation rather than folded into the scaled term: the
+    // grid is inset, not magnified, so the gap above a short academic day must
+    // stay the same size whatever the pinch is doing to the rows inside it.
+    const inset = topInsetFor(slotHeight.get() * scaleY, timeSlots.length, bodyHeight);
     return {
       transform: [
         { translateX: (TIME_GUTTER_WIDTH - boxWidth / 2) * (1 - scaleX) - offsetX.get() },
-        { translateY: -scrollY.get() - (boxHeight / 2) * (1 - scaleY) },
+        { translateY: inset - scrollY.get() - (boxHeight / 2) * (1 - scaleY) },
         { scaleX },
         { scaleY },
       ],
@@ -188,22 +190,38 @@ function WeekPageComponent({
     <Animated.View style={[styles.page, { width }, pageStyle]}>
       {/* Clipped, because a zoomed-in week is wider than its own page and
           must not spill onto the neighbouring one. */}
-      <View style={[styles.header, { height: DAY_HEADER_HEIGHT, borderBottomWidth: borderWidth.thin, borderColor: colors.border }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            height: DAY_HEADER_HEIGHT,
+            backgroundColor: colors.headerBackground,
+            borderBottomWidth: borderWidth.thin,
+            borderColor: colors.divider,
+          },
+        ]}
+      >
         <Animated.View style={[styles.headerRow, { width: weekdays.length * MAX_COLUMN_WIDTH }, headerStyle]}>
           {weekdays.map((day, index) => {
             const date = dates[day];
             const isToday = date === today;
-            const dayColor = isWeekendDay(day) ? colors.destructive : colors.textMuted;
+            const dayColor = isWeekendDay(day) ? colors.weekendText : colors.textMuted;
             return (
               <DayHeaderCell key={day} index={index} columnWidth={columnWidth} pinchScaleX={pinchScaleX}>
                 <Text style={[typography.gridSecondary, styles.weekdayLabel, { color: dayColor }]} numberOfLines={1}>
-                  {WEEKDAY_SHORT_LABEL[day].toUpperCase()}
+                  {format.weekdayShort(day).toUpperCase()}
                 </Text>
                 <View style={[styles.dateBadge, { borderRadius: radii.lg, backgroundColor: isToday ? colors.accent : "transparent" }]}>
                   <Text
                     style={[
                       styles.dateText,
-                      { color: isToday ? colors.background : isWeekendDay(day) ? colors.destructive : colors.textPrimary },
+                      {
+                        color: isToday
+                          ? colors.textOnAccent
+                          : isWeekendDay(day)
+                            ? colors.weekendText
+                            : colors.textPrimary,
+                      },
                     ]}
                   >
                     {dayOfMonth(date)}
@@ -222,18 +240,36 @@ function WeekPageComponent({
               key={slot.id}
               index={index}
               slotHeight={slotHeight}
-              color={`${colors.border}${majorBoundaries[index] ? MAJOR_LINE_ALPHA : MINOR_LINE_ALPHA}`}
+              color={majorBoundaries[index] ? colors.gridMajor : colors.gridMinor}
               thickness={borderWidth.thin}
             />
           ))}
+          {/*
+           * The line under the last period.
+           *
+           * Every other line is the *top* of a period, which is invisible as a
+           * choice for as long as the grid is taller than the screen — you
+           * simply never see past the bottom of it. A day that fits does, and
+           * without this the last period had no bottom edge at all: the class
+           * blocks stopped, the day-column rules carried on down the page, and
+           * the grid looked like it had been cut off rather than ended.
+           */}
+          <PeriodLine
+            index={timeSlots.length}
+            slotHeight={slotHeight}
+            color={colors.gridMajor}
+            thickness={borderWidth.thin}
+          />
 
           {weekdays.map((day, index) => (
             <ColumnRule
               key={day}
               index={index}
+              slotCount={timeSlots.length}
               columnWidth={columnWidth}
+              slotHeight={slotHeight}
               thickness={borderWidth.thin}
-              color={`${colors.border}${COLUMN_RULE_ALPHA}`}
+              color={colors.gridColumnRule}
             />
           ))}
 
@@ -253,9 +289,11 @@ function WeekPageComponent({
                 room={block.course.room}
                 nameLines={nameLinesFor(block.span, settledSlotHeight)}
                 variant="class"
-                accessibilityLabel={`${block.course.name}, ${WEEKDAY_LABEL[block.weekday]}, period ${
-                  timeSlots[block.startIndex].position
-                }`}
+                accessibilityLabel={t("timetable.classAt", {
+                  name: block.course.name,
+                  weekday: format.weekdayLong(block.weekday),
+                  period: timeSlots[block.startIndex].position,
+                })}
               />
             ),
           )}
@@ -268,7 +306,7 @@ function WeekPageComponent({
               columnWidth={columnWidth}
               slotHeight={slotHeight}
               variant="provisional"
-              accessibilityLabel="New class position, tap again to set it up"
+              accessibilityLabel={t("timetable.newRangeHint")}
             />
           ) : null}
 
@@ -279,7 +317,7 @@ function WeekPageComponent({
               dayIndex={todayColumn}
               columnWidth={columnWidth}
               slotHeight={slotHeight}
-              color={colors.destructive}
+              color={colors.currentTime}
             />
           ) : null}
 
@@ -347,18 +385,35 @@ function PeriodLine({
   return <Animated.View pointerEvents="none" style={[styles.periodLine, { borderTopWidth: thickness, borderColor: color }, style]} />;
 }
 
+/**
+ * The line between two day columns.
+ *
+ * Its height is the academic day, not the box it is drawn in. The box is sized
+ * once for the deepest zoom — `slotCount × MAX_SLOT_HEIGHT`, several times
+ * taller than the grid at any ordinary scale — so a rule pinned to the box's
+ * bottom ran hundreds of points past the end of the day. That was invisible
+ * while the grid was taller than the screen and obvious the moment it was not:
+ * bare vertical lines continuing below the last period, down to nothing.
+ */
 function ColumnRule({
   index,
+  slotCount,
   columnWidth,
+  slotHeight,
   thickness,
   color,
 }: {
   index: number;
+  slotCount: number;
   columnWidth: SharedValue<number>;
+  slotHeight: SharedValue<number>;
   thickness: number;
   color: string;
 }) {
-  const style = useAnimatedStyle(() => ({ transform: [{ translateX: index * columnWidth.get() }] }));
+  const style = useAnimatedStyle(() => ({
+    height: slotCount * slotHeight.get(),
+    transform: [{ translateX: index * columnWidth.get() }],
+  }));
   return (
     <Animated.View
       pointerEvents="none"
@@ -460,7 +515,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: TIME_GUTTER_WIDTH,
     top: 0,
-    bottom: 0,
   },
   nowLine: {
     position: "absolute",

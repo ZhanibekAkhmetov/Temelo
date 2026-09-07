@@ -2,7 +2,13 @@
  * Local HH:mm time-of-day handling and academic-day time-slot generation.
  * Pure TypeScript — no React, no Date-based timestamps — because recurring
  * lesson times are a local weekday + HH:mm concept, not a UTC instant.
+ *
+ * Times are formatted here as bare 24-hour HH:mm and are deliberately not
+ * localised: they are compared as strings, stored as strings, and read off a
+ * grid gutter whose width is fixed.
  */
+
+import { domainError, type DomainError } from "@/domain/errors";
 
 const HHMM_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -30,16 +36,6 @@ export function joinHHmm(hours: number, minutes: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-/** A length of time as "1 h 30 min", "45 min" or "2 h". */
-export function formatDurationMinutes(totalMinutes: number): string {
-  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "0 min";
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = Math.round(totalMinutes % 60);
-  if (hours === 0) return `${minutes} min`;
-  if (minutes === 0) return `${hours} h`;
-  return `${hours} h ${minutes} min`;
-}
-
 function formatMinutesToHHmm(totalMinutes: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -61,26 +57,26 @@ export interface GeneratedTimeSlot {
 
 export type GenerateTimeSlotsResult =
   | { ok: true; slots: GeneratedTimeSlot[] }
-  | { ok: false; error: string };
+  | { ok: false; error: DomainError };
 
 export function generateTimeSlots(
   input: GenerateTimeSlotsInput,
 ): GenerateTimeSlotsResult {
   const startMinutes = parseHHmmToMinutes(input.dayStart);
   if (startMinutes === null) {
-    return { ok: false, error: "Academic day start must be a valid time (HH:mm)." };
+    return { ok: false, error: domainError("errors.dayStartInvalid") };
   }
   if (!Number.isInteger(input.lessonDurationMinutes) || input.lessonDurationMinutes <= 0) {
-    return { ok: false, error: "Lesson duration must be a positive number of minutes." };
+    return { ok: false, error: domainError("errors.lessonDurationInvalid") };
   }
   if (!Number.isInteger(input.breakDurationMinutes) || input.breakDurationMinutes < 0) {
-    return { ok: false, error: "Break duration must be zero or a positive number of minutes." };
+    return { ok: false, error: domainError("errors.breakDurationInvalid") };
   }
   if (!Number.isInteger(input.slotCount) || input.slotCount <= 0) {
-    return { ok: false, error: "Number of periods must be a positive whole number." };
+    return { ok: false, error: domainError("errors.slotCountInvalid") };
   }
   if (input.slotCount > MAX_SLOT_COUNT) {
-    return { ok: false, error: `Number of periods must be ${MAX_SLOT_COUNT} or fewer.` };
+    return { ok: false, error: domainError("errors.slotCountTooMany", { max: MAX_SLOT_COUNT }) };
   }
 
   const slots: GeneratedTimeSlot[] = [];
@@ -89,10 +85,7 @@ export function generateTimeSlots(
     const slotStart = cursor;
     const slotEnd = slotStart + input.lessonDurationMinutes;
     if (slotEnd >= MINUTES_PER_DAY) {
-      return {
-        ok: false,
-        error: `Period ${i + 1} would end after midnight. Reduce the number of periods, lesson duration, or start time.`,
-      };
+      return { ok: false, error: domainError("errors.periodPastMidnight", { position: i + 1 }) };
     }
     slots.push({
       position: i + 1,

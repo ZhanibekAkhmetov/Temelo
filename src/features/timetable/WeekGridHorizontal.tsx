@@ -4,9 +4,10 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { dayOfMonth, weekDatesFrom } from "@/domain/calendar";
 import { findCurrentPeriodIndex } from "@/domain/time";
 import { cellKey, resolveWeekClasses, type ScheduledClass } from "@/domain/timetable";
-import { isWeekendDay, WEEKDAY_LABEL, WEEKDAY_SHORT_LABEL, type Weekday } from "@/domain/week";
+import { isWeekendDay, type Weekday } from "@/domain/week";
 import { GridCell } from "@/features/timetable/GridCell";
 import type { SelectedCell, WeekGridProps } from "@/features/timetable/types";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 import type { TimeSlot } from "@/types/models";
 
@@ -43,6 +44,7 @@ export function WeekGridHorizontal({
   onCellPress,
 }: WeekGridProps) {
   const { colors, typography, borderWidth } = useTheme();
+  const { t, format } = useI18n();
 
   const dates = useMemo(() => weekDatesFrom(weekStart), [weekStart]);
   const classesByCell = useMemo(
@@ -115,7 +117,7 @@ export function WeekGridHorizontal({
             {
               width: periodColWidth,
               height: HEADER_HEIGHT,
-              borderColor: colors.border,
+              borderColor: colors.gridMinor,
               borderRightWidth: borderWidth.thin,
               borderBottomWidth: borderWidth.thin,
             },
@@ -149,11 +151,16 @@ export function WeekGridHorizontal({
                     : null
                 }
                 onPress={() => onCellPress(selectionFor(day, date, slot, existing))}
-                accessibilityLabel={
-                  existing
-                    ? `${existing.course.name}, ${WEEKDAY_LABEL[day]}, period ${slot.position}, ${slot.startTime} to ${slot.endTime}`
-                    : `Empty slot, ${WEEKDAY_LABEL[day]}, period ${slot.position}, ${slot.startTime} to ${slot.endTime}`
-                }
+                accessibilityLabel={t(
+                  existing ? "timetable.classAtTime" : "timetable.emptySlotAtTime",
+                  {
+                    name: existing?.course.name ?? "",
+                    weekday: format.weekdayLong(day),
+                    period: slot.position,
+                    start: slot.startTime,
+                    end: slot.endTime,
+                  },
+                )}
               />
             );
           })}
@@ -164,7 +171,14 @@ export function WeekGridHorizontal({
 
   const weekdayColumn = (
     <View style={{ width: weekdayColWidth }}>
-      <View style={{ height: HEADER_HEIGHT, borderColor: colors.border, borderRightWidth: borderWidth.thin, borderBottomWidth: borderWidth.thin }} />
+      <View
+        style={{
+          height: HEADER_HEIGHT,
+          borderColor: colors.gridMinor,
+          borderRightWidth: borderWidth.thin,
+          borderBottomWidth: borderWidth.thin,
+        }}
+      />
       {weekdays.map((day) => {
         const date = dates[day];
         const isToday = date === today;
@@ -175,10 +189,10 @@ export function WeekGridHorizontal({
               styles.weekdayLabelCell,
               {
                 height: rowHeight,
-                borderColor: colors.border,
+                borderColor: colors.gridMinor,
                 borderRightWidth: borderWidth.thin,
                 borderBottomWidth: borderWidth.thin,
-                backgroundColor: isToday ? colors.todayBackground : "transparent",
+                backgroundColor: isToday ? colors.accentSubtle : "transparent",
               },
             ]}
           >
@@ -186,13 +200,13 @@ export function WeekGridHorizontal({
               style={[
                 typography.gridSecondary,
                 styles.weekdayLabel,
-                { color: isWeekendDay(day) ? colors.destructive : colors.textMuted },
+                { color: isWeekendDay(day) ? colors.weekendText : colors.textMuted },
               ]}
               numberOfLines={1}
             >
-              {WEEKDAY_SHORT_LABEL[day].toUpperCase()}
+              {format.weekdayShort(day).toUpperCase()}
             </Text>
-            <Text style={[styles.dateText, { color: isToday ? colors.accent : colors.textPrimary }]} numberOfLines={1}>
+            <Text style={[styles.dateText, { color: isToday ? colors.accentStrong : colors.textPrimary }]} numberOfLines={1}>
               {dayOfMonth(date)}
             </Text>
           </View>

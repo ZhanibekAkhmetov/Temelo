@@ -9,7 +9,8 @@
  *
  * Nothing here knows about the notification system. Turning a lead time into
  * an actual moment is `domain/reminderSchedule`; delivering it is
- * `util/notifications`.
+ * `util/notifications`; and putting one into words is `i18n/format`, which is
+ * where it has to live now that the words depend on the chosen language.
  */
 
 /** Minutes before a class starts, or null when the class has no reminder. */
@@ -53,26 +54,4 @@ export function reminderOverrideFor(value: ReminderMinutes, seriesValue: Reminde
 /** Whether a lead time is one of the preset choices rather than a custom one. */
 export function isPresetReminder(minutes: ReminderMinutes): boolean {
   return minutes !== null && REMINDER_PRESETS.includes(minutes);
-}
-
-/**
- * A lead time in words: "10 min", "1 hour", "1 hour 30 min", "2 hours".
- *
- * Deliberately not `formatDurationMinutes` — that reads "1 h 30 min", which
- * is right for a field showing a length of time and wrong inside a sentence
- * a notification is telling the user.
- */
-export function formatLeadTime(minutes: number): string {
-  const whole = Math.max(0, Math.round(minutes));
-  if (whole < 60) return `${whole} min`;
-
-  const hours = Math.floor(whole / 60);
-  const rest = whole % 60;
-  const hourPart = hours === 1 ? "1 hour" : `${hours} hours`;
-  return rest === 0 ? hourPart : `${hourPart} ${rest} min`;
-}
-
-/** The reminder as a settings row shows it: "30 min before", or "None". */
-export function formatReminderLabel(minutes: ReminderMinutes): string {
-  return minutes === null ? "None" : `${formatLeadTime(minutes)} before`;
 }

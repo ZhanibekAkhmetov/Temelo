@@ -3,7 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { addWeeksIso, monthShortYearLabel, startOfWeekIso } from "@/domain/calendar";
+import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
 import {
   createPendingClassEdit,
   onlyThisBlockedReason,
@@ -25,6 +25,7 @@ import {
 import { WeekGridHorizontal } from "@/features/timetable/WeekGridHorizontal";
 import { useNow } from "@/features/timetable/useNow";
 import type { SelectedCell } from "@/features/timetable/types";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 
@@ -33,6 +34,7 @@ const MONTH_LABEL_DAY_OFFSET = 3;
 
 export default function TimetableScreen() {
   const { colors, spacing, typography } = useTheme();
+  const { t, format } = useI18n();
   const { state, movePlacement, checkPlacement, checkOccurrence, applyClassEdit } = useAppState();
   const [selected, setSelected] = useState<SelectedCell | null>(null);
   /**
@@ -90,7 +92,7 @@ export default function TimetableScreen() {
           occurrenceDate: move.occurrence.occurrenceDate,
           date: move.date,
         });
-        if (!result.ok) Alert.alert("Cannot move class", result.error);
+        if (!result.ok) Alert.alert(t("timetable.cannotMove"), t(result.error.key, result.error.params));
         return "committed";
       }
 
@@ -106,7 +108,7 @@ export default function TimetableScreen() {
       );
       return "deferred";
     },
-    [movePlacement],
+    [movePlacement, t],
   );
 
   function handleScopeCancel() {
@@ -119,7 +121,7 @@ export default function TimetableScreen() {
     const result = applyClassEdit(pendingEdit.draft, scope);
     setPendingEdit(null);
     surfaceRef.current?.settleDeferredDrag(!result.ok);
-    if (!result.ok) Alert.alert("Cannot apply change", result.error);
+    if (!result.ok) Alert.alert(t("timetable.cannotApply"), t(result.error.key, result.error.params));
   }
 
   // Asked once per crossed boundary while dragging, so the preview can show
@@ -136,23 +138,23 @@ export default function TimetableScreen() {
       {/* The navigation cluster is centred on the screen itself: the menu
           sits in its own absolutely positioned layer so it cannot push the
           month title off centre. */}
-      <View style={[styles.header, { paddingTop: 2 }]}>
+      <View style={[styles.header, { paddingTop: 2, backgroundColor: colors.headerBackground }]}>
         <View style={styles.headerCluster}>
           <Pressable
             onPress={() => goToRelativeWeek(-1)}
             accessibilityRole="button"
-            accessibilityLabel="Previous week"
+            accessibilityLabel={t("timetable.previousWeek")}
             style={styles.arrowTarget}
           >
             <Text style={[styles.glyph, { color: colors.textSecondary }]}>‹</Text>
           </Pressable>
           <Text style={[styles.monthTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-            {monthShortYearLabel(addDaysIso(visibleWeekStart, MONTH_LABEL_DAY_OFFSET))}
+            {format.monthShortYear(addDaysIso(visibleWeekStart, MONTH_LABEL_DAY_OFFSET))}
           </Text>
           <Pressable
             onPress={() => goToRelativeWeek(1)}
             accessibilityRole="button"
-            accessibilityLabel="Next week"
+            accessibilityLabel={t("timetable.nextWeek")}
             style={styles.arrowTarget}
           >
             <Text style={[styles.glyph, { color: colors.textSecondary }]}>›</Text>
@@ -160,15 +162,29 @@ export default function TimetableScreen() {
         </View>
 
         <View style={[styles.headerLeft, { left: spacing.md }]} pointerEvents="box-none">
-          <Pressable onPress={() => router.push("/settings")} accessibilityRole="button" accessibilityLabel="Open settings" hitSlop={10}>
+          <Pressable
+            onPress={() => router.push("/settings")}
+            accessibilityRole="button"
+            accessibilityLabel={t("timetable.openSettings")}
+            hitSlop={8}
+            pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+            style={({ pressed }) => [styles.arrowTarget, { opacity: pressed ? 0.5 : 1 }]}
+          >
             <Text style={[styles.glyph, { color: colors.textSecondary }]}>≡</Text>
           </Pressable>
         </View>
 
         <View style={[styles.headerRight, { right: spacing.md }]} pointerEvents="box-none">
           {isOnCurrentWeek ? null : (
-            <Pressable onPress={goToCurrentWeek} accessibilityRole="button" accessibilityLabel="Go to current week" hitSlop={10}>
-              <Text style={[typography.label, { color: colors.accent }]}>Today</Text>
+            <Pressable
+              onPress={goToCurrentWeek}
+              accessibilityRole="button"
+              accessibilityLabel={t("timetable.goToCurrentWeek")}
+              hitSlop={8}
+              pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+              style={({ pressed }) => [styles.todayTarget, { opacity: pressed ? 0.5 : 1 }]}
+            >
+              <Text style={[typography.label, { color: colors.accentStrong }]}>{t("timetable.today")}</Text>
             </Pressable>
           )}
         </View>
@@ -279,12 +295,22 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     letterSpacing: 1,
-    // Fixed width so a longer month name never nudges the arrows sideways.
+    // A floor rather than a fixed width: it keeps the arrows still for
+    // every short month name, and lets a long localised one ("СЕНТ. 2026",
+    // "SEP. 2026") take the room it needs instead of being clipped. The
+    // cluster is centred on the screen, so growth is symmetrical.
     minWidth: 104,
+    maxWidth: 220,
     textAlign: "center",
   },
   arrowTarget: {
     width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  todayTarget: {
+    minWidth: 44,
     height: 44,
     alignItems: "center",
     justifyContent: "center",

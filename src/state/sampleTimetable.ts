@@ -18,11 +18,11 @@
  */
 
 import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
+import { CLASS_COLOR_IDS } from "@/domain/classColor";
 import { addDaysIso, todayIsoDate } from "@/domain/date";
 import { createId } from "@/domain/id";
 import type { Weekday } from "@/domain/week";
 import { createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
-import { APPEARANCE_PALETTE } from "@/theme/tokens";
 import type { AcademicTerm, Course, OccurrenceException, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
 
 const TERM_STARTS_WEEKS_AGO = 2;
@@ -90,7 +90,7 @@ export function createSampleTimetable(): SampleTimetable {
       room: entry.room,
       teacher: "",
       notes: "",
-      appearanceId: APPEARANCE_PALETTE[courses.length % APPEARANCE_PALETTE.length],
+      appearanceId: CLASS_COLOR_IDS[courses.length % CLASS_COLOR_IDS.length],
       createdAt: now,
       updatedAt: now,
       deletedAt: null,

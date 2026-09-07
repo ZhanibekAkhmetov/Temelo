@@ -92,6 +92,10 @@ export function courseWithOverrides(base: Course, exception: OccurrenceException
     room: exception.room ?? base.room,
     teacher: exception.teacher ?? base.teacher,
     notes: exception.notes ?? base.notes,
+    // The plain `?? base` form is right here: a colour override is either a
+    // palette id or absent, and unlike a reminder it has no "deliberately
+    // nothing" value that null would collide with.
+    appearanceId: exception.appearanceId ?? base.appearanceId,
   };
 }
 

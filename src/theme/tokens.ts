@@ -1,8 +1,19 @@
 /**
- * Restrained visual tokens: neutral surfaces, thin borders, modest radii.
- * Colour is spent in one place only — the classes on the grid, whose
- * palette is at the bottom of this file — and the chrome stays out of its
- * way. No gradients.
+ * The semantic colour vocabulary, and the two palettes that answer it.
+ *
+ * Components ask for a *meaning* — `divider`, `gridMinor`, `textOnAccent` —
+ * and never for a light or dark value, so there is exactly one place that
+ * knows which scheme is in force and no component contains a
+ * `scheme === "dark" ? …` of its own. Adding a third scheme would be one more
+ * `ColorTokens` object here and nothing anywhere else.
+ *
+ * Class colours are deliberately *not* here: they belong to the data rather
+ * than to the chrome, are the same in both schemes, and live in
+ * `theme/classColors`.
+ *
+ * Nothing in this file affects layout. Every value is a colour, and every
+ * dimension the timetable measures itself with lives in
+ * `features/timetable/geometry`.
  */
 
 export const spacing = {
@@ -35,132 +46,162 @@ export const typography = {
 };
 
 export interface ColorTokens {
+  /** The page itself, and what the root native view is painted with. */
   background: string;
+  /** A panel sitting on the page: cards, sheets, the wheel's centre band. */
   surface: string;
-  surfaceAlt: string;
-  border: string;
-  borderStrong: string;
+  /** A surface that should read as lifted off the page — modal cards. */
+  surfaceElevated: string;
+  /** A quiet fill for a pressed row, a chip, or an inset well. */
+  surfaceMuted: string;
+  /** Behind the month title and the weekday strip. */
+  headerBackground: string;
+  /** Inside a text field. */
+  inputBackground: string;
+
   textPrimary: string;
   textSecondary: string;
+  /** Tertiary marks: gutter times, weekday letters, hints. Not body text. */
   textMuted: string;
+  textDisabled: string;
+  /** On an `accent` ground. */
+  textOnAccent: string;
+  /** On a `danger` ground. */
+  textOnDanger: string;
+
+  divider: string;
+  dividerStrong: string;
+
+  /** Between two consecutive periods. */
+  gridMinor: string;
+  /** Where the day genuinely breaks — a long gap between periods. */
+  gridMajor: string;
+  /** Between two day columns. */
+  gridColumnRule: string;
+
   accent: string;
-  accentMuted: string;
-  destructive: string;
-  destructiveMuted: string;
-  todayBackground: string;
+  /** A very light tint of the accent: selected segment, today's cell. */
+  accentSubtle: string;
+  /** Accent text or icons sitting *on* `accentSubtle`, which needs more. */
+  accentStrong: string;
+  /** The now line and its gutter label. */
+  currentTime: string;
+
+  /** Selection stroke where the selected thing has no colour of its own. */
+  selectionBorder: string;
+  /** Fill of a resize handle; its ring is `selectionBorder`. */
+  selectionHandle: string;
   /** Wash behind a range that has been proposed but not saved yet. */
   provisionalFill: string;
+
+  danger: string;
+  /** A quiet ground for a refused or destructive state. */
+  dangerSurface: string;
+
+  /** Behind a centred modal card. */
+  overlay: string;
+  /** Behind a sheet anchored to an edge. */
+  scrim: string;
+  shadow: string;
+
+  /** Weekday letters and dates for Saturday and Sunday. */
+  weekendText: string;
 }
 
+/**
+ * Light: designed for white, not inverted from the dark scheme.
+ *
+ * Surfaces are near-white and separated by hairlines rather than by tint, so
+ * the only saturated things on screen are the classes. Grid lines are
+ * deliberately faint — 1.2:1 against the page for a period line, 1.4:1 where
+ * the day actually breaks — enough to read a row against, far short of a
+ * spreadsheet.
+ */
 export const lightColors: ColorTokens = {
-  background: "#F5F5F4",
-  surface: "#FFFFFF",
-  surfaceAlt: "#EFEEEC",
-  border: "#D9D7D3",
-  borderStrong: "#B7B4AE",
-  textPrimary: "#1C1B19",
-  textSecondary: "#57534E",
-  textMuted: "#8A8681",
-  accent: "#1C63B3",
-  accentMuted: "#E5EBFD",
-  destructive: "#D11A2F",
-  destructiveMuted: "#FEEDEB",
-  todayBackground: "#EDF0FE",
-  provisionalFill: "#1C63B31F",
+  background: "#FFFFFF",
+  surface: "#F8F9FA",
+  surfaceElevated: "#FFFFFF",
+  surfaceMuted: "#F1F3F4",
+  headerBackground: "#FFFFFF",
+  inputBackground: "#FFFFFF",
+
+  textPrimary: "#202124",
+  textSecondary: "#5F6368",
+  textMuted: "#80868B",
+  textDisabled: "#9AA0A6",
+  textOnAccent: "#FFFFFF",
+  textOnDanger: "#FFFFFF",
+
+  divider: "#DADCE0",
+  dividerStrong: "#BDC1C6",
+
+  gridMinor: "#E8EAED",
+  gridMajor: "#DADCE0",
+  gridColumnRule: "#E0E3E7",
+
+  accent: "#1A73E8",
+  accentSubtle: "#E8F0FE",
+  accentStrong: "#1967D2",
+  currentTime: "#1A73E8",
+
+  selectionBorder: "#202124",
+  selectionHandle: "#FFFFFF",
+  provisionalFill: "#1A73E81F",
+
+  danger: "#D93025",
+  dangerSurface: "#FCE8E6",
+
+  overlay: "#00000066",
+  scrim: "#00000059",
+  shadow: "#000000",
+
+  weekendText: "#D93025",
 };
 
+/**
+ * Dark: charcoal neutrals, not black and not blue-grey.
+ *
+ * The surfaces step 1.1–1.3:1 apart, which is what makes a card read as
+ * lifted without a border doing the work, and the accent flips to the light
+ * blue that a dark ground needs — so `textOnAccent` flips with it.
+ */
 export const darkColors: ColorTokens = {
-  background: "#151412",
-  surface: "#1E1D1B",
-  surfaceAlt: "#26241F",
-  border: "#3A3733",
-  borderStrong: "#4E4A44",
-  textPrimary: "#EDEBE7",
-  textSecondary: "#B7B3AC",
-  textMuted: "#847F78",
-  accent: "#8EB0FA",
-  accentMuted: "#2C3449",
-  destructive: "#F93E33",
-  destructiveMuted: "#2B1917",
-  todayBackground: "#282E3E",
-  provisionalFill: "#8EB0FA26",
+  background: "#202124",
+  surface: "#292A2D",
+  surfaceElevated: "#303134",
+  surfaceMuted: "#27282A",
+  headerBackground: "#202124",
+  inputBackground: "#292A2D",
+
+  textPrimary: "#F1F3F4",
+  textSecondary: "#BDC1C6",
+  textMuted: "#9AA0A6",
+  textDisabled: "#80868B",
+  textOnAccent: "#202124",
+  textOnDanger: "#202124",
+
+  divider: "#3C4043",
+  dividerStrong: "#5F6368",
+
+  gridMinor: "#303236",
+  gridMajor: "#3C4043",
+  gridColumnRule: "#34373B",
+
+  accent: "#8AB4F8",
+  accentSubtle: "#29344A",
+  accentStrong: "#8AB4F8",
+  currentTime: "#8AB4F8",
+
+  selectionBorder: "#F1F3F4",
+  selectionHandle: "#303134",
+  provisionalFill: "#8AB4F826",
+
+  danger: "#F28B82",
+  dangerSurface: "#3B2422",
+
+  overlay: "#000000A6",
+  scrim: "#00000099",
+  shadow: "#000000",
+
+  weekendText: "#F28B82",
 };
-
-/**
- * Ordered so that consecutive courses — which are handed the next entry in
- * turn — never land on neighbouring hues. The closest adjacent pair here is
- * ΔE₀₀ ≈ 38, and the closest pair anywhere in the set ≈ 17 (violet/magenta).
- */
-export const APPEARANCE_PALETTE = [
-  "blue",
-  "red",
-  "emerald",
-  "violet",
-  "amber",
-  "teal",
-  "magenta",
-] as const;
-
-export type AppearanceId = (typeof APPEARANCE_PALETTE)[number];
-
-export interface AppearanceColors {
-  /** The block's own background — opaque, so it never dilutes into the grid. */
-  fill: string;
-  /** Class name on that fill. */
-  ink: string;
-  /** Room line on that fill. */
-  inkMuted: string;
-  /** Hairline around the block. */
-  edge: string;
-  /** Stroke of the selection rectangle and its resize handles. */
-  outline: string;
-}
-
-/**
- * Seven course colours, generated in CIELAB rather than picked by eye: one
- * hue each, spaced at least 31° apart, carrying 90% of the chroma sRGB can
- * hold at that lightness and never more than C 72 — vivid enough to tell
- * apart at a glance on a black grid, short of the gamut edge where colours
- * start to buzz.
- *
- * `fill` is deliberately light (L* 62–73). That is what carries the colour,
- * and it lets one near-black ink sit on every one of them at 6.3:1 or
- * better, so no course needs its own text rule.
- *
- * `deep` is the same hue darkened: the block's hairline in both schemes, and
- * the selection stroke in light mode, where a lighter stroke would dissolve
- * into the page. `bright` is the same hue lightened, for the selection
- * stroke in dark mode.
- */
-const APPEARANCE_HUES: Record<AppearanceId, { fill: string; deep: string; bright: string }> = {
-  blue: { fill: "#5996F4", deep: "#2868B8", bright: "#B0C3F6" },
-  red: { fill: "#F76D66", deep: "#CE2431", bright: "#F7B7AF" },
-  emerald: { fill: "#31B978", deep: "#218455", bright: "#6BE9A5" },
-  violet: { fill: "#B57AF4", deep: "#8447CE", bright: "#D8B7F6" },
-  amber: { fill: "#F8A02E", deep: "#B9741A", bright: "#FBD6B5" },
-  teal: { fill: "#37BCC6", deep: "#268890", bright: "#59EEF9" },
-  magenta: { fill: "#F65FC1", deep: "#C02491", bright: "#F7B2DA" },
-};
-
-/** One ink for every fill; the room line is the same ink at 80%. */
-const APPEARANCE_INK = "#121110";
-const APPEARANCE_INK_MUTED = `${APPEARANCE_INK}CC`;
-
-const FALLBACK_APPEARANCE: AppearanceId = "blue";
-
-/**
- * The colours a class is drawn with. The fill and the ink are the same in
- * both schemes — one palette, not two that can drift — and only the strokes
- * change, because "stands out against the block" means lighter on a dark
- * grid and darker on a light one.
- */
-export function getAppearanceColors(appearanceId: string, scheme: "light" | "dark"): AppearanceColors {
-  const hue = APPEARANCE_HUES[appearanceId as AppearanceId] ?? APPEARANCE_HUES[FALLBACK_APPEARANCE];
-  return {
-    fill: hue.fill,
-    ink: APPEARANCE_INK,
-    inkMuted: APPEARANCE_INK_MUTED,
-    edge: hue.deep,
-    outline: scheme === "dark" ? hue.bright : hue.deep,
-  };
-}

@@ -13,6 +13,7 @@
     "expo-haptics": "~57.0.1",
     "expo-image": "~57.0.2",
     "expo-linking": "~57.0.5",
+    "expo-localization": "~57.0.1",
     "expo-notifications": "~57.0.9",
     "expo-router": "~57.0.11",
     "expo-splash-screen": "~57.0.5",
@@ -42,7 +43,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "harness": "node harness/run.mjs"
   },
   "private": true
 }

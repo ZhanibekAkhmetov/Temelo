@@ -1,7 +1,7 @@
 import { CollapsibleField } from "@/components/CollapsibleField";
 import { MonthPager, MONTH_PAGER_HEIGHT } from "@/components/MonthPager";
-import { formatIsoLong } from "@/domain/calendar";
 import { todayIsoDate } from "@/domain/date";
+import { useI18n } from "@/i18n/I18nProvider";
 
 interface InlineDateFieldProps {
   label: string;
@@ -20,13 +20,14 @@ interface InlineDateFieldProps {
  * the screen so that opening one field closes any other.
  */
 export function InlineDateField({ label, value, onChange, expanded, onToggle, error, helperText }: InlineDateFieldProps) {
+  const { format } = useI18n();
   const today = todayIsoDate();
   const selected = value || today;
 
   return (
     <CollapsibleField
       label={label}
-      valueText={formatIsoLong(selected)}
+      valueText={format.dateLong(selected)}
       expanded={expanded}
       onToggle={onToggle}
       panelHeight={MONTH_PAGER_HEIGHT}

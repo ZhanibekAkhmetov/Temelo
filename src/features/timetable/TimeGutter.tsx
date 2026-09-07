@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 
 import { findPeriodProgress } from "@/domain/time";
-import { DAY_HEADER_HEIGHT, MAX_SLOT_HEIGHT, TIME_GUTTER_WIDTH } from "@/features/timetable/geometry";
+import { DAY_HEADER_HEIGHT, MAX_SLOT_HEIGHT, TIME_GUTTER_WIDTH, topInsetFor } from "@/features/timetable/geometry";
 import { useTheme } from "@/theme/useTheme";
 import type { TimeSlot } from "@/types/models";
 
@@ -13,6 +13,8 @@ interface TimeGutterProps {
   showNowLabel: boolean;
   /** Continuous page position, so the label fades out as another week is dragged in. */
   pageDistanceFromToday: SharedValue<number>;
+  /** Height of the scrolled body — the same one the grid centres itself in. */
+  bodyHeight: number;
   /** Settled period height; changes once, when a pinch ends. */
   slotHeight: SharedValue<number>;
   /** Transient pinch scale, 1 unless two fingers are on the grid right now. */
@@ -36,6 +38,7 @@ export function TimeGutter({
   now,
   showNowLabel,
   pageDistanceFromToday,
+  bodyHeight,
   slotHeight,
   pinchScaleY,
   scrollY,
@@ -45,12 +48,16 @@ export function TimeGutter({
 
   // Only the offset animates; the box is sized for the largest zoom level
   // once, so scrolling and zooming never trigger a layout pass here.
+  // The same vertical origin the grid uses, so a centred academic day's times
+  // stay on the lines they belong to rather than starting at the top.
   const contentStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -scrollY.get() }],
+    transform: [
+      { translateY: topInsetFor(slotHeight.get() * pinchScaleY.get(), timeSlots.length, bodyHeight) - scrollY.get() },
+    ],
   }));
 
   return (
-    <View style={[styles.gutter, { width: TIME_GUTTER_WIDTH, backgroundColor: colors.background }]} pointerEvents="none">
+    <View style={[styles.gutter, { width: TIME_GUTTER_WIDTH, backgroundColor: colors.headerBackground }]} pointerEvents="none">
       <View style={{ height: DAY_HEADER_HEIGHT }} />
       <View style={styles.viewport}>
         <Animated.View style={[{ height: timeSlots.length * MAX_SLOT_HEIGHT }, contentStyle]}>
@@ -73,8 +80,8 @@ export function TimeGutter({
               pinchScaleY={pinchScaleY}
               distance={pageDistanceFromToday}
               text={now}
-              color={colors.destructive}
-              background={colors.background}
+              color={colors.currentTime}
+              background={colors.headerBackground}
             />
           ) : null}
         </Animated.View>
@@ -104,7 +111,7 @@ function GutterLabel({
     <Animated.View style={[styles.label, style]}>
       {/* The gutter is a fixed-width axis; a scaled-up label would be
           truncated rather than readable, so this one keeps its size. */}
-      <Text style={[typography.gridSecondary, { color }]} numberOfLines={1} allowFontScaling={false}>
+      <Text style={[typography.caption, { color }]} numberOfLines={1} allowFontScaling={false}>
         {text}
       </Text>
     </Animated.View>
@@ -138,13 +145,13 @@ function NowLabel({
 }) {
   const { typography } = useTheme();
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: (slotIndex + fraction) * slotHeight.get() * pinchScaleY.get() - 7 }],
+    transform: [{ translateY: (slotIndex + fraction) * slotHeight.get() * pinchScaleY.get() - 8 }],
     opacity: Math.max(0, 1 - Math.abs(distance.get()) * 3),
   }));
 
   return (
     <Animated.View style={[styles.nowLabel, { backgroundColor: background }, animatedStyle]}>
-      <Text style={[typography.gridSecondary, styles.nowLabelText, { color }]} numberOfLines={1} allowFontScaling={false}>
+      <Text style={[typography.caption, styles.nowLabelText, { color }]} numberOfLines={1} allowFontScaling={false}>
         {text}
       </Text>
     </Animated.View>
@@ -166,14 +173,16 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     left: 0,
-    right: 1,
+    // Off the grid's edge rather than flush against it: the times are an axis
+    // beside the day, not a column of it.
+    right: 6,
     alignItems: "flex-end",
   },
   nowLabel: {
     position: "absolute",
     top: 0,
     left: 0,
-    right: 1,
+    right: 6,
     alignItems: "flex-end",
     paddingVertical: 1,
   },

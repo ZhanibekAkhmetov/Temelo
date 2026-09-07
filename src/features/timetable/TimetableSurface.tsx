@@ -16,8 +16,10 @@ import {
   maxOffsetXFor,
   maxScrollFor,
   maxZoomFor,
+  minSlotHeightFor,
   slotHeightForZoom,
   TIME_GUTTER_WIDTH,
+  topInsetFor,
 } from "@/features/timetable/geometry";
 import { HANDLE_TOUCH_RADIUS } from "@/features/timetable/GridBlock";
 import {
@@ -101,11 +103,16 @@ const RESIZE_SNAP_FRACTION = 0.75;
 const SCALE_EPSILON = 1e-6;
 
 /**
- * Read once, here, rather than inside the worklet: `__DEV__` is a bundler
- * global on the JavaScript context, and a worklet runs on its own runtime.
- * Captured in the closure it is a plain boolean either way.
+ * Whether to measure the pinch hand-over. Off, and flipped by hand when the
+ * hand-over is being worked on.
+ *
+ * It used to be `__DEV__`, which meant every pinch in every development build
+ * ended with a `runOnJS` hop carrying a fifteen-field object and a
+ * `JSON.stringify` — landing at exactly the moment the fingers leave the
+ * glass, which is the moment the gesture is judged. The check is worth having
+ * and is not worth paying for on every zoom.
  */
-const instrumentHandoff = __DEV__;
+const instrumentHandoff = false;
 
 /** Anything above this, in points, would be a hand-over the eye can see. */
 const HANDOFF_TOLERANCE = 0.5;
@@ -431,16 +438,46 @@ export function TimetableSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interaction, visibleWeekStart]);
 
-  // Zoom starts fully out and is only re-derived when the viewport or the
-  // academic day changes — a finished pinch keeps whatever it produced.
+  /**
+   * Reconciling the geometry with the academic day it is drawing.
+   *
+   * Everything about the vertical scale is derived from `slotCount` and the
+   * measured body: the minimum period height, the maximum zoom, how far the
+   * grid can scroll, and whether it is inset at all. Change the number of
+   * periods and every one of those answers changes — while `zoom`,
+   * `slotHeight`, `scrollY` and `offsetX` are shared values that survive the
+   * render, because they have to: they are what a finished pinch produced and
+   * a re-render must not undo it.
+   *
+   * That combination is what used to break. `zoom` was carried across a
+   * slot-count change as a raw multiplier over a *different* minimum, so the
+   * period height it implied was not the one on screen, and the two could sit
+   * on opposite sides of the new ceiling: `zoom` said one thing, `slotHeight`
+   * was clamped to another, and pinching out spent most of its range closing a
+   * gap that was not visible. The grid looked stuck with a handful of enormous
+   * periods and only a relaunch — which rebuilds every shared value from
+   * scratch — put it right.
+   *
+   * So what is carried across is the *period height*, which is the thing the
+   * user can actually see, and the zoom factor is re-derived from it against
+   * the new minimum and clamped into the new range. A change from eight
+   * periods to seven leaves the rows exactly the height they were, because
+   * that is what "nothing jumped" means; a change that makes the current
+   * height impossible lands on the nearest height that is possible. Either
+   * way `zoom`, `slotHeight` and the bounds agree by construction rather than
+   * by two derivations happening to match.
+   */
   const hasPositioned = useRef(false);
   useEffect(() => {
     if (bodyHeight <= 0 || bodyWidth <= 0 || slotCount <= 0 || dayCount <= 0) return;
 
-    // The zoom factor survives a rotation or a change to the academic day;
-    // the two scales are re-derived from it against the new geometry, which
-    // is what keeps "fully zoomed out" meaning the whole week either way.
-    const nextZoom = hasPositioned.current ? clampValue(zoom.get(), 1, maxZoom) : 1;
+    const first = !hasPositioned.current;
+    const minHeight = minSlotHeightFor(bodyHeight, slotCount);
+    // From the height on screen, not from the stored factor: the factor is
+    // relative to a minimum that has just changed underneath it.
+    const heldHeight = slotHeight.get() * pinchScaleY.get();
+    const nextZoom = first || heldHeight <= 0 ? 1 : clampValue(heldHeight / minHeight, 1, maxZoom);
+
     const nextHeight = slotHeightForZoom(nextZoom, bodyHeight, slotCount);
     const nextWidth = columnWidthForZoom(nextZoom, bodyWidth, dayCount);
     zoom.set(nextZoom);
@@ -453,7 +490,7 @@ export function TimetableSurface({
     pinchScaleY.set(1);
     setSettledSlotHeight(nextHeight);
 
-    if (!hasPositioned.current) {
+    if (first) {
       hasPositioned.current = true;
       const focusIndex = findCurrentPeriodIndex(timeSlots, now);
       scrollY.set(clampValue(focusIndex * nextHeight - bodyHeight / 3, 0, maxScrollFor(nextHeight, slotCount, bodyHeight)));
@@ -461,6 +498,10 @@ export function TimetableSurface({
       return;
     }
 
+    // Both offsets are clamped into the ranges the new geometry allows, so a
+    // day that just got shorter cannot leave the grid scrolled past its own
+    // end — `maxScrollFor` is zero whenever the whole day now fits, which puts
+    // `scrollY` back to zero and hands the vertical placement to the inset.
     scrollY.set(clampValue(scrollY.get(), 0, maxScrollFor(nextHeight, slotCount, bodyHeight)));
     offsetX.set(clampValue(offsetX.get(), 0, maxOffsetXFor(nextWidth, dayCount, bodyWidth)));
     // `now` only seeds the first position; later ticks must not scroll the grid.
@@ -703,8 +744,11 @@ export function TimetableSurface({
     (x: number, y: number) => {
       const width = columnWidth.get();
       if (width <= 0 || slotHeight.get() <= 0) return;
+      const height = slotHeight.get();
       const dayIndex = Math.floor((x - TIME_GUTTER_WIDTH + offsetX.get()) / width);
-      const slotIndex = Math.floor((y - DAY_HEADER_HEIGHT + scrollY.get()) / slotHeight.get());
+      const slotIndex = Math.floor(
+        (y - DAY_HEADER_HEIGHT - topInsetFor(height, slotCount, bodyHeight) + scrollY.get()) / height,
+      );
       const onGrid =
         y >= DAY_HEADER_HEIGHT &&
         x >= TIME_GUTTER_WIDTH &&
@@ -745,7 +789,7 @@ export function TimetableSurface({
       setInteraction({ kind: "provisionalSelected", weekStart: page.weekStart, dayIndex, startIndex: slotIndex, span: 1 });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dayCount, interaction, openEditorFor, pageUnderFinger, setInteraction, slotCount],
+    [bodyHeight, dayCount, interaction, openEditorFor, pageUnderFinger, setInteraction, slotCount],
   );
 
   /** idle | provisionalSelected --long press on empty grid--> creatingRange */
@@ -939,12 +983,26 @@ export function TimetableSurface({
     ],
   );
 
+  /**
+   * Where the first period's top edge sits inside the body, in points.
+   *
+   * Zero whenever the grid is taller than the body — which is whenever it can
+   * be scrolled at all — and half the spare room otherwise, so a short
+   * academic day is centred rather than hung from the weekday strip. Read from
+   * the live period height so it stays right mid-pinch, as the grid grows past
+   * the viewport and the inset falls away.
+   */
+  const topInset = (height: number): number => {
+    "worklet";
+    return topInsetFor(height, slotCount, bodyHeight);
+  };
+
   /** Period under a surface-relative y, fractional part included. */
   const slotFloatAtY = (y: number): number => {
     "worklet";
     const height = slotHeight.get();
     if (height <= 0) return -1;
-    return (y - DAY_HEADER_HEIGHT + scrollY.get()) / height;
+    return (y - DAY_HEADER_HEIGHT - topInset(height) + scrollY.get()) / height;
   };
 
   /**
@@ -1063,7 +1121,7 @@ export function TimetableSurface({
     if (height <= 0 || columnWidth.get() <= 0) return;
 
     const mode = panMode.get();
-    const slotFloat = (y - DAY_HEADER_HEIGHT + scrollY.get()) / height;
+    const slotFloat = (y - DAY_HEADER_HEIGHT - topInset(height) + scrollY.get()) / height;
     const period = clampValue(Math.floor(slotFloat), 0, slotCount - 1);
 
     let nextDay = dragDay.get();
@@ -1456,7 +1514,9 @@ export function TimetableSurface({
       // or the grid lurches on the first frame.
       const height = slotHeight.get() * pinchScaleY.get();
       const width = columnWidth.get() * pinchScaleX.get();
-      pinchAnchorSlot.set(height > 0 ? (scrollY.get() + event.focalY - DAY_HEADER_HEIGHT) / height : 0);
+      pinchAnchorSlot.set(
+        height > 0 ? (scrollY.get() + event.focalY - DAY_HEADER_HEIGHT - topInset(height)) / height : 0,
+      );
       pinchAnchorColumn.set(width > 0 ? (offsetX.get() + event.focalX - TIME_GUTTER_WIDTH) / width : 0);
       runOnJS(dismissProvisional)();
     })
@@ -1496,7 +1556,9 @@ export function TimetableSurface({
         pinchStartScale.set(event.scale);
         const heldHeight = slotHeight.get() * pinchScaleY.get();
         const heldWidth = columnWidth.get() * pinchScaleX.get();
-        pinchAnchorSlot.set(heldHeight > 0 ? (scrollY.get() + event.focalY - DAY_HEADER_HEIGHT) / heldHeight : 0);
+        pinchAnchorSlot.set(
+          heldHeight > 0 ? (scrollY.get() + event.focalY - DAY_HEADER_HEIGHT - topInset(heldHeight)) / heldHeight : 0,
+        );
         pinchAnchorColumn.set(heldWidth > 0 ? (offsetX.get() + event.focalX - TIME_GUTTER_WIDTH) / heldWidth : 0);
       }
 
@@ -1521,8 +1583,13 @@ export function TimetableSurface({
       // Solved against the *live* focal point and the live scales, so the
       // anchor also follows two fingers that drift while they spread — the
       // grid tracks the fingers instead of pulling towards the top-left.
+      // The inset is part of where the anchor sits on screen, so it belongs in
+      // the equation being solved. It is zero for every scale at which the
+      // clamp below has any room, so this only ever matters at the bottom of
+      // the zoom range, where it keeps a centred grid centred under the
+      // fingers instead of jumping to the top on the first frame.
       scrollY.set(clampValue(
-        pinchAnchorSlot.get() * liveHeight - (event.focalY - DAY_HEADER_HEIGHT),
+        pinchAnchorSlot.get() * liveHeight + topInset(liveHeight) - (event.focalY - DAY_HEADER_HEIGHT),
         0,
         maxScrollFor(liveHeight, slotCount, bodyHeight),
       ));
@@ -1607,9 +1674,14 @@ export function TimetableSurface({
           anchorSlot: pinchAnchorSlot.get(),
           anchorColumn: pinchAnchorColumn.get(),
           beforeX: TIME_GUTTER_WIDTH + pinchAnchorColumn.get() * settledWidth * scaleX - offsetX.get(),
-          beforeY: DAY_HEADER_HEIGHT + pinchAnchorSlot.get() * settledHeight * scaleY - scrollY.get(),
+          beforeY:
+            DAY_HEADER_HEIGHT +
+            topInset(settledHeight * scaleY) +
+            pinchAnchorSlot.get() * settledHeight * scaleY -
+            scrollY.get(),
           afterX: TIME_GUTTER_WIDTH + pinchAnchorColumn.get() * liveWidth - offsetX.get(),
-          afterY: DAY_HEADER_HEIGHT + pinchAnchorSlot.get() * liveHeight - scrollY.get(),
+          afterY:
+            DAY_HEADER_HEIGHT + topInset(liveHeight) + pinchAnchorSlot.get() * liveHeight - scrollY.get(),
           scrollY: scrollY.get(),
           offsetX: offsetX.get(),
           settledHeightBefore: settledHeight,
@@ -1842,6 +1914,7 @@ export function TimetableSurface({
                   today={today}
                   now={now}
                   width={size.width}
+                  bodyHeight={bodyHeight}
                   columnWidth={columnWidth}
                   offsetX={offsetX}
                   slotHeight={slotHeight}
@@ -1860,6 +1933,7 @@ export function TimetableSurface({
               now={now}
               showNowLabel={todayColumnVisible}
               pageDistanceFromToday={pos}
+              bodyHeight={bodyHeight}
               slotHeight={slotHeight}
               pinchScaleY={pinchScaleY}
               scrollY={scrollY}
@@ -1871,6 +1945,7 @@ export function TimetableSurface({
               timeSlots={timeSlots}
               columnWidth={columnWidth}
               offsetX={offsetX}
+              bodyHeight={bodyHeight}
               slotHeight={slotHeight}
               scrollY={scrollY}
               dayIndex={dragDay}

@@ -13,6 +13,28 @@ import { type WithSpringConfig } from "react-native-reanimated";
 /** Movement, in points, before a pan is allowed to claim an axis. */
 export const TOUCH_SLOP = 10;
 
+/**
+ * The month pager's own arbitration, which is a different problem from the
+ * timetable's.
+ *
+ * The timetable surface owns its whole screen: nothing else wants the touch,
+ * so it can afford to wait for a clear axis. The month grid is a panel inside
+ * a vertically scrolling form, and the two of them are competing for the same
+ * finger from the first millimetre — so the question is not "which axis is
+ * this" but "which of us should own it", and it has to be answered early
+ * enough that neither has visibly started.
+ *
+ * A smaller slop answers it sooner. The ratio is what makes the answer
+ * tolerant: a real swipe across a phone is never level, and demanding
+ * `|dy| < 10` — which is what a `failOffsetY` threshold amounts to — refuses
+ * perfectly ordinary swipes for being a few degrees off. Asking instead that
+ * the horizontal travel *dominate* the vertical accepts anything inside about
+ * 40° of level, which is the whole range a thumb actually produces, while
+ * still handing a genuine vertical drag straight to the form.
+ */
+export const PAGER_TOUCH_SLOP = 6;
+export const PAGER_AXIS_RATIO = 1.2;
+
 /** Fraction of the viewport a drag must cross to commit a page change. */
 export const PAGE_COMMIT_FRACTION = 0.28;
 
@@ -26,6 +48,22 @@ export const PAGE_VELOCITY_PROJECTION_SECONDS = 0.12;
 /** Critically damped settle for a page: no bounce, no overshoot. */
 export const PAGE_SPRING: WithSpringConfig = {
   duration: 200,
+  dampingRatio: 1,
+  overshootClamping: true,
+};
+
+/**
+ * The month pager's settle: the same critically damped shape, shorter.
+ *
+ * A month grid is a small control inside a form, and a user browsing for a
+ * date swipes it several times in a row rather than once. At the timetable's
+ * 200 the page is still visibly arriving when the next swipe starts, which
+ * makes the control feel slow even though nothing is being dropped. Kept
+ * separate from `PAGE_SPRING` rather than retuning it, because the week pager
+ * moves a whole screen and its timing has already been settled on.
+ */
+export const MONTH_PAGE_SPRING: WithSpringConfig = {
+  duration: 140,
   dampingRatio: 1,
   overshootClamping: true,
 };

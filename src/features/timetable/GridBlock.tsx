@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 
 import { TIME_GUTTER_WIDTH } from "@/features/timetable/geometry";
-import { getAppearanceColors } from "@/theme/tokens";
+import { getClassColors } from "@/theme/classColors";
 import { useTheme } from "@/theme/useTheme";
 
 const BLOCK_INSET = 1.5;
@@ -58,9 +58,10 @@ export function GridBlock({
   variant,
   accessibilityLabel,
 }: GridBlockProps) {
-  const { colors, radii, typography, scheme } = useTheme();
+  const { colors, radii, typography } = useTheme();
 
-  const appearance = appearanceId ? getAppearanceColors(appearanceId, scheme) : null;
+  // One palette for both schemes, so `scheme` is not consulted here at all.
+  const appearance = appearanceId ? getClassColors(appearanceId) : null;
   const isPreview = variant !== "class";
 
   const style = useAnimatedStyle(() => {
@@ -97,7 +98,7 @@ export function GridBlock({
           shadowOpacity: variant === "dragging" ? 0.18 : 0,
           shadowRadius: 8,
           shadowOffset: { width: 0, height: 3 },
-          shadowColor: "#000000",
+          shadowColor: colors.shadow,
         },
         style,
       ]}
@@ -197,11 +198,42 @@ export function SelectionOutline({
     >
       {withHandles ? (
         <>
-          <View style={[styles.handle, styles.handleTop, { backgroundColor: colors.background, borderColor: stroke }]} />
-          <View style={[styles.handle, styles.handleBottom, { backgroundColor: colors.background, borderColor: stroke }]} />
+          <ResizeHandle style={styles.handleTop} />
+          <ResizeHandle style={styles.handleBottom} />
         </>
       ) : null}
     </Animated.View>
+  );
+}
+
+/**
+ * One grab handle on the selection rectangle.
+ *
+ * Its two colours come from the theme, not from the class — deliberately, and
+ * this is the one place the selection chrome parts company with the course's
+ * own hue. A handle straddles the block's edge: half of it lies on the fill,
+ * half on the grid behind it. A hue-derived handle can be readable against
+ * one of those two grounds but not reliably against both — a pale ring that
+ * stands out on a deep purple block vanishes on the white page a few pixels
+ * above it.
+ *
+ * `selectionHandle` against `selectionBorder` is legible on the page by
+ * construction, and on *every* fill in the palette at least one of the two
+ * contrasts strongly: the near-black ring carries it on amber and the bright
+ * greens, the light fill carries it on purple, indigo and the deep blues. So
+ * the handles stay visible whatever colour the class is and whichever scheme
+ * is in force, which is what a resize affordance has to do.
+ */
+function ResizeHandle({ style }: { style: object }) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={[
+        styles.handle,
+        style,
+        { backgroundColor: colors.selectionHandle, borderColor: colors.selectionBorder },
+      ]}
+    />
   );
 }
 

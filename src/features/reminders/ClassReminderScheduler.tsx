@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppState as DeviceAppState } from "react-native";
 
 import { todayIsoDate } from "@/domain/date";
+import type { ReminderTextFormat } from "@/domain/reminderSchedule";
 import { syncClassReminders, type ReminderSyncInput } from "@/features/reminders/scheduler";
+import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 
 /** How often the date is re-read, so the rolling window crosses midnight. */
@@ -18,14 +20,33 @@ const DAY_ROLL_CHECK_MS = 60_000;
  * than a call at each of those sites: the places that edit the timetable
  * cannot forget to refresh, because they are not the ones doing it.
  *
- * The other two triggers are the ones state changes cannot cover: the first
- * run when the app starts (this effect's own mount), and coming back to the
- * foreground, where reminders may have been delivered — or missed — while
- * the app was not running.
+ * The other three triggers are the ones state changes cannot cover: the first
+ * run when the app starts (this effect's own mount), coming back to the
+ * foreground, where reminders may have been delivered — or missed — while the
+ * app was not running, and a change of language, which changes the words a
+ * pending reminder will show.
  */
 export function ClassReminderScheduler() {
   const { state } = useAppState();
+  const { t, format, language } = useI18n();
   const [windowStart, setWindowStart] = useState(todayIsoDate);
+
+  // Rebuilt only when the language actually changes, so an ordinary edit
+  // hands the scheduler the same functions it had before.
+  const text = useMemo<ReminderTextFormat>(
+    () => ({
+      startsIn: (leadMinutes) => t("reminders.notificationStartsIn", { lead: format.leadTime(leadMinutes) }),
+      room: (room) => t("reminders.notificationRoom", { room }),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [language],
+  );
+
+  const channelText = useMemo(
+    () => ({ name: t("reminders.channelName"), description: t("reminders.channelDescription") }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [language],
+  );
 
   // What the foreground listener should re-send; it is registered once and
   // must not close over the timetable as it was at mount.
@@ -38,10 +59,12 @@ export function ClassReminderScheduler() {
       exceptions: state.exceptions,
       timeSlots: state.timeSlots,
       fromDate: windowStart,
+      text,
+      channelText,
     };
     latestInput.current = input;
     syncClassReminders(input);
-  }, [state, windowStart]);
+  }, [state, windowStart, text, channelText]);
 
   useEffect(() => {
     const subscription = DeviceAppState.addEventListener("change", (next) => {

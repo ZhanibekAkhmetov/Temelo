@@ -1,199 +1,272 @@
-import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
-import { InlineDateField } from "@/components/InlineDateField";
+import { ChoiceRowField } from "@/components/ChoiceRowField";
+import { FormSection, NavigationRow } from "@/components/FormSection";
 import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
-import { SegmentedControl } from "@/components/SegmentedControl";
-import { TextField } from "@/components/TextField";
-import type { ReminderMinutes } from "@/domain/reminder";
-import { ALL_WEEKEND_MODES, WEEKEND_MODE_LABEL, type WeekendMode } from "@/domain/week";
+import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
 import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
+import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
+import { useI18n } from "@/i18n/I18nProvider";
+import { LANGUAGE_PREFERENCES, type LanguagePreference } from "@/i18n/language";
+import type { TranslationKey } from "@/i18n/translate";
 import { useAppState } from "@/state/AppStateContext";
+import { APPEARANCE_PREFERENCES, type AppearancePreference } from "@/theme/appearance";
 import { useTheme } from "@/theme/useTheme";
 import type { GridOrientation } from "@/types/models";
 
-const WEEKEND_MODE_OPTIONS: { label: string; value: WeekendMode }[] = ALL_WEEKEND_MODES.map((mode) => ({
-  label: WEEKEND_MODE_LABEL[mode],
-  value: mode,
-}));
+const WEEKEND_MODE_LABEL_KEY: Record<WeekendMode, TranslationKey> = {
+  saturdaySunday: "week.weekendSaturdaySunday",
+  sundayOnly: "week.weekendSundayOnly",
+  none: "week.weekendNone",
+};
 
-const GRID_ORIENTATION_OPTIONS: { label: string; value: GridOrientation }[] = [
-  { label: "Vertical", value: "vertical" },
-  { label: "Horizontal", value: "horizontal" },
-];
+const APPEARANCE_LABEL_KEY: Record<AppearancePreference, TranslationKey> = {
+  system: "settings.appearanceSystem",
+  light: "settings.appearanceLight",
+  dark: "settings.appearanceDark",
+};
 
+const LAYOUT_LABEL_KEY: Record<GridOrientation, TranslationKey> = {
+  vertical: "settings.layoutVertical",
+  horizontal: "settings.layoutHorizontal",
+};
+
+const LAYOUT_ORDER: GridOrientation[] = ["vertical", "horizontal"];
+
+/**
+ * The languages are named *in themselves*, not translated.
+ *
+ * "Русский" is what a Russian speaker looks for in a language list, whatever
+ * language the app currently happens to be in — which is exactly the list
+ * they need when the app is in a language they cannot read. Only "System" is
+ * translated, because it names a behaviour rather than a language.
+ */
+const LANGUAGE_ENDONYM: Record<Exclude<LanguagePreference, "system">, string> = {
+  en: "English",
+  ru: "Русский",
+  de: "Deutsch",
+};
+
+/**
+ * Settings.
+ *
+ * One rule, and now the screen actually keeps it:
+ *
+ *   A setting that is a single choice applies and persists the moment it is
+ *   made. A setting that is several fields at once is a screen of its own.
+ *
+ * So there is no Save button here at all. Every row on this page commits on
+ * tap; the two things that cannot — the academic day and the term — are rows
+ * that open their own editors, where a Save belongs because there is a whole
+ * form to commit. The previous version had one editor inlined at the bottom
+ * with its own Save, which meant the page had a button that governed two of
+ * its rows and not the other five, and no way to tell which was which.
+ *
+ * Three groups, and each row's value is on the right, so the page can be read
+ * as "what is Temelo set to" without opening anything.
+ */
 export default function SettingsScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
+  const { t, format } = useI18n();
   const {
     state,
+    persistence,
     setWeekendMode,
     setGridOrientation,
+    setAppearancePreference,
+    setLanguagePreference,
     setDefaultReminder,
-    updateTermInfo,
     loadSampleTimetable,
     resetPrototype,
   } = useAppState();
   const reminderStatus = useReminderStatus();
 
-  const [weekendMode, setWeekendModeLocal] = useState<WeekendMode>(state.settings.weekendMode);
-  const [gridOrientation, setGridOrientationLocal] = useState<GridOrientation>(state.settings.gridOrientation);
-  const [defaultReminderMinutes, setDefaultReminderLocal] = useState<ReminderMinutes>(
-    state.settings.defaultReminderMinutes,
-  );
-  const [termName, setTermName] = useState(state.term.name);
-  const [estimatedEndDate, setEstimatedEndDate] = useState(state.term.estimatedEndDate);
-  const [endDatePickerOpen, setEndDatePickerOpen] = useState(false);
-  const [termNameError, setTermNameError] = useState<string | undefined>();
-  const [endDateError, setEndDateError] = useState<string | undefined>();
-  const [saved, setSaved] = useState(false);
+  const appearanceOptions = APPEARANCE_PREFERENCES.map((preference) => ({
+    value: preference,
+    label: t(APPEARANCE_LABEL_KEY[preference]),
+  }));
 
-  function handleSave() {
-    setTermNameError(undefined);
-    setEndDateError(undefined);
-    setSaved(false);
-    setWeekendMode({ weekendMode });
-    setGridOrientation({ gridOrientation });
-    setDefaultReminder({ reminderMinutes: defaultReminderMinutes });
-    const result = updateTermInfo({ name: termName, estimatedEndDate });
-    if (!result.ok) {
-      if (result.error.toLowerCase().includes("name")) {
-        setTermNameError(result.error);
-      } else {
-        setEndDateError(result.error);
-      }
-      return;
-    }
-    setSaved(true);
-  }
+  const languageOptions = LANGUAGE_PREFERENCES.map((preference) => ({
+    value: preference,
+    label: preference === "system" ? t("settings.languageSystem") : LANGUAGE_ENDONYM[preference],
+  }));
+
+  const layoutOptions = LAYOUT_ORDER.map((orientation) => ({
+    value: orientation,
+    label: t(LAYOUT_LABEL_KEY[orientation]),
+  }));
+
+  const weekendOptions = ALL_WEEKEND_MODES.map((mode) => ({
+    value: mode,
+    label: t(WEEKEND_MODE_LABEL_KEY[mode]),
+  }));
+
+  // The hours the configured day actually covers, which is the one thing worth
+  // knowing about it without opening the editor.
+  const firstSlot = state.timeSlots[0];
+  const lastSlot = state.timeSlots[state.timeSlots.length - 1];
+  const academicDaySummary =
+    firstSlot && lastSlot
+      ? t("settings.academicDaySummary", { start: firstSlot.startTime, end: lastSlot.endTime })
+      : undefined;
 
   function handleLoadSample() {
-    Alert.alert(
-      "Load sample timetable?",
-      "Development only. This replaces the current term, periods and classes with placeholder classes for testing gestures.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Load",
-          onPress: () => {
-            loadSampleTimetable();
-            router.dismissAll();
-          },
+    Alert.alert(t("settings.loadSampleTitle"), t("settings.loadSampleMessage"), [
+      { text: t("common.cancel"), style: "cancel" },
+      {
+        text: t("settings.loadSampleConfirm"),
+        onPress: () => {
+          loadSampleTimetable();
+          router.dismissAll();
         },
-      ],
-    );
+      },
+    ]);
   }
 
   function handleReset() {
-    Alert.alert(
-      "Reset prototype?",
-      "This clears all settings, the term, and every class, then returns to the start of onboarding. This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reset",
-          style: "destructive",
-          onPress: () => {
-            resetPrototype();
-            // Settings sits on top of timetable in the stack; drop back to
-            // timetable first, then replace it, so no stale screen is left
-            // underneath the fresh onboarding flow.
-            router.dismissAll();
-            router.replace("/onboarding/week");
-          },
+    Alert.alert(t("settings.resetTitle"), t("settings.resetMessage"), [
+      { text: t("common.cancel"), style: "cancel" },
+      {
+        text: t("settings.resetConfirm"),
+        style: "destructive",
+        onPress: () => {
+          resetPrototype();
+          // Settings sits on top of timetable in the stack; drop back to
+          // timetable first, then replace it, so no stale screen is left
+          // underneath the fresh onboarding flow.
+          router.dismissAll();
+          router.replace("/onboarding/week");
         },
-      ],
-    );
+      },
+    ]);
   }
 
   return (
     <ScreenContainer>
       <View style={styles.headerRow}>
-        <Text style={[typography.title, { color: colors.textPrimary }]}>Settings</Text>
-        <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Close settings">
-          <Text style={[typography.label, { color: colors.accent }]}>Close</Text>
+        <Text style={[typography.title, styles.title, { color: colors.textPrimary }]}>{t("settings.title")}</Text>
+        <Pressable
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.close")}
+          hitSlop={8}
+          pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+          style={({ pressed }) => [styles.closeTarget, { opacity: pressed ? 0.5 : 1 }]}
+        >
+          <Text style={[typography.label, { color: colors.accentStrong }]}>{t("common.close")}</Text>
         </Pressable>
       </View>
 
-      <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.xs }]}>
-        Timetable layout
-      </Text>
-      <SegmentedControl
-        options={GRID_ORIENTATION_OPTIONS}
-        value={gridOrientation}
-        onChange={setGridOrientationLocal}
-        accessibilityLabel="Timetable layout"
-      />
-      <Text style={[typography.caption, { color: colors.textMuted, marginTop: spacing.xs }]}>
-        Vertical shows days across the top and swipes between weeks. Horizontal shows days down the side and scrolls through
-        the day.
-      </Text>
-
-      <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.xs }]}>
-        Days without classes
-      </Text>
-      <SegmentedControl options={WEEKEND_MODE_OPTIONS} value={weekendMode} onChange={setWeekendModeLocal} accessibilityLabel="Weekend" />
-      <Text style={[typography.caption, { color: colors.textMuted, marginTop: spacing.xs }]}>
-        Hidden days are left out of the grid. Pick &ldquo;Show all&rdquo; to keep the full seven-day week.
-      </Text>
-
-      <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.xs }]}>
-        Reminders
-      </Text>
-      <ReminderField
-        label="Default for new classes"
-        value={defaultReminderMinutes}
-        onChange={setDefaultReminderLocal}
-        helperText={
-          reminderStatus.permission === "denied"
-            ? "Reminders are disabled until notification permission is granted in system settings. Classes still save normally."
-            : "Classes that already exist keep their own reminder."
-        }
-      />
-
-      <Text style={[typography.label, { color: colors.textSecondary, marginTop: spacing.lg, marginBottom: spacing.xs }]}>Term</Text>
-      <TextField label="Term name" value={termName} onChangeText={setTermName} error={termNameError} />
-      <InlineDateField
-        label="Estimated end date"
-        value={estimatedEndDate}
-        onChange={setEstimatedEndDate}
-        expanded={endDatePickerOpen}
-        onToggle={() => setEndDatePickerOpen((open) => !open)}
-        error={endDateError}
-      />
-
-      <View style={{ marginTop: spacing.lg }}>
-        <Button label="Save changes" variant="primary" onPress={handleSave} />
-      </View>
-      {saved ? (
-        <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>Saved.</Text>
+      {/* A failed write is the one thing on this screen that has to be said out
+          loud, and it belongs at the top rather than beside whichever control
+          happened to trigger it: every row here writes immediately, so if
+          storage is refusing, none of them are being kept. */}
+      {persistence.lastWriteOk === false ? (
+        <Text
+          style={[
+            typography.caption,
+            styles.notice,
+            {
+              color: colors.danger,
+              backgroundColor: colors.dangerSurface,
+              borderColor: colors.danger,
+              borderWidth: borderWidth.thin,
+              marginTop: spacing.md,
+              padding: spacing.sm,
+            },
+          ]}
+        >
+          {t("errors.storageWriteFailed")}
+        </Text>
       ) : null}
 
-      <View style={[styles.divider, { borderTopColor: colors.border, borderTopWidth: borderWidth.thin, marginVertical: spacing.xl }]} />
+      <FormSection title={t("settings.sectionGeneral")}>
+        <ChoiceRowField
+          label={t("settings.appearance")}
+          value={state.settings.appearancePreference}
+          options={appearanceOptions}
+          onChange={(appearancePreference) => setAppearancePreference({ appearancePreference })}
+          sheetTitle={t("settings.appearance")}
+        />
+        {/* A list rather than a fourth segment: "System", "English", "Русский"
+            and "Deutsch" do not fit four ways across a phone. */}
+        <ChoiceRowField
+          label={t("settings.language")}
+          value={state.settings.languagePreference}
+          options={languageOptions}
+          onChange={(languagePreference) => setLanguagePreference({ languagePreference })}
+          sheetTitle={t("settings.chooseLanguage")}
+        />
+      </FormSection>
 
-      <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>Academic day</Text>
-      <Button label="Edit academic-day setup" variant="secondary" onPress={() => router.push("/onboarding/academic-day")} />
+      <FormSection title={t("settings.sectionTimetable")}>
+        <ChoiceRowField
+          label={t("settings.layout")}
+          value={state.settings.gridOrientation}
+          options={layoutOptions}
+          onChange={(gridOrientation) => setGridOrientation({ gridOrientation })}
+          sheetTitle={t("settings.layout")}
+        />
+        <ChoiceRowField
+          label={t("settings.daysWithoutClasses")}
+          value={state.settings.weekendMode}
+          options={weekendOptions}
+          onChange={(weekendMode) => setWeekendMode({ weekendMode })}
+          sheetTitle={t("settings.daysWithoutClasses")}
+        />
+        {/* Both of these are whole forms, so both are rows that open one. Each
+            says what it currently holds, so the page still answers the
+            question without being opened. */}
+        <NavigationRow
+          label={t("settings.academicDay")}
+          value={academicDaySummary}
+          onPress={() => router.push("/onboarding/academic-day")}
+        />
+        <NavigationRow
+          label={t("settings.term")}
+          value={state.term.name || format.dateLong(state.term.estimatedEndDate)}
+          onPress={() => router.push("/onboarding/term")}
+        />
+      </FormSection>
 
-      {/* Development tools. The sample timetable is invented placeholder
-          data for exercising gestures; it is not offered to real users. */}
-      {__DEV__ ? (
-        <View style={{ marginTop: spacing.xl, gap: spacing.lg }}>
-          <Text style={[typography.label, { color: colors.textSecondary, marginBottom: spacing.xs }]}>
-            Sample data (development)
-          </Text>
-          <Button label="Load sample timetable" variant="secondary" onPress={handleLoadSample} />
-          <HapticsDiagnostics />
-          <RemindersDiagnostics />
-        </View>
-      ) : null}
+      <FormSection title={t("reminders.title")}>
+        <ReminderField
+          label={t("reminders.defaultForNewClasses")}
+          value={state.settings.defaultReminderMinutes}
+          onChange={(reminderMinutes) => setDefaultReminder({ reminderMinutes })}
+          helperText={
+            reminderStatus.permission === "denied"
+              ? t("reminders.permissionDenied")
+              : t("reminders.existingKeepTheirOwn")
+          }
+        />
+      </FormSection>
 
       <View style={{ marginTop: spacing.xl }}>
-        <Button label="Reset prototype" variant="destructive" onPress={handleReset} />
+        <Button label={t("settings.reset")} variant="destructive" onPress={handleReset} />
       </View>
+
+      {/* Development tools. The sample timetable is invented placeholder
+          data for exercising gestures; it is not offered to real users, and
+          `__DEV__` is compiled out of a release build entirely — so nothing
+          below this line can reach one. */}
+      {__DEV__ ? (
+        <FormSection title={t("settings.developer")}>
+          <View style={{ gap: spacing.md, marginTop: spacing.sm, marginBottom: spacing.lg }}>
+            <Button label={t("settings.loadSample")} variant="secondary" onPress={handleLoadSample} />
+            <StorageDiagnostics />
+            <HapticsDiagnostics />
+            <RemindersDiagnostics />
+          </View>
+        </FormSection>
+      ) : (
+        <View style={{ height: spacing.lg }} />
+      )}
     </ScreenContainer>
   );
 }
@@ -203,8 +276,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
   },
-  divider: {
+  title: {
+    flexShrink: 1,
+  },
+  closeTarget: {
+    minWidth: 44,
+    height: 44,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  notice: {
     width: "100%",
   },
 });

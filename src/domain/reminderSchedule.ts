@@ -20,9 +20,23 @@
 
 import { addDaysIso } from "@/domain/date";
 import { resolveOccurrences, type OccurrenceSource } from "@/domain/occurrence";
-import { formatLeadTime } from "@/domain/reminder";
 import { parseHHmmToMinutes } from "@/domain/time";
 import type { TimeSlot } from "@/types/models";
+
+/**
+ * How a reminder's own words are produced.
+ *
+ * Passed in rather than imported, because the words depend on the chosen
+ * language and the domain has no business knowing which one that is. The
+ * scheduler binds this to the resolved language before planning; the plan
+ * itself stays a pure function of its inputs.
+ */
+export interface ReminderTextFormat {
+  /** "Starts in 30 min", "Начало через 30 мин", "Beginnt in 30 Min." */
+  startsIn: (leadMinutes: number) => string;
+  /** "Room B12" — omitted entirely when the class has no room. */
+  room: (room: string) => string;
+}
 
 /** How far ahead reminders are kept scheduled, rolling forward with today. */
 export const REMINDER_WINDOW_DAYS = 14;
@@ -83,6 +97,8 @@ export interface ReminderPlanInput extends OccurrenceSource {
   fromDate: string;
   /** The moment the plan is made, as epoch milliseconds. */
   now: number;
+  /** The language's wording for a reminder's body. */
+  text: ReminderTextFormat;
 }
 
 /**
@@ -102,10 +118,16 @@ function localInstant(isoDate: string, hhmm: string): number {
  * glance on a lock screen, so it leads with how long is left, and drops the
  * room entirely rather than showing an empty separator when there isn't one.
  */
-export function reminderBody(reminderMinutes: number, room: string, startTime: string): string {
-  const parts = [`Starts in ${formatLeadTime(reminderMinutes)}`];
+export function reminderBody(
+  text: ReminderTextFormat,
+  reminderMinutes: number,
+  room: string,
+  startTime: string,
+): string {
+  const parts = [text.startsIn(reminderMinutes)];
   const trimmedRoom = room.trim();
-  if (trimmedRoom) parts.push(`Room ${trimmedRoom}`);
+  if (trimmedRoom) parts.push(text.room(trimmedRoom));
+  // The time itself stays bare 24-hour HH:mm, as everywhere else.
   parts.push(startTime);
   return parts.join(" · ");
 }
@@ -130,7 +152,7 @@ export function reminderWindowDates(fromDate: string): string[] {
  * dates, never two for the same one.
  */
 export function planReminders(input: ReminderPlanInput): PlannedReminder[] {
-  const { timeSlots, fromDate, now } = input;
+  const { timeSlots, fromDate, now, text } = input;
   const slotById = new Map(timeSlots.map((slot) => [slot.id, slot]));
 
   const planned = resolveOccurrences(input, reminderWindowDates(fromDate)).flatMap<PlannedReminder>((occurrence) => {
@@ -149,7 +171,7 @@ export function planReminders(input: ReminderPlanInput): PlannedReminder[] {
 
     const remindAt = startAt - reminderMinutes * 60_000;
     const title = occurrence.course.name;
-    const body = reminderBody(reminderMinutes, occurrence.course.room, slot.startTime);
+    const body = reminderBody(text, reminderMinutes, occurrence.course.room, slot.startTime);
 
     return [
       {

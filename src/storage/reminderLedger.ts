@@ -21,11 +21,21 @@
  * work — minus persistence — when SQLite is unavailable at all, so an
  * in-memory fallback shadows the table and keeps deduplication working for
  * the lifetime of the process even then.
+ *
+ * That tolerance used to be a trap rather than a safety net. These writes share
+ * a connection with the timetable save queue, and they are triggered by the
+ * same state changes it is persisting — so they ran *inside* its transaction's
+ * lifetime, failed their own `BEGIN`, and then rolled the save's transaction
+ * back on the way out. The `catch` here swallowed the ledger's error, so the
+ * only trace was the save reporting a rollback it had never asked for. Every
+ * transaction now goes through `storage/transaction`, which serializes them per
+ * connection; the tolerance below is back to meaning what it says.
  */
 
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { bootstrapStorage } from "@/storage/bootstrap";
+import { runSerialized, withTransaction } from "@/storage/transaction";
 
 /**
  * - `scheduled`: handed to the OS, which is now responsible for delivering
@@ -134,7 +144,7 @@ export async function recordReminderDeliveries(entries: ReminderLedgerEntry[]): 
 
   const updatedAt = new Date().toISOString();
   try {
-    await db.withTransactionAsync(async () => {
+    await withTransaction(db, async () => {
       for (const entry of entries) {
         await db.runAsync(UPSERT_DELIVERY, entry.key, entry.remindAt, entry.startAt, entry.state, updatedAt);
       }
@@ -163,7 +173,7 @@ export async function forgetReminderDeliveries(keys: string[]): Promise<void> {
   if (!db) return;
 
   try {
-    await db.withTransactionAsync(async () => {
+    await withTransaction(db, async () => {
       for (const key of keys) {
         await db.runAsync("DELETE FROM reminder_deliveries WHERE reminder_key = ?", key);
       }
@@ -188,7 +198,9 @@ export async function pruneReminderLedger(now: number): Promise<void> {
   if (!db) return;
 
   try {
-    await db.runAsync("DELETE FROM reminder_deliveries WHERE start_at < ?", cutoff);
+    // Serialized rather than transactional: one statement needs no transaction,
+    // but it must still not land in the middle of somebody else's.
+    await runSerialized(db, () => db.runAsync("DELETE FROM reminder_deliveries WHERE start_at < ?", cutoff));
   } catch {
     // Growth is bounded by the next successful prune.
   }

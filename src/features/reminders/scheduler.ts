@@ -27,7 +27,13 @@
  * not its reminder can ever be delivered.
  */
 
-import { planReminders, immediateReminders, schedulableReminders, type PlannedReminder } from "@/domain/reminderSchedule";
+import {
+  planReminders,
+  immediateReminders,
+  schedulableReminders,
+  type PlannedReminder,
+  type ReminderTextFormat,
+} from "@/domain/reminderSchedule";
 import {
   forgetReminderDeliveries,
   loadReminderLedger,
@@ -60,6 +66,19 @@ export interface ReminderSyncInput {
   timeSlots: TimeSlot[];
   /** First day of the rolling window — today, as the app reads it. */
   fromDate: string;
+  /**
+   * The wording a reminder is written in, in the resolved language.
+   *
+   * Supplied by the caller because this module runs outside the React tree
+   * and has no way to read the language for itself. A language change makes
+   * every planned body different, so every fingerprint goes stale and the
+   * whole window is rewritten in the new language — which is exactly the
+   * reconciliation this scheduler already does for a move or an edit, and
+   * the ledger still keys on the occurrence, so nothing is delivered twice.
+   */
+  text: ReminderTextFormat;
+  /** The channel's name and description, for Android's own settings screen. */
+  channelText: { name: string; description: string };
 }
 
 export interface ReminderStatus {
@@ -220,7 +239,7 @@ async function runSync(input: ReminderSyncInput): Promise<void> {
     return;
   }
 
-  await ensureReminderChannelAsync();
+  await ensureReminderChannelAsync(input.channelText);
 
   await forgetReminderDeliveries(abandoned);
   for (const key of abandoned) ledger.delete(key);

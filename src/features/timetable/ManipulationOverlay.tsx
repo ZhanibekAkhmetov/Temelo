@@ -1,10 +1,11 @@
 import { StyleSheet, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 
-import { DAY_HEADER_HEIGHT, TIME_GUTTER_WIDTH } from "@/features/timetable/geometry";
+import { DAY_HEADER_HEIGHT, TIME_GUTTER_WIDTH, topInsetFor } from "@/features/timetable/geometry";
 import { GridBlock, SelectionOutline } from "@/features/timetable/GridBlock";
 import type { Interaction } from "@/features/timetable/interaction";
-import { getAppearanceColors } from "@/theme/tokens";
+import { useI18n } from "@/i18n/I18nProvider";
+import { getClassColors } from "@/theme/classColors";
 import { useTheme } from "@/theme/useTheme";
 import type { TimeSlot } from "@/types/models";
 
@@ -26,6 +27,8 @@ interface ManipulationOverlayProps {
   columnWidth: SharedValue<number>;
   /** How far the week is shifted sideways inside its page. */
   offsetX: SharedValue<number>;
+  /** Height of the scrolled body — the same one the grid centres itself in. */
+  bodyHeight: number;
   slotHeight: SharedValue<number>;
   scrollY: SharedValue<number>;
   dayIndex: SharedValue<number>;
@@ -48,6 +51,7 @@ export function ManipulationOverlay({
   timeSlots,
   columnWidth,
   offsetX,
+  bodyHeight,
   slotHeight,
   scrollY,
   dayIndex,
@@ -55,12 +59,18 @@ export function ManipulationOverlay({
   span,
   labelBelow,
 }: ManipulationOverlayProps) {
-  const { colors, radii, typography, scheme } = useTheme();
+  const { colors, radii, typography } = useTheme();
+  const { t } = useI18n();
 
   // The layer carries the column and both scroll axes, so the block inside
   // it only has to know its row — exactly as a block on a page does.
+  // Nothing is being pinched while something is being dragged, so the settled
+  // period height is the live one and the inset can be read straight from it.
   const containerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: dayIndex.get() * columnWidth.get() - offsetX.get() }, { translateY: -scrollY.get() }],
+    transform: [
+      { translateX: dayIndex.get() * columnWidth.get() - offsetX.get() },
+      { translateY: topInsetFor(slotHeight.get(), timeSlots.length, bodyHeight) - scrollY.get() },
+    ],
   }));
 
   // Above the range while it grows downwards, below it while it grows
@@ -83,8 +93,8 @@ export function ManipulationOverlay({
   // moment it cannot, everything about the range turns destructive — stroke,
   // label ground and label text together, so it reads as refused rather than
   // as one more colour on a colourful grid.
-  const appearance = subject?.appearanceId ? getAppearanceColors(subject.appearanceId, scheme) : null;
-  const stroke = valid ? (appearance?.outline ?? colors.accent) : colors.destructive;
+  const appearance = subject?.appearanceId ? getClassColors(subject.appearanceId) : null;
+  const stroke = valid ? (appearance?.outline ?? colors.accent) : colors.danger;
   const first = timeSlots[Math.max(0, Math.min(timeSlots.length - 1, interaction.startIndex))];
   const last = timeSlots[Math.max(0, Math.min(timeSlots.length - 1, interaction.startIndex + interaction.span - 1))];
 
@@ -136,16 +146,19 @@ export function ManipulationOverlay({
             {
               left: TIME_GUTTER_WIDTH + 4,
               height: BUBBLE_HEIGHT,
-              backgroundColor: valid ? colors.surfaceAlt : colors.destructiveMuted,
+              backgroundColor: valid ? colors.surfaceMuted : colors.dangerSurface,
               borderRadius: radii.sm,
               borderColor: stroke,
             },
             labelStyle,
           ]}
         >
-          <Text style={[typography.gridSecondary, { color: valid ? colors.textPrimary : colors.destructive }]} numberOfLines={1}>
+          <Text
+            style={[typography.gridSecondary, { color: valid ? colors.textPrimary : colors.danger }]}
+            numberOfLines={1}
+          >
             {first.startTime}–{last.endTime}
-            {valid ? "" : " · in use"}
+            {valid ? "" : ` · ${t("timetable.rangeInUse")}`}
           </Text>
         </Animated.View>
       </Animated.View>

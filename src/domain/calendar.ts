@@ -1,8 +1,12 @@
 /**
  * Calendar navigation math over ISO date strings: which Monday a week
- * starts on, which dates a displayed week covers, the six-row grid a month
- * picker draws, and the human-facing labels for both. date.ts owns the ISO
- * representation itself; this module owns everything built on top of it.
+ * starts on, which dates a displayed week covers, and the six-row grid a
+ * month picker draws. date.ts owns the ISO representation itself; this
+ * module owns everything built on top of it.
+ *
+ * Deliberately no month or weekday *names*. They depend on the chosen
+ * language, `Intl` already knows them for every locale, and a hand-kept table
+ * here would be one more thing to translate — see `i18n/format`.
  *
  * All arithmetic goes through a local `Date` constructed from the ISO
  * parts, never from `Date.parse`, so a date never shifts across a time-zone
@@ -11,25 +15,6 @@
 
 import { addDaysIso } from "@/domain/date";
 import { ALL_WEEKDAYS_MONDAY_FIRST, weekdayFromJsDayIndex, type Weekday } from "@/domain/week";
-
-const MONTH_LABELS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-const MONTH_SHORT_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-const WEEKDAY_SHORT_BY_JS_INDEX = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const MONTH_GRID_WEEKS = 6;
 const DAYS_PER_WEEK = 7;
@@ -97,31 +82,6 @@ export function dayOfMonth(iso: string): number {
 
 export function isSameMonth(a: string, b: string): boolean {
   return a.slice(0, 7) === b.slice(0, 7);
-}
-
-function monthIndex(iso: string): number {
-  return Number(iso.slice(5, 7)) - 1;
-}
-
-function year(iso: string): number {
-  return Number(iso.slice(0, 4));
-}
-
-/** e.g. "August 2026" — the month-picker header. */
-export function monthYearLabel(iso: string): string {
-  return `${MONTH_LABELS[monthIndex(iso)]} ${year(iso)}`;
-}
-
-/** e.g. "AUG 2026" — the timetable header, matching the reference design. */
-export function monthShortYearLabel(iso: string): string {
-  return `${MONTH_SHORT_LABELS[monthIndex(iso)].toUpperCase()} ${year(iso)}`;
-}
-
-/** e.g. "Thu, 6 Aug 2026" — the collapsed state of a date field. */
-export function formatIsoLong(iso: string): string {
-  const date = toLocalDate(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return `${WEEKDAY_SHORT_BY_JS_INDEX[date.getDay()]}, ${date.getDate()} ${MONTH_SHORT_LABELS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 /**

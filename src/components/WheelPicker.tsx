@@ -315,8 +315,8 @@ export function WheelGroup({ children }: WheelGroupProps) {
         style={[
           styles.band,
           {
-            backgroundColor: colors.surfaceAlt,
-            borderColor: colors.borderStrong,
+            backgroundColor: colors.surfaceMuted,
+            borderColor: colors.divider,
             borderWidth: borderWidth.thin,
             borderRadius: radii.lg,
           },

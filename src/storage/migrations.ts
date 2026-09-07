@@ -11,6 +11,9 @@
 
 import type { SQLiteDatabase } from "expo-sqlite";
 
+import { repairSchema } from "@/storage/schema";
+import { withTransaction } from "@/storage/transaction";
+
 export interface Migration {
   /** The `user_version` the database has once this migration has run. */
   version: number;
@@ -197,7 +200,115 @@ const addReminderLedger: Migration = {
   },
 };
 
-export const MIGRATIONS: Migration[] = [createInitialSchema, addClassReminders, addReminderLedger];
+/**
+ * Theming, language and per-class colour, which all arrived together.
+ *
+ * Three unrelated-looking columns and one data rewrite, in one migration
+ * because they ship in one release and a device must never end up having run
+ * two of the three.
+ *
+ * Why each is shaped the way it is:
+ *
+ * - `settings.appearance_preference` and `settings.language_preference` store
+ *   the user's *preference* — 'system' | 'light' | 'dark', and 'system' |
+ *   'en' | 'ru' | 'de'. Never the scheme or language it currently resolves
+ *   to: a device that later switches to dark must find Temelo still set to
+ *   "follow me", not pinned to the light it happened to be on today. Both are
+ *   backfilled to 'system', which is the default a fresh install gets, so an
+ *   upgrading user's app looks and reads exactly as it did before the upgrade
+ *   until they say otherwise.
+ *
+ * - `occurrence_exceptions.appearance_id` is added nullable and is *not*
+ *   backfilled, for the same reason v2 left the exceptions' reminder alone:
+ *   NULL there does not mean "no colour", it means "follow the course". A v3
+ *   exception never expressed an opinion about colour, so inheriting is
+ *   exactly right.
+ *
+ * - The `UPDATE courses` statements move the two palette ids that no longer
+ *   exist onto their nearest surviving hue. The literals are written out
+ *   rather than imported from `domain/classColor`: a migration has to keep
+ *   doing what it did the day it shipped, and a later retune of the palette
+ *   must not change what a device upgrading from v3 next year ends up with.
+ *   Every other v3 id — blue, red, amber, teal, magenta — survives into the
+ *   new palette unchanged and needs no statement at all.
+ *
+ * All three columns are nullable additions, so no table is rebuilt and every
+ * existing row is valid the moment the ALTERs land.
+ */
+const addAppearanceLanguageAndClassColour: Migration = {
+  version: 4,
+  description: "Appearance and language preferences, and per-occurrence class colour",
+  up: async (db) => {
+    await db.execAsync(`
+      ALTER TABLE settings ADD COLUMN appearance_preference TEXT;
+      ALTER TABLE settings ADD COLUMN language_preference TEXT;
+      ALTER TABLE occurrence_exceptions ADD COLUMN appearance_id TEXT;
+
+      UPDATE settings SET appearance_preference = 'system', language_preference = 'system';
+
+      UPDATE courses SET appearance_id = 'green'  WHERE appearance_id = 'emerald';
+      UPDATE courses SET appearance_id = 'purple' WHERE appearance_id = 'violet';
+    `);
+  },
+};
+
+/**
+ * Schema convergence, for databases whose version number is not a reliable
+ * description of their shape.
+ *
+ * `user_version` is only trustworthy while this app is the only thing that has
+ * ever written it. A development device that ran an *abandoned* branch which
+ * defined its own version 4 reports 4, so `migrateToLatest` skips the version 4
+ * above — correctly, by its own rules — and the columns it would have added are
+ * never created. Reads survive that (`SELECT *`, then a normalising mapper);
+ * writes do not, because they name their columns, and the first failure poisons
+ * every later write in the session. The app then looks healthy until it is
+ * restarted, at which point everything done in that session is gone.
+ *
+ * So this migration does not repeat version 4's statements — re-running an
+ * `ALTER TABLE ADD COLUMN` would fail with "duplicate column name" on every
+ * database that took the ordinary path. It asks the database what it actually
+ * has and adds only what is missing, which makes both routes end at the same
+ * schema:
+ *
+ *     v3 -> v4 -> v5      the ordinary upgrade; v5 finds nothing to do
+ *     abandoned v4 -> v5  the repair; v5 adds whatever that branch lacked
+ *     fresh install       v1..v4 then v5, again with nothing to do
+ *
+ * The two `UPDATE courses` statements are version 4's data step, repeated here
+ * because a database that skipped version 4 never ran them. They are written as
+ * literals for the usual reason, and they match nothing on a database that did
+ * run version 4, so repeating them costs one scan and changes no row. The same
+ * pair is applied to `occurrence_exceptions`, whose colour override column did
+ * not exist when version 4's data step was written.
+ *
+ * Nothing here deletes, rebuilds or resets anything. Columns an abandoned
+ * branch added on its own are left alone: we cannot know what they held, and
+ * dropping a user's data to tidy up the schema is not a repair.
+ */
+const convergeSchemaAfterExperimentalBranches: Migration = {
+  version: 5,
+  description: "Converge appearance, language and class-colour columns however the database got here",
+  up: async (db) => {
+    await repairSchema(db);
+
+    await db.execAsync(`
+      UPDATE courses SET appearance_id = 'green'  WHERE appearance_id = 'emerald';
+      UPDATE courses SET appearance_id = 'purple' WHERE appearance_id = 'violet';
+
+      UPDATE occurrence_exceptions SET appearance_id = 'green'  WHERE appearance_id = 'emerald';
+      UPDATE occurrence_exceptions SET appearance_id = 'purple' WHERE appearance_id = 'violet';
+    `);
+  },
+};
+
+export const MIGRATIONS: Migration[] = [
+  createInitialSchema,
+  addClassReminders,
+  addReminderLedger,
+  addAppearanceLanguageAndClassColour,
+  convergeSchemaAfterExperimentalBranches,
+];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(
   (highest, migration) => Math.max(highest, migration.version),
@@ -226,7 +337,12 @@ export async function migrateToLatest(db: SQLiteDatabase): Promise<number> {
     // opens a second connection, and `PRAGMA foreign_keys` is per-connection,
     // so a migration run there would silently lose the constraint checking the
     // opening code just switched on.
-    await db.withTransactionAsync(async () => {
+    //
+    // Through the connection's own queue, like every other transaction in the
+    // app: migrations run before the handle is shared, so nothing can be
+    // racing them today, but a `BEGIN` that is not serialized is exactly the
+    // bug `storage/transaction` exists to make unrepresentable.
+    await withTransaction(db, async () => {
       await migration.up(db);
       // PRAGMA takes no bound parameters; the value is a number literal from
       // this module, never user input.

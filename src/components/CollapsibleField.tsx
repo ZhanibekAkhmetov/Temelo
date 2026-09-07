@@ -1,12 +1,19 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 
+import { FieldRow, FieldValue } from "@/components/FieldRow";
 import { useTheme } from "@/theme/useTheme";
 
 interface CollapsibleFieldProps {
   label: string;
-  /** The collapsed state: just the current value, as in the reference design. */
+  /** The collapsed state: just the current value. */
   valueText: string;
+  /**
+   * Drawn in place of `valueText` when the value is not words — the class
+   * colour field shows its swatch here. `valueText` is still required, and
+   * is what the row announces to a screen reader.
+   */
+  valueContent?: ReactNode;
   expanded: boolean;
   onToggle: () => void;
   /** Fixed height of the panel, so the unfold animates against a known target. */
@@ -28,6 +35,7 @@ const EXPAND_DURATION_MS = 180;
 export function CollapsibleField({
   label,
   valueText,
+  valueContent,
   expanded,
   onToggle,
   panelHeight,
@@ -35,7 +43,7 @@ export function CollapsibleField({
   error,
   helperText,
 }: CollapsibleFieldProps) {
-  const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  const { colors } = useTheme();
   const [progress] = useState(() => new Animated.Value(expanded ? 1 : 0));
 
   useEffect(() => {
@@ -50,55 +58,35 @@ export function CollapsibleField({
   const height = progress.interpolate({ inputRange: [0, 1], outputRange: [0, panelHeight] });
 
   return (
-    <View style={{ borderBottomWidth: borderWidth.thin, borderColor: colors.border }}>
-      <Pressable
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        accessibilityLabel={`${label}, ${valueText}`}
-        style={[styles.row, { paddingVertical: spacing.sm }]}
-      >
-        <Text style={[typography.label, { color: colors.textSecondary }]}>{label}</Text>
-        <View
-          style={[
-            styles.value,
-            {
-              backgroundColor: expanded ? colors.surfaceAlt : "transparent",
-              borderRadius: radii.lg,
-              paddingHorizontal: spacing.md,
-              paddingVertical: spacing.xs,
-            },
-          ]}
-        >
-          <Text style={[typography.body, { color: expanded ? colors.accent : colors.textPrimary }]}>{valueText}</Text>
-        </View>
-      </Pressable>
-
-      <Animated.View style={[styles.panel, { height, opacity: progress }]}>
-        <View style={{ height: panelHeight }}>{children}</View>
-      </Animated.View>
-
-      {error ? (
-        <Text style={[typography.caption, { color: colors.destructive, paddingBottom: spacing.xs }]}>{error}</Text>
-      ) : helperText ? (
-        <Text style={[typography.caption, { color: colors.textMuted, paddingBottom: spacing.xs }]}>{helperText}</Text>
-      ) : null}
-    </View>
+    <FieldRow
+      label={label}
+      onPress={onToggle}
+      accessibilityLabel={`${label}, ${valueText}`}
+      accessibilityExpanded={expanded}
+      error={error}
+      helperText={helperText}
+      panel={
+        <Animated.View style={[styles.panel, { height, opacity: progress }]}>
+          <View style={{ height: panelHeight }}>{children}</View>
+        </Animated.View>
+      }
+    >
+      {/* An open field's value is drawn in the accent, which is the only
+          state this row has: the panel below it is the rest of the answer. */}
+      {valueContent ?? <FieldValue>{valueText}</FieldValue>}
+      {expanded && !valueContent ? <View style={[styles.openMark, { backgroundColor: colors.accent }]} /> : null}
+    </FieldRow>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    minHeight: 48,
-  },
-  value: {
-    alignItems: "flex-end",
-  },
   panel: {
     overflow: "hidden",
+  },
+  openMark: {
+    height: 2,
+    width: 18,
+    marginTop: 3,
+    borderRadius: 1,
   },
 });

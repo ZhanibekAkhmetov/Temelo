@@ -75,6 +75,8 @@ Notifications.setNotificationHandler({
 
 let lastError: string | null = null;
 let channelReady = false;
+/** The wording the live channel was last created with; see below. */
+let appliedChannelText: string | null = null;
 const loggedErrors = new Set<string>();
 
 function messageFor(error: unknown): string {
@@ -110,12 +112,23 @@ export function identifierFor(key: string): string {
  * exists the user's own settings win, and nothing here tries to talk Android
  * out of that — no DND bypass, no full-screen intent.
  */
-export async function ensureReminderChannelAsync(): Promise<void> {
-  if (Platform.OS !== "android" || channelReady) return;
+export interface ReminderChannelText {
+  name: string;
+  description: string;
+}
+
+export async function ensureReminderChannelAsync(text: ReminderChannelText): Promise<void> {
+  // Re-run when the wording changes as well as on the first call: the
+  // channel name is what the user reads in Android's own notification
+  // settings, and it should be in the language they picked. Writing the
+  // same id again updates the channel rather than creating a second one,
+  // and leaves every setting they have made on it alone.
+  if (Platform.OS !== "android") return;
+  if (channelReady && appliedChannelText === `${text.name}|${text.description}`) return;
   try {
     await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
-      name: "Class reminders",
-      description: "Silent reminders with a short vibration before a class starts.",
+      name: text.name,
+      description: text.description,
       importance: Notifications.AndroidImportance.HIGH,
       sound: null,
       enableVibrate: true,
@@ -125,6 +138,7 @@ export async function ensureReminderChannelAsync(): Promise<void> {
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
     channelReady = true;
+    appliedChannelText = `${text.name}|${text.description}`;
 
     // A superseded channel would otherwise sit in the system notification
     // settings for good, under the same name as the live one and doing
