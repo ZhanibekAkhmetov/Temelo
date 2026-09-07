@@ -1,18 +1,18 @@
 # Temelo — Architecture
 
 This document defines the technical structure and boundaries for Temelo. It
-describes intent and rules, not a finished implementation — the codebase is
-currently an early scaffold (see the repository README for current status).
+describes intent and rules rather than a finished implementation; the
+repository README carries the current status.
 
 ## Current stack
 
 Read from the repository's actual configuration, not assumed:
 
-- **Expo** `~57.0.9` (see [package.json](../package.json))
+- **Expo** `~57.0.11` (see [package.json](../package.json))
 - **React Native** `0.86.2`
 - **React** `19.2.3`
 - **TypeScript** `~6.0.3`, `strict: true` (see [tsconfig.json](../tsconfig.json))
-- **Expo Router** `~57.0.9` (file-based routing, typed routes enabled via
+- **Expo Router** `~57.0.11` (file-based routing, typed routes enabled via
   `experiments.typedRoutes` in [app.json](../app.json))
 - **Expo Dev Client** `~57.0.10` — the app runs via a custom development
   build, not Expo Go
@@ -21,8 +21,13 @@ Read from the repository's actual configuration, not assumed:
   (see [tsconfig.json](../tsconfig.json))
 - Linting: `eslint-config-expo` via flat config
   ([eslint.config.js](../eslint.config.js))
-- No test runner or state management library is currently installed.
+- No test runner or state management library is installed. Cross-screen state
+  is a single React context (`src/state/AppStateContext.tsx`); domain and
+  storage checks run through the Node script in `harness/` (`npm run harness`).
 - Persistence is `expo-sqlite`, accessed only through `src/storage/`.
+- Gestures and animation: `react-native-gesture-handler` and
+  `react-native-reanimated`. Reminders: `expo-notifications`. Device language:
+  `expo-localization`.
 
 Consult the versioned Expo docs for this exact release before writing
 framework-dependent code: https://docs.expo.dev/versions/v57.0.0/
@@ -34,12 +39,18 @@ src/
   app/            Expo Router routes and layouts ONLY
   components/     Reusable UI components (presentational + connected)
   domain/         Domain logic and types — no React, no persistence
+  features/       Feature-scoped UI and logic (timetable, reminders,
+                  dev-only diagnostics)
+  i18n/           Translations, locale resolution, formatting
+  state/          App state provider and defaults
   storage/        Persistence / repository boundary
+  theme/          Design tokens, appearance preference, class colours
+  types/          Shared model types
+  util/           Native-module wrappers (notifications, haptics)
 ```
 
-`components/`, `domain/`, and `storage/` do not exist yet and should be
-created incrementally as real code needs them — do not scaffold empty
-directories speculatively.
+New directories are added when real code needs them — empty directories are
+not scaffolded speculatively.
 
 ### `src/app` — routes and layouts only
 
@@ -121,7 +132,10 @@ into a corner:
 
 ## Testing strategy (high level)
 
-- No test runner is installed yet.
+- No test runner is installed yet. What exists is `harness/` — a Node script
+  (`npm run harness`) that runs domain and storage checks directly, with
+  `expo-sqlite` redirected to Node's built-in SQLite. It is a stopgap, not a
+  substitute for a real runner.
 - Domain logic (`src/domain/`) is the highest-value target for unit tests,
   since it is plain TypeScript and encodes the rules most likely to have
   edge cases (slot generation, recurrence, date math).
@@ -145,8 +159,6 @@ into a corner:
 The following are recognized as open questions, deliberately not decided
 yet:
 
-- State management approach for cross-screen app state, if `src/domain/` +
-  local component state turns out to be insufficient.
 - Test runner choice and configuration.
 - Backup/restore file format.
 - Calendar export format/integration mechanism per target platform.

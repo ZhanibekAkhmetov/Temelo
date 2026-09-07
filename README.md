@@ -1,108 +1,256 @@
 # Temelo
 
-Temelo is a mobile-first, local-first timetable application for school and
-university students.
+Temelo is a mobile-first, local-first timetable app for school and university
+students.
+
+Academic schedules are built from repeated lesson periods, so Temelo asks for
+that structure once — start of the academic day, lesson length, break length,
+number of periods — and then lets classes be placed into the resulting grid.
+Creating a class is a tap on an empty slot, a name, and save; start and end
+times never have to be typed again. Everything is stored on the device in
+SQLite, and the app works with no account and no network connection.
+
+The project started as a personal utility and is being developed into a
+standalone mobile application and a portfolio piece.
 
 ## Current status
 
-Early scaffold stage. The repository currently contains the default Expo
-Router entry screen and root layout only — no timetable UI, onboarding flow,
-or data persistence has been implemented yet. Product and architecture
-direction are documented in [docs/](docs/) to guide the implementation that
-follows.
+Working and actively developed. The app has a functional onboarding flow and
+weekly timetable, SQLite persistence with versioned migrations, editing of
+recurring classes with occurrence-level exceptions, local class reminders,
+light/dark themes, and English, Russian and German localization.
 
-## Central product concept
+It is still being polished. Android is the platform it is developed and tested
+on, via Expo development builds; it has **not** been released to Google Play or
+the App Store, and there is no web version, cloud sync, or account system.
 
-Academic institutions run on repeated lesson time slots. Instead of entering
-a start and end time for every calendar event, Temelo has the user define
-their academic-day structure once (start of day, lesson length, break
-length, number of slots) and then fill reusable timetable slots with classes.
-This is meant to make creating and editing a timetable much faster than using
-a general-purpose calendar app. See [docs/PRODUCT.md](docs/PRODUCT.md) for
-the full product definition.
+## Screenshots
+
+A look at Temelo's timetable, class editing, and recurring scheduling.
+
+| Dark theme | Light theme |
+| --- | --- |
+| <img src="docs/screenshots/timetable-dark.jpg" width="240" alt="Temelo weekly timetable in dark mode"> | <img src="docs/screenshots/timetable-light.jpg" width="240" alt="Temelo weekly timetable in light mode"> |
+
+| Class editor | Recurring edits |
+| --- | --- |
+| <img src="docs/screenshots/class-editor.jpg" width="240" alt="Temelo class editor and color picker"> | <img src="docs/screenshots/recurrence-scope.jpg" width="240" alt="Temelo recurring edit scope chooser"> |
+
+## Features
+
+**Setup**
+
+- Onboarding in three steps: week configuration (which days are shown),
+  academic-day configuration (day start, lesson duration, break duration,
+  number of periods), and the academic term (start date plus an estimated,
+  editable end date).
+- Periods are generated from the academic-day configuration, with a live
+  preview of the resulting day while the values are being chosen.
+- Week, academic-day and term settings can all be changed later from Settings.
+  Changing the academic day regenerates the periods and clears the timetable,
+  which the app asks about first; editing an individual period's time is not
+  implemented yet.
+
+**Timetable**
+
+- A weekly grid showing one dated week at a time, in either a vertical layout
+  (days across, periods down) or a transposed horizontal layout, selectable in
+  Settings.
+- The vertical layout is a single Reanimated / Gesture Handler surface: week
+  paging by swipe, vertical scrolling, pinch zoom of the time scale, and
+  long-press move and resize of classes, all axis-locked and driven on the UI
+  thread. The horizontal layout changes week with the header arrows, since its
+  own horizontal scroll owns sideways gestures.
+- Classes can span consecutive periods; placement stays period-aligned rather
+  than free-form by design.
+
+**Classes and recurrence**
+
+- Quick creation: tap an empty slot, enter a name, save. Room, teacher, notes,
+  colour, reminder and recurrence are optional and editable later.
+- Weekly, every-two-weeks, and one-time recurrence, defaulting to weekly until
+  the end of the term.
+- Conflict checking resolves recurrence onto concrete dates, so two alternating
+  biweekly classes can share the same weekday and period without being treated
+  as a clash.
+- Edits to a repeating class ask what they apply to: **Only this occurrence**,
+  **This and future occurrences**, or **All occurrences** — implemented as
+  per-occurrence exceptions and series splitting rather than duplicated
+  records, so a later series-wide edit still reaches fields an occurrence did
+  not deliberately override.
+- Per-class colours from a fixed palette, editable with the same recurrence
+  scopes as any other field.
+
+**Reminders**
+
+- Local notifications a configurable number of minutes before a class, with a
+  default lead time for new classes and a per-class override.
+- The schedule is recomputed from the persisted timetable and reconciled with
+  what the OS already has, on a rolling two-week horizon, with a persisted
+  ledger so a reminder is not delivered twice across restarts. Delivery is
+  best-effort: these are ordinary local notifications, subject to permission
+  and to the platform's own delivery behaviour.
+
+**Persistence and preferences**
+
+- SQLite (`expo-sqlite`) as the source of truth, with ordered migrations keyed
+  off `PRAGMA user_version`, WAL, foreign keys, and hydration gated before the
+  first render.
+- Appearance preference: system, light, or dark.
+- Language: English, Russian or German, following the device's preferred
+  languages by default, with a manual override.
+
+Not yet implemented: picking an existing course when creating a second
+placement, backup/restore, calendar export, synchronization, and accounts.
 
 ## Technology
 
-Versions below are read directly from [package.json](package.json):
+Versions are read from [package.json](package.json):
 
-- Expo `~57.0.9`
-- React Native `0.86.2`
-- React `19.2.3`
-- TypeScript `~6.0.3`
-- Expo Router `~57.0.9`
-- Expo Dev Client `~57.0.10`
+- Expo `~57.0.11` with Expo Router `~57.0.11` (file-based, typed routes)
+- React Native `0.86.2`, React `19.2.3`, React Compiler enabled
+- TypeScript `~6.0.3` in strict mode
+- `expo-sqlite` `~57.0.2` for persistence
+- `react-native-gesture-handler` `~2.32.0` and `react-native-reanimated`
+  `4.5.1` for the timetable surface
+- `expo-notifications` `~57.0.9` for class reminders
+- `expo-localization` `~57.0.1` for device language detection
+- `expo-dev-client` `~57.0.10`
 
-The project uses an Expo development build rather than Expo Go, because it
-depends on native modules (e.g. `expo-dev-client`, `react-native-reanimated`,
-`expo-glass-effect`) that Expo Go does not support.
+The app runs from an Expo **development build**, not Expo Go: it depends on
+native modules (SQLite, notifications, localization, Reanimated, Gesture
+Handler) that Expo Go does not include.
 
-## Prerequisites
+## Architecture
 
-- Node.js and npm
-- An Expo development build installed on your device or emulator (see
-  [Expo development builds](https://docs.expo.dev/versions/v57.0.0/develop/development-builds/introduction/))
-- For Android testing: a physical Android device or emulator (Android is the
-  currently tested physical platform)
+Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the short version:
 
-## Local development
+- **Local-first.** Everything needed to use the app lives on the device. No
+  backend is involved, and none is planned before the corresponding milestone.
+- **SQLite behind a repository boundary.** Screens never touch storage; all
+  reads and writes go through [src/storage/](src/storage/), which loads the
+  whole timetable at boot and saves diffs in a single transaction, because one
+  recurring edit can touch several records at once.
+- **Versioned migrations.** Schema changes are appended as new migrations and
+  never edited in place once shipped.
+- **Domain logic is plain TypeScript.** [src/domain/](src/domain/) imports no
+  React and no React Native primitives: courses, placements and occurrence
+  exceptions, recurrence resolution onto real dates, conflict checking,
+  edit-scope drafting, and reminder planning all live there.
+- **Local time, not UTC.** Recurring lesson times are a local weekday plus
+  `HH:mm`; term dates are modelled separately, as a date range.
+- **Sync-ready records.** Device-generated string IDs plus
+  `createdAt`/`updatedAt`/`deletedAt`, so a future sync layer has what it needs
+  without a data migration.
+- **Reminders are derived, not tracked.** The next fortnight's notifications
+  are recomputed from the stored timetable and reconciled with the OS, so no
+  bookkeeping can drift out of step with a move, a split series, or a deletion.
 
-1. Install dependencies:
+## Getting started
 
-   ```bash
-   npm install
-   ```
+Prerequisites: Node.js and npm, plus an Android device or emulator. Developed
+on Node 22; `npm run harness` in particular relies on Node's built-in SQLite
+and TypeScript stripping, so it needs Node 22 or newer.
 
-2. Start the development server with the dev client:
+```bash
+git clone <repository-url>
+cd Temelo
+npm ci
+```
 
-   ```bash
-   npx expo start --dev-client
-   ```
+Temelo needs a development build to run. If you do not have one installed:
 
-3. Open the app from your installed development build.
+```bash
+npm install -g eas-cli
+eas login
+eas build --profile development --platform android
+```
 
-> Your phone and computer must be able to reach each other on the local
-> network for the development build to connect to the Metro bundler.
+Install the resulting build on the device, then start Metro:
 
-## Roadmap (high level)
+```bash
+npx expo start --dev-client
+```
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the full milestone breakdown. In
-short: project foundation → onboarding UI and state → generated time-slot
-preview → local persistence → timetable grid → quick class creation →
-editing → reusable courses → recurrence → settings → backup/restore →
-calendar export → sync and desktop (future).
+Open the app from the installed development build. The phone and the computer
+must be able to reach each other on the same local network.
+
+Ordinary JavaScript/TypeScript changes reload straight through Metro. Adding or
+upgrading a native dependency, or changing native configuration in
+[app.json](app.json), requires a **new development build** — an existing one
+will not pick those up.
+
+Checks:
+
+```bash
+npm run lint        # expo lint
+npx tsc --noEmit    # TypeScript, strict
+npm run harness     # domain + storage checks
+```
+
+`npm run harness` runs a small Node script under [harness/](harness/) that
+exercises grid geometry and the storage layer against Node's built-in SQLite.
+It is not a substitute for a real test runner, which has not been chosen yet.
+
+## Android builds
+
+Build profiles are defined in [eas.json](eas.json):
+
+| Profile | Purpose |
+| --- | --- |
+| `development` | Development client — requires a running Metro server |
+| `preview` | Internal distribution — an installable build that runs on its own |
+| `production` | Store-oriented build, with remote version auto-increment |
+
+```bash
+eas build --profile development --platform android   # dev client
+eas build --profile preview --platform android       # standalone, internal
+```
+
+A development-client build is not usable on its own: it loads its JavaScript
+from Metro. The `preview` profile is the one that produces a build a tester can
+install and open without a development machine. No standalone build has been
+published yet — a stable offline Android release is the current milestone.
+
+## Roadmap
+
+The full milestone history is in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+**Done** — onboarding and generated periods; the weekly grid with gestures,
+pinch zoom and week paging; quick class creation and editing; weekly, biweekly
+and one-time recurrence with edit scopes and occurrence exceptions; SQLite
+persistence with migrations; local class reminders; themes; English, Russian
+and German localization.
+
+**Next** — stabilization and a standalone offline Android release.
+
+**Later, not committed to** — reusing an existing course across placements,
+backup and restore, calendar export, a web version, optional account-based
+synchronization, and possible store distribution.
 
 ## Repository structure
 
 ```
 src/
   app/          Expo Router routes and layouts only
-docs/
-  PRODUCT.md      Product definition, flows, terminology
-  ARCHITECTURE.md Technical architecture and boundaries
-  ROADMAP.md      Milestone plan
-app.json          Expo app configuration
-eas.json          EAS build profiles
-CLAUDE.md         Repository instructions for Claude Code
-AGENTS.md         Notes for AI coding agents (imported by CLAUDE.md)
+  components/   Reusable UI: fields, pickers, form sections, boot gate
+  domain/       Pure TypeScript: recurrence, occurrences, conflicts,
+                edit scopes, dates, reminder planning
+  features/     Feature UI and logic: timetable surface, reminders,
+                dev-only diagnostics
+  i18n/         Translations (en/ru/de), locale detection, formatting
+  state/        App state provider and defaults
+  storage/      SQLite: database, schema, migrations, repository
+  theme/        Design tokens, appearance preference, class colours
+  types/        Shared model types
+  util/         Native-module wrappers (notifications, haptics)
+docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md
+harness/        Node-based domain and storage checks
+assets/         App icons and splash images
 ```
 
-As implementation progresses, reusable UI components, domain logic, and a
-persistence layer will be added outside `src/app` (see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+## License
 
-## Non-goals (current)
-
-- No backend, accounts, or authentication
-- No cloud synchronization
-- No calendar export or device-calendar integration
-- No SQLite or other database dependency yet
-
-These are documented as future possibilities in
-[docs/PRODUCT.md](docs/PRODUCT.md), not current requirements.
-
-## Licence
-
-This repository includes an MIT [LICENSE](LICENSE) file, currently carrying
-the copyright notice from the original Expo template it was created from.
-Confirm with the project owner whether this should be updated before
-treating it as the project's final licence terms.
+MIT — see [LICENSE](LICENSE). Note that the file still carries the copyright
+notice from the Expo template this project was generated from; it has not been
+updated to the project's own copyright holder.

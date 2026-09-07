@@ -132,9 +132,10 @@ effort:
 - No calendar export (Google/Apple/Samsung Calendar or others).
 - No direct device-calendar integration.
 - No timetable backup/restore feature yet.
-- No advanced editing interactions (move, duplicate, copy, undo,
-  single-occurrence vs. recurring edits) in the first milestone — these are
-  documented above as expected future behavior, not current requirements.
+- No duplicate, copy, or undo of a placement. (Move and the
+  single-occurrence-vs-recurring edit question, listed as future behaviour
+  when this document was written, are now implemented — see
+  [ROADMAP.md](ROADMAP.md).)
 
 ## Future possibilities
 
