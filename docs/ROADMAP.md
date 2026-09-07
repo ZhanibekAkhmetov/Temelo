@@ -90,16 +90,17 @@ current implementation status.
    *Done when:* a class created this way appears in its slot, persists
    across restarts, and optional fields (room, teacher, notes) can be added
    during creation.
-   *Status: in progress.* Implemented in memory, including optional
-   fields; does not yet persist across restarts (see milestone 5).
+   *Status: done.* Including optional fields, a per-class colour and a
+   reminder lead time; persisted through `src/storage/` (milestone 5).
 
 8. **Editing and deletion**
    Existing placements can be edited (including optional fields) and
    deleted.
    *Done when:* a user can change or remove any field of an existing
    placement and the change persists.
-   *Status: in progress.* Editing and deletion are implemented in memory;
-   changes do not yet persist across restarts (see milestone 5).
+   *Status: done.* Editing (from the editor and from move/resize gestures)
+   and deletion both persist. Edits to a repeating class go through the
+   scope chooser described in milestone 10.
 
 9. **Reusable courses**
    Courses become entities independent of a single placement, reusable
@@ -107,18 +108,34 @@ current implementation status.
    *Done when:* creating a second placement for an existing course (e.g.
    another "Mathematics" slot) does not require re-entering the course's
    name/room/teacher from scratch.
+   *Status: not started.* Courses are already separate records that
+   placements and exceptions point at, but nothing in the UI offers an
+   existing course — each new class still creates its own.
 
 10. **Recurrence**
     Recurrence settings become editable beyond the "weekly until term end"
     default, including custom end dates and single-occurrence exceptions.
     *Done when:* a user can change a placement's recurrence and separately
     edit or cancel one occurrence without affecting the recurring rule.
+    *Status: done.* Weekly, every-two-weeks and one-time recurrence with
+    editable start/end dates; every edit to a repeating class asks its
+    scope (only this occurrence / this and future / all), implemented as
+    per-occurrence exceptions and series splitting. Clash checking resolves
+    recurrence onto concrete dates, so alternating classes can share a
+    period.
 
 11. **Settings**
     A settings screen exposes week configuration and academic-day defaults
     for changes after initial onboarding.
     *Done when:* changing a setting (e.g. default lesson duration) affects
     future slot generation without silently altering existing placements.
+    *Status: mostly done.* Settings covers appearance, language, timetable
+    layout, days without classes, the academic day, the term, the default
+    reminder, and a full reset. Two gaps remain: changing the academic day
+    regenerates the periods and clears the existing classes — announced by a
+    confirmation rather than done silently, but still destructive — and an
+    individual period's time cannot yet be edited on its own, which
+    [PRODUCT.md](PRODUCT.md) requires.
 
 12. **Backup and restore**
     Users can export their timetable data to a file and re-import it.
@@ -138,3 +155,24 @@ current implementation status.
     *Done when:* scoped in detail at the time this milestone is actually
     started — deliberately not defined further now (see "Intentionally
     deferred decisions" in [ARCHITECTURE.md](ARCHITECTURE.md)).
+
+## Work delivered outside the numbered milestones
+
+Two pieces of work were never planned as milestones above, but are
+implemented and are described in the README:
+
+- **Class reminders** — a lead time per class plus a global default for new
+  ones, delivered as local notifications. The next fortnight's reminders are
+  planned from the stored timetable (`domain/reminderSchedule`) and reconciled
+  against what the OS already holds (`features/reminders/scheduler`), with a
+  persisted ledger so nothing is delivered twice across restarts.
+- **Appearance and language** — a system/light/dark preference and an
+  English/Russian/German UI, both stored as *preferences* rather than as the
+  value they currently resolve to, so "System" keeps following the device.
+
+## Next milestone
+
+Stabilization and a standalone, offline Android build (`preview` profile in
+[eas.json](../eas.json)) that a tester can install without a development
+machine. Nothing above is reordered by this; it is the release step for what
+is already done.
