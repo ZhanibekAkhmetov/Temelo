@@ -106,8 +106,10 @@ export interface Timetable {
    *  - it is a lower bound on every occurrence. Nothing in the timetable is
    *    drawn, clash-checked or reminded before it (see `OccurrenceSource`). The
    *    calendar itself stays navigable before it; those weeks are simply empty.
-   *  - it is where a new weekly class starts when the user has not said, so a
-   *    class added in November is still there when they page back to October.
+   *  - it is how far back every series that `startsWithTimetable` reaches. So
+   *    moving it earlier extends ordinary classes into the newly included
+   *    weeks, and a class added in November is there when they page back to
+   *    October.
    *
    * It is not a semester: there is no end date, and changing it rewrites
    * nothing. Every series keeps its own `startsOn`, which is what keeps an
@@ -206,13 +208,28 @@ export interface Placement {
   slotSpan: number;
   recurrenceType: RecurrenceType;
   /**
-   * The series' first date, and its parity anchor.
+   * The series' parity anchor — and its first date only when it does not
+   * `startsWithTimetable`.
    *
-   * For an every-two-week class this is not merely when it begins: which half
-   * of the fortnight it falls on is counted from here, which is why the anchor
-   * is per-series and travels with the series whenever it moves.
+   * For an every-two-week class this is which half of the fortnight it falls
+   * on, counted from the first occurrence on or after it, which is why the
+   * anchor is per-series and travels with the series whenever it moves.
    */
   startsOn: string;
+  /**
+   * Whether the series is part of the timetable's pattern, reaching back as far
+   * as the timetable does — or genuinely begins on `startsOn`.
+   *
+   * True for an ordinary class added by tapping a slot: moving the timetable's
+   * start earlier brings it into the newly included weeks, on the same parity.
+   * False for the later half of a "this and future" split, whose start is the
+   * split and must never leak back into the weeks its earlier half covers, and
+   * for a series whose start date the user chose in the editor. Ignored for a
+   * one-off, which is only ever its own date.
+   *
+   * Stored since migration v7; see `seriesLowerBound` in `domain/recurrence`.
+   */
+  startsWithTimetable: boolean;
   /**
    * The series' last date, or `OPEN_ENDED_DATE` when it does not have one.
    *

@@ -99,18 +99,28 @@ when persistence is actually implemented.
   *enumerate* dates rather than test one are the only code that has to know.
   A real end date on a repeating series means it genuinely stops there —
   which, in practice, means a "this and future" edit split it.
-- **`startsOn` is a parity anchor, not just a beginning.** An
+- **`startsOn` is a parity anchor, and only sometimes a beginning.** An
   every-two-weeks class's fortnight is counted from its own first occurrence,
   so the anchor is per-series and travels with the series whenever it moves.
   Nothing global anchors it, which is what let the semester start date be
   removed without any existing class changing which weeks it falls on.
+  Whether `startsOn` is *also* where the series begins is a separate,
+  stored fact — `Placement.startsWithTimetable` (migration v7). An ordinary
+  class is part of the timetable's pattern and reaches back as far as the
+  timetable does; the later half of a "this and future" split, or a series
+  whose start the user chose, genuinely begins on `startsOn`. It is stored
+  rather than derived because the record alone cannot tell "weekly, starts
+  5 Oct, added when the timetable began then" from "weekly, starts 5 Oct, the
+  later half of a split" — and only the first may extend backwards.
+  `seriesLowerBound` in `domain/recurrence` is the one rule.
 - **The timetable's start date is a bound, not an anchor.** `Timetable.anchorDate`
   (the "Starts on" field) is applied in `resolveOccurrences` as a lower bound
   on *dates*: every caller — the grid, the clash check, the reminder plan —
-  drops dates before it before resolving anything. It never touches a
-  series' `startsOn`, so moving it cannot shift an alternating class's parity,
-  and moving it back brings earlier occurrences back unchanged. It has no end
-  counterpart.
+  drops dates before it before resolving anything. It is also how far back a
+  series that starts with the timetable reaches, so moving it earlier extends
+  those classes into the new weeks. It never touches a series' `startsOn`, so
+  moving it cannot shift an alternating class's parity, and moving it back and
+  forth deletes nothing. It has no end counterpart.
 - **Clash checking stays finite** by enumerating only as far as
   `clashHorizon` — the last date the timetable itself names, plus a
   fortnight. Past that point the answer cannot change, because base recurrence

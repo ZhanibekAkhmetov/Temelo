@@ -17,7 +17,7 @@ import {
   type PendingClassEdit,
 } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
-import { defaultSeriesEndDate, defaultSeriesStartDate } from "@/domain/recurrence";
+import { defaultSeriesEndDate, defaultSeriesStartDate, firstSeriesDate } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
@@ -160,6 +160,13 @@ function ClassEditorForm({
    * user picks a date, after which it stops moving underneath them.
    */
   const [startDateIsOwn, setStartDateIsOwn] = useState(Boolean(existing));
+  /**
+   * Whether the user picked a start date in *this* sitting — which is what
+   * turns a series that starts with the timetable into one that genuinely
+   * begins on that date. Separate from `startDateIsOwn`, which only stops the
+   * date following the recurrence type around.
+   */
+  const [startDateTouched, setStartDateTouched] = useState(false);
   /*
    * The series' end, which the user is no longer asked for and no longer sees.
    *
@@ -192,6 +199,24 @@ function ClassEditorForm({
   const isOneOff = recurrenceType === "once";
   const effectiveStartsOn = isOneOff ? onceDate : startsOn;
   const effectiveEndsOn = isOneOff ? onceDate : endsOn;
+
+  /*
+   * The start date as the user will experience it.
+   *
+   * A series that starts with the timetable stores only a parity anchor, which
+   * may be weeks after the first lesson actually drawn — the timetable's start
+   * could have been moved earlier since. Showing that anchor as "Start date"
+   * would contradict the grid, so the field shows the first real lesson
+   * instead, and only a date the user picks here is stored as a start.
+   */
+  const startsWithTimetable =
+    !startDateTouched && (existing && existing.basePlacement.recurrenceType !== "once" ? existing.basePlacement.startsWithTimetable : true);
+  const shownStartsOn = startsWithTimetable
+    ? firstSeriesDate(
+        { weekday: existing?.basePlacement.weekday ?? weekday, recurrenceType, startsOn, endsOn, startsWithTimetable },
+        timetable.anchorDate,
+      )
+    : startsOn;
 
   const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
     { label: t("recurrence.weekly"), value: "weekly" },
@@ -274,7 +299,10 @@ function ClassEditorForm({
   }
 
   function handleStartDateChange(value: string) {
+    // Done on the date that was already shown is not a decision to fix it.
+    if (startsWithTimetable && value === shownStartsOn) return;
     setStartDateIsOwn(true);
+    setStartDateTouched(true);
     setStartsOn(value);
   }
 
@@ -317,6 +345,8 @@ function ClassEditorForm({
         recurrenceType,
         startsOn: effectiveStartsOn,
         endsOn: effectiveEndsOn,
+        // Untouched, the series keeps whatever it already was.
+        startsWithTimetable: startDateTouched ? false : undefined,
         reminderMinutes,
       });
 
@@ -344,6 +374,7 @@ function ClassEditorForm({
       recurrenceType,
       startsOn: effectiveStartsOn,
       endsOn: effectiveEndsOn,
+      startsWithTimetable: !startDateTouched,
       reminderMinutes,
     });
 
@@ -534,7 +565,7 @@ function ClassEditorForm({
               ) : (
                 <DateField
                   label={t("classEditor.startDate")}
-                  value={startsOn}
+                  value={shownStartsOn}
                   onPress={() => setOpenPicker("startsOn")}
                   helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
                 />
@@ -562,7 +593,7 @@ function ClassEditorForm({
       {dateSheet ? (
         <DatePickerSheet
           title={dateSheet === "date" ? t("classEditor.date") : t("classEditor.startDate")}
-          value={dateSheet === "date" ? onceDate : startsOn}
+          value={dateSheet === "date" ? onceDate : shownStartsOn}
           onCancel={() => setOpenPicker(null)}
           onConfirm={handleDateConfirm}
         />

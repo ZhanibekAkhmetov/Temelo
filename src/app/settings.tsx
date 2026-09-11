@@ -1,9 +1,11 @@
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
 import { ChoiceRowField } from "@/components/ChoiceRowField";
-import { FormSection, ListRow } from "@/components/FormSection";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FormSection } from "@/components/FormSection";
 import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
@@ -11,6 +13,7 @@ import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostic
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { shapeOfActive, timetableSummary } from "@/features/timetables/summary";
+import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
 import { useI18n } from "@/i18n/I18nProvider";
 import { LANGUAGE_PREFERENCES, type LanguagePreference } from "@/i18n/language";
 import type { TranslationKey } from "@/i18n/translate";
@@ -83,6 +86,8 @@ export default function SettingsScreen() {
     resetPrototype,
   } = useAppState();
   const reminderStatus = useReminderStatus();
+  /** Which of this screen's two whole-app confirmations is open, if either. */
+  const [confirming, setConfirming] = useState<"reset" | "sample" | null>(null);
 
   const appearanceOptions = APPEARANCE_PREFERENCES.map((preference) => ({
     value: preference,
@@ -109,35 +114,20 @@ export default function SettingsScreen() {
     ? timetableSummary(t, format, shapeOfActive(state.settings.weekendMode, state.timeSlots))
     : t("timetables.noCurrentHint");
 
-  function handleLoadSample() {
-    Alert.alert(t("settings.loadSampleTitle"), t("settings.loadSampleMessage"), [
-      { text: t("common.cancel"), style: "cancel" },
-      {
-        text: t("settings.loadSampleConfirm"),
-        onPress: () => {
-          loadSampleTimetable();
-          router.dismissAll();
-        },
-      },
-    ]);
+  function confirmLoadSample() {
+    setConfirming(null);
+    loadSampleTimetable();
+    router.dismissAll();
   }
 
-  function handleReset() {
-    Alert.alert(t("settings.resetTitle"), t("settings.resetMessage"), [
-      { text: t("common.cancel"), style: "cancel" },
-      {
-        text: t("settings.resetConfirm"),
-        style: "destructive",
-        onPress: () => {
-          resetPrototype();
-          // Settings sits on top of timetable in the stack; drop back to
-          // timetable first, then replace it, so no stale screen is left
-          // underneath the fresh onboarding flow.
-          router.dismissAll();
-          router.replace("/timetables/new-timetable");
-        },
-      },
-    ]);
+  function confirmReset() {
+    setConfirming(null);
+    resetPrototype();
+    // Settings sits on top of timetable in the stack; drop back to timetable
+    // first, then replace it, so no stale screen is left underneath the fresh
+    // onboarding flow.
+    router.dismissAll();
+    router.replace("/timetables/new-timetable");
   }
 
   return (
@@ -193,13 +183,15 @@ export default function SettingsScreen() {
             three rows that used to be here were all reachable through it, and
             keeping them here as well would have made this page the second
             place to change a timetable's shape. */}
-        {/* The row shows the timetable's name, which is what makes it findable
-            by eye. A screen reader gets the relationship as well, because
-            "My timetable" on its own does not say what it is the name of. */}
-        <ListRow
-          title={timetableRowTitle}
-          subtitle={timetableRowSubtitle}
-          accessibilityLabel={`${t("settings.currentTimetable")}, ${timetableRowTitle}`}
+        {/* The same row the Timetables screen draws the timetable with, so the
+            thing tapped here and the thing on the next screen look like one
+            object. Here it stands alone in the form, so it says what it is —
+            "Current timetable" — above the name; there, a section heading
+            does that job. */}
+        <TimetableSummaryRow
+          context={t("settings.currentTimetable")}
+          name={timetableRowTitle}
+          summary={timetableRowSubtitle}
           onPress={() => router.push("/timetables")}
         />
         <ChoiceRowField
@@ -245,7 +237,7 @@ export default function SettingsScreen() {
       </FormSection>
 
       <View style={{ marginTop: spacing.xl }}>
-        <Button label={t("settings.reset")} variant="destructive" onPress={handleReset} />
+        <Button label={t("settings.reset")} variant="destructive" onPress={() => setConfirming("reset")} />
       </View>
 
       {/* Development tools. The sample timetable is invented placeholder
@@ -255,7 +247,7 @@ export default function SettingsScreen() {
       {__DEV__ ? (
         <FormSection title={t("settings.developer")}>
           <View style={{ gap: spacing.md, marginTop: spacing.sm, marginBottom: spacing.lg }}>
-            <Button label={t("settings.loadSample")} variant="secondary" onPress={handleLoadSample} />
+            <Button label={t("settings.loadSample")} variant="secondary" onPress={() => setConfirming("sample")} />
             <StorageDiagnostics />
             <HapticsDiagnostics />
             <RemindersDiagnostics />
@@ -264,6 +256,26 @@ export default function SettingsScreen() {
       ) : (
         <View style={{ height: spacing.lg }} />
       )}
+
+      {confirming === "reset" ? (
+        <ConfirmDialog
+          destructive
+          title={t("settings.resetTitle")}
+          message={t("settings.resetMessage")}
+          confirmLabel={t("settings.resetConfirm")}
+          onConfirm={confirmReset}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
+      {confirming === "sample" ? (
+        <ConfirmDialog
+          title={t("settings.loadSampleTitle")}
+          message={t("settings.loadSampleMessage")}
+          confirmLabel={t("settings.loadSampleConfirm")}
+          onConfirm={confirmLoadSample}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
     </ScreenContainer>
   );
 }

@@ -211,7 +211,10 @@ export const ru: Translations = {
   "timetables.days": "Учебные дни",
   "timetables.startsOn": "Начинается",
   "timetables.startDateTitle": "Начало расписания",
-  "timetables.startDateNote": "Занятия до этой даты не будут отображаться. Данные не удаляются.",
+  "timetables.startDateNote":
+    "Занятия до этой даты не отображаются. Если выбрать дату раньше, повторяющиеся занятия появятся и в этих неделях. Ничего не удаляется.",
+  "timetables.defaultName": "Расписание",
+  "timetables.nameOptionalHint": "Необязательно. Если оставить поле пустым, название будет выбрано автоматически.",
   "timetables.currentBadge": "Текущее",
   "timetables.archivedOn": "В архиве с {date}",
   "timetables.summary": "{days} · {hours}",
@@ -219,19 +222,18 @@ export const ru: Translations = {
   "timetables.rename": "Переименовать",
   "timetables.renamePrompt": "Название расписания",
   "timetables.archiveAction": "Архивировать",
-  "timetables.archiveTitle": "Архивировать расписание?",
+  "timetables.archiveTitle": "Архивировать «{name}»?",
   "timetables.archiveMessage":
-    "Занятия сохранятся. Расписание {name} перейдёт в архив, откуда его можно восстановить. Пока оно в архиве, напоминания по нему не приходят.",
+    "Занятия сохранятся. Расписание перейдёт в архив, откуда его можно восстановить. Пока оно в архиве, напоминания по нему не приходят.",
   "timetables.archiveConfirm": "Архивировать",
   "timetables.restoreAction": "Восстановить",
-  "timetables.restoreTitle": "Восстановить {name}?",
-  "timetables.restoreMessage":
-    "Текущее расписание {current} сначала перейдёт в архив. Ничего не будет удалено.",
+  "timetables.restoreTitle": "Восстановить «{name}»?",
+  "timetables.restoreMessage": "Текущее расписание «{current}» будет перемещено в архив.\nНичего не будет удалено.",
   "timetables.restoreConfirm": "Восстановить",
   "timetables.deleteAction": "Удалить навсегда",
-  "timetables.deleteTitle": "Удалить {name} навсегда?",
+  "timetables.deleteTitle": "Удалить «{name}»?",
   "timetables.deleteMessage":
-    "Расписание и его занятия будут удалены с устройства. Это действие нельзя отменить.",
+    "Это расписание и его занятия будут безвозвратно удалены с устройства. Это действие нельзя отменить.",
   "timetables.deleteConfirm": "Удалить",
   "timetables.damaged": "Это расписание не читается и не может быть восстановлено.",
   "timetables.createTitle": "Новое расписание",
@@ -239,6 +241,9 @@ export const ru: Translations = {
   "timetables.createReplaceNotice":
     "Расписание {name} перейдёт в архив только после того, как новое будет создано. Ничего не удаляется.",
   "timetables.createFinish": "Создать расписание",
+  "timetables.createConfirmTitle": "Создать новое расписание?",
+  "timetables.createConfirmMessage": "Текущее расписание «{current}» будет перемещено в архив.\nНичего не будет удалено.",
+  "timetables.createConfirm": "Создать",
 
   "errors.slotInUse": "Это время уже занято: {name}.",
   "errors.classNameRequired": "Укажите название занятия.",

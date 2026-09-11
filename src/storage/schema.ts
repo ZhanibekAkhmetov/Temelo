@@ -29,7 +29,10 @@ import type { SQLiteDatabase } from "expo-sqlite";
 export interface RequiredColumn {
   table: string;
   column: string;
-  /** Declared type. Every one is nullable, so adding it never rewrites rows. */
+  /**
+   * Declared type. Every one is nullable or carries a constant default, so
+   * adding it never rebuilds the table and every existing row stays valid.
+   */
   type: string;
 }
 
@@ -47,6 +50,9 @@ export const REQUIRED_COLUMNS: RequiredColumn[] = [
   { table: "settings", column: "appearance_preference", type: "TEXT" },
   { table: "settings", column: "language_preference", type: "TEXT" },
   { table: "occurrence_exceptions", column: "appearance_id", type: "TEXT" },
+  // v7's. Named by both placement writers, so a database reporting a version
+  // ahead of this build without it would refuse every save.
+  { table: "placements", column: "starts_with_timetable", type: "INTEGER NOT NULL DEFAULT 1" },
 ];
 
 /**

@@ -20,27 +20,17 @@ import {
   PAGER_AXIS_RATIO,
   PAGER_TOUCH_SLOP,
 } from "@/features/timetable/motion";
+import { MONTH_WINDOW_RADIUS, monthPageWindow } from "@/features/timetable/pageWindow";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 
 const NAV_ROW_HEIGHT = 44;
 /**
- * How many months either side of the mounted window's centre are rendered.
- *
- * Two, not one, and that is a frame-rate decision rather than a correctness
- * one. A month grid is forty-two touchable cells; mounting one costs a real
- * commit, and while the window was only ±1 that commit landed *during* the
- * settle — the mounted set followed the month in view, which changes at the
- * midpoint of the animation. Every single swipe therefore built a month while
- * a spring was running, which is exactly the stutter that showed up as "fast
- * but low fps".
- *
- * At ±2 the page being swiped towards is already there, and the window is
- * re-centred once the pager has come to rest, when there is no animation left
- * to disturb. Two consecutive fast swipes still stay inside it.
+ * How many months either side of the month in view are mounted: five slots,
+ * for the life of the picker. See `monthPageWindow` for why they are a ring,
+ * and why that is what stopped fast swiping stalling every few months.
  */
-const MOUNT_RADIUS = 2;
-const PAGE_OFFSETS = [-2, -1, 0, 1, 2];
+const MOUNT_RADIUS = MONTH_WINDOW_RADIUS;
 
 /** How far off a whole page the pager may be and still count as at rest. */
 const SETTLED_EPSILON = 0.01;
@@ -66,12 +56,13 @@ interface MonthPagerProps {
  * The month grid as a horizontally paged surface, built on the same three
  * rules as the timetable's week pager:
  *
- * - previous, current and next are all mounted, and each one *places itself*
- *   from its own page index against a shared position. There is no wrapper
- *   whose transform has to be corrected whenever the mounted set changes.
- * - a page's identity is its month, so the key is the year-month itself.
- *   Committing a month re-labels which pages are neighbours; it never turns
- *   one month's page into another's.
+ * - two months either side of the one in view are mounted, and each one
+ *   *places itself* from its own page index against a shared position. There
+ *   is no wrapper whose transform has to be corrected whenever the mounted set
+ *   changes.
+ * - a page's identity is its *slot* in a ring of five, not its month. Moving
+ *   one month re-addresses the one slot that fell out of range; nothing is
+ *   ever mounted or unmounted by paging — see `monthPageWindow`.
  * - the month on screen is read back from where the pager actually is rather
  *   than counted in steps, so it cannot drift.
  *
@@ -86,21 +77,13 @@ export function MonthPager({ value, today, onSelect }: MonthPagerProps) {
 
   /**
    * The page nearest the eye — which is both the month the heading names and
-   * the centre of the mounted window.
+   * the centre of the mounted window, re-centred on every midpoint crossing.
    *
-   * These used to be two different numbers: the heading followed the dominant
-   * page, while the mounted set followed a *committed* index that only
-   * advanced when a spring ran all the way to its end. A second swipe started
-   * before the first had settled cancelled that spring, so nothing ever
-   * committed, so the mounted window never moved — and the drag clamp, which
-   * is bounded by that window, refused to let the pager leave the month it was
-   * already on. The gesture was tracked, released, and quietly discarded. That
-   * is the whole of "rapid month swipes are not reliably accepted".
-   *
-   * One number fixes it. The dominant page changes on the midpoint crossing,
-   * which is early enough that the page being swiped towards is mounted well
-   * before the finger gets there, and it is unaffected by whether any
-   * particular animation was allowed to finish.
+   * It is not waited on. A spring that a second swipe cancels never finishes,
+   * so anything keyed to "the settle completed" would never move during a fast
+   * run; the midpoint crossing happens whatever becomes of the animation, and
+   * early enough that the month two ahead is being addressed while the finger
+   * is still a whole page away from it.
    */
   const [dominant, setDominant] = useState(0);
 
@@ -144,20 +127,20 @@ export function MonthPager({ value, today, onSelect }: MonthPagerProps) {
    */
   const queuedSteps = useSharedValue(0);
 
-  /**
-   * The centre of the mounted window, moved as rarely as it can be.
+  /*
+   * The mounted window is centred on `dominant`, always.
    *
-   * Re-centred by `commitSettled` — when the pager has come to rest and the
-   * commit that mounts a month costs nothing — with one safety valve below for
-   * a run of swipes fast enough that nothing ever settles.
+   * It used to be a separate number that moved as rarely as possible — on a
+   * completed settle, or once the month in view reached the window's edge —
+   * because moving it meant mounting two whole months. During a fast run that
+   * edge case was every second month, and it is exactly where the pager
+   * paused. With the ring, moving it costs one slot's new props, so it simply
+   * follows the month in view.
    */
-  const [windowCentre, setWindowCentre] = useState(0);
+  const windowCentre = dominant;
 
   const showDominant = useCallback((index: number) => {
     setDominant((previous) => (previous === index ? previous : index));
-    // The valve: only once the month in view has reached the edge of what is
-    // mounted, so an ordinary swipe never triggers it.
-    setWindowCentre((previous) => (Math.abs(index - previous) < MOUNT_RADIUS ? previous : index));
   }, []);
 
   /**
@@ -181,11 +164,10 @@ export function MonthPager({ value, today, onSelect }: MonthPagerProps) {
   }, [windowCentre, mountedIdx]);
 
   const commitSettled = useCallback(() => {
-    // The pager has stopped, so this is the cheapest possible moment to build
-    // whatever month has come within reach.
-    setWindowCentre(Math.round(pos.get()));
+    // Only the queued arrows care that a settle finished; the window has
+    // already followed the month in view.
     setSettleTick((previous) => previous + 1);
-  }, [pos]);
+  }, []);
 
   /**
    * Every page change goes through here — swipe release, arrow press and
@@ -403,26 +385,22 @@ export function MonthPager({ value, today, onSelect }: MonthPagerProps) {
         {width === 0 ? null : (
           <GestureDetector gesture={pan}>
             <View style={styles.fill} collapsable={false}>
-              {/* Previous, current and next stay mounted throughout a drag
-                  and its settle. Each one places itself from its own page
-                  index, so the set can change as the pager moves without
-                  moving the pages that survive it. */}
-              {PAGE_OFFSETS.map((offset) => {
-                const pageIndex = windowCentre + offset;
-                const month = addMonthsIso(anchorMonth, pageIndex);
-                return (
-                  <MonthPage
-                    key={month}
-                    month={month}
-                    pageIndex={pageIndex}
-                    pos={pos}
-                    width={width}
-                    value={value}
-                    today={today}
-                    onSelect={handleSelect}
-                  />
-                );
-              })}
+              {/* Five slots, keyed by slot, for the whole life of the picker.
+                  Each places itself from its own page index, so re-addressing
+                  the one slot that fell out of range moves nothing that is on
+                  screen. */}
+              {monthPageWindow(windowCentre).map((slot) => (
+                <MonthPage
+                  key={slot.key}
+                  month={addMonthsIso(anchorMonth, slot.pageIndex)}
+                  pageIndex={slot.pageIndex}
+                  pos={pos}
+                  width={width}
+                  value={value}
+                  today={today}
+                  onSelect={handleSelect}
+                />
+              ))}
             </View>
           </GestureDetector>
         )}

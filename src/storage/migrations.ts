@@ -11,7 +11,7 @@
 
 import type { SQLiteDatabase } from "expo-sqlite";
 
-import { repairSchema } from "@/storage/schema";
+import { repairSchema, tableColumns } from "@/storage/schema";
 import { withTransaction } from "@/storage/transaction";
 
 export interface Migration {
@@ -441,6 +441,76 @@ const addTimetableLifecycle: Migration = {
   },
 };
 
+/**
+ * Which series start with the timetable, and which genuinely begin on their
+ * own `starts_on`.
+ *
+ * Until now `starts_on` was all three of: how far back a series reaches, which
+ * half of the fortnight an alternating class is on, and where the later half
+ * of a "this and future" split begins. Moving a timetable's start earlier
+ * therefore could not bring an ordinary weekly class into the new weeks: its
+ * own `starts_on` still stopped it. The fix is to let an ordinary series reach
+ * back as far as the timetable does, using `starts_on` only for parity — and
+ * that needs one bit per series, because the record alone cannot tell
+ *
+ *     weekly, starts 5 Oct — added when the timetable began on 5 Oct
+ *     weekly, starts 5 Oct — the later half of a split made on 5 Oct
+ *
+ * apart, and the first must extend while the second must not. Deriving it
+ * afresh on every read from the *other* series would make one series' dates
+ * depend on edits to another, so it is stored.
+ *
+ * `NOT NULL DEFAULT 1`: every existing row lands as an ordinary series with no
+ * table rebuild. Then two corrections, both literals as in every migration:
+ *
+ *  - one-offs get 0. The flag means nothing to them; 0 says so honestly.
+ *  - the later half of a split gets 0, recognised by the trace a split leaves:
+ *    another repeating series with a real end date between fourteen days
+ *    before this one's start and twelve after, created no later than it and
+ *    last updated no earlier than it was created — both halves are written in
+ *    the same instant. The same rule as `inferStartsWithTimetable`, which the
+ *    harness checks this against. It errs towards 0, which is exactly how
+ *    every series behaved before this migration, so a mistake can only ever
+ *    withhold the new behaviour, never draw a class twice.
+ *
+ * `starts_on` itself is not touched, so no alternating class changes weeks.
+ */
+const separateSeriesStartFromTimetableStart: Migration = {
+  version: 7,
+  description: "Placements record whether they start with the timetable or on their own date",
+  up: async (db) => {
+    /*
+     * Asked rather than assumed. v5's convergence adds every column in
+     * `REQUIRED_COLUMNS` that it finds missing — and this one is in that list,
+     * so a fresh install, or any device upgrading through v5 in the same
+     * launch, already has it by now. Re-adding it would fail with "duplicate
+     * column name". The same reason v6 creates its tables `IF NOT EXISTS`.
+     */
+    if (!(await tableColumns(db, "placements")).includes("starts_with_timetable")) {
+      await db.execAsync("ALTER TABLE placements ADD COLUMN starts_with_timetable INTEGER NOT NULL DEFAULT 1");
+    }
+
+    await db.execAsync(`
+      UPDATE placements SET starts_with_timetable = 0 WHERE recurrence_type = 'once';
+
+      UPDATE placements
+         SET starts_with_timetable = 0
+       WHERE recurrence_type <> 'once'
+         AND EXISTS (
+           SELECT 1
+             FROM placements AS earlier
+            WHERE earlier.id <> placements.id
+              AND earlier.recurrence_type <> 'once'
+              AND earlier.ends_on < '9999-12-31'
+              AND earlier.ends_on >= date(placements.starts_on, '-14 days')
+              AND earlier.ends_on <= date(placements.starts_on, '+12 days')
+              AND earlier.created_at <= placements.created_at
+              AND earlier.updated_at >= placements.created_at
+         );
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   createInitialSchema,
   addClassReminders,
@@ -448,6 +518,7 @@ export const MIGRATIONS: Migration[] = [
   addAppearanceLanguageAndClassColour,
   convergeSchemaAfterExperimentalBranches,
   addTimetableLifecycle,
+  separateSeriesStartFromTimetableStart,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

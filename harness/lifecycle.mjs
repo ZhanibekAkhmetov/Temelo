@@ -26,9 +26,18 @@ import { weekdayOfIsoDate } from "@/domain/calendar";
 import { addDaysIso } from "@/domain/date";
 import { createId } from "@/domain/id";
 import { applyClassEditScope, createPendingClassEdit } from "@/domain/classEdit";
+import { findPlacementConflict } from "@/domain/conflict";
 import { resolveOccurrences } from "@/domain/occurrence";
-import { occursOn, seriesRangeMovedTo, OPEN_ENDED_DATE } from "@/domain/recurrence";
+import {
+  anchorOnOrBefore,
+  firstSeriesDate,
+  inferStartsWithTimetable,
+  occursOn,
+  seriesRangeMovedTo,
+  OPEN_ENDED_DATE,
+} from "@/domain/recurrence";
 import { generateTimeSlots } from "@/domain/time";
+import { nextDefaultTimetableName } from "@/domain/timetableName";
 import { planReminders } from "@/domain/reminderSchedule";
 import { openTemeloDatabase } from "@/storage/database";
 import { LATEST_SCHEMA_VERSION, readSchemaVersion } from "@/storage/migrations";
@@ -91,11 +100,16 @@ const NOW = "2026-09-11T09:00:00.000Z";
  *  - a one-off, which must stay finite;
  *  - the earlier half of a split series, ending mid-term, which must keep its
  *    real end date or the occurrences the user deliberately changed come back;
+ *  - and that split's later half, written in the same instant, which v7 must
+ *    recognise as genuinely starting on its split date;
  *  - a modified exception and a cancelled one;
  *  - a course colour and a per-occurrence colour override;
  *  - a per-class reminder and a per-occurrence reminder override.
  */
 const TERM = { id: "term-1", name: "Autumn 2026", start: "2026-09-07", end: "2026-12-18" };
+
+/** When the fixture's physics series was split: both halves carry this moment. */
+const SPLIT_AT = "2026-10-20T10:00:00.000Z";
 
 const V5 = {
   slots: [
@@ -150,7 +164,8 @@ const V5 = {
       endsOn: "2026-10-16",
       reminder: null,
     },
-    // The earlier half of a split series: ends mid-term, on purpose.
+    // The earlier half of a split series: ends mid-term, on purpose. Last
+    // touched by the split itself.
     {
       id: "p-physics-old",
       courseId: "course-physics",
@@ -161,6 +176,21 @@ const V5 = {
       startsOn: TERM.start,
       endsOn: "2026-10-21",
       reminder: 15,
+      updatedAt: SPLIT_AT,
+    },
+    // ...and its later half, created by that same split, from the next day.
+    {
+      id: "p-physics-new",
+      courseId: "course-physics",
+      weekday: "thursday",
+      slot: "slot-1",
+      span: 1,
+      recurrence: "weekly",
+      startsOn: "2026-10-22",
+      endsOn: TERM.end,
+      reminder: 15,
+      createdAt: SPLIT_AT,
+      updatedAt: SPLIT_AT,
     },
   ],
   exceptions: [
@@ -355,8 +385,8 @@ async function buildV5Database() {
       placement.recurrence,
       placement.startsOn,
       placement.endsOn,
-      created,
-      created,
+      placement.createdAt ?? created,
+      placement.updatedAt ?? created,
       placement.reminder,
     );
   }
@@ -454,6 +484,7 @@ function newTimetableInput(name, overrides = {}) {
   if (!slots.ok) throw new Error("fixture academic day does not generate");
   return {
     name,
+    defaultName: "Timetable",
     settings,
     timeSlots: slots.slots.map((slot) => ({
       id: createId(),
@@ -516,7 +547,7 @@ async function testMigration() {
   const { db, schemaVersion } = await open(path);
 
   equal("the database migrated to the latest version", schemaVersion, LATEST_SCHEMA_VERSION);
-  equal("...which is 6", LATEST_SCHEMA_VERSION, 6);
+  equal("...which is 7", LATEST_SCHEMA_VERSION, 7);
 
   const state = await loadTimetable(db);
   check("the timetable loads", state !== null, "loadTimetable returned null");
@@ -1310,8 +1341,8 @@ async function testRecurrenceWithoutTermDates() {
  * including which fields it marks as touched, which is what decides whether an
  * edit reaches the series at all.
  */
-function draftFor(state, placementId, occurrenceDate, changes) {
-  const [occurrence] = resolveOccurrences(state, [occurrenceDate]).filter(
+function draftFor(state, placementId, occurrenceDate, changes, timetableStart = null) {
+  const [occurrence] = resolveOccurrences({ ...state, timetableStart }, [occurrenceDate]).filter(
     (candidate) => candidate.basePlacement.id === placementId,
   );
   if (!occurrence) throw new Error(`no occurrence of ${placementId} on ${occurrenceDate}`);
@@ -1588,8 +1619,10 @@ async function testTimetableStartDate() {
 
   const path = await buildV5Database();
   let { db, schemaVersion } = await open(path);
-  equal("no new migration was needed: the schema is still v6", schemaVersion, 6);
-  equal("...which is still the latest", LATEST_SCHEMA_VERSION, 6);
+  // The start date itself needed no migration; v7 is the per-series flag that
+  // lets moving it earlier extend the pattern — see section P.
+  equal("the schema is at v7", schemaVersion, 7);
+  equal("...which is the latest", LATEST_SCHEMA_VERSION, 7);
   let state = await loadTimetable(db);
   equal("a migrated timetable starts on the term start v6 stored", state.timetable?.anchorDate, TERM.start);
   db.closeSync();
@@ -1686,6 +1719,288 @@ async function testTimetableStartDate() {
   freshAgain.db.closeSync();
 }
 
+/* ------------------------------- P: the start date extends the pattern (D–H) */
+
+/** Every date one series is drawn on between two dates, as the grid resolves it. */
+function drawnDates(source, placementId, from, until) {
+  const dates = [];
+  for (let date = from; date <= until; date = addDaysIso(date, 1)) dates.push(date);
+  return resolveOccurrences(source, dates)
+    .filter((occurrence) => occurrence.basePlacement.id === placementId)
+    .map((occurrence) => occurrence.date)
+    .sort();
+}
+
+/**
+ * The device report, as data: moving the start from 7 Sep to 24 Aug hid
+ * nothing that should be hidden, but brought nothing back either — because
+ * every weekly class's own `startsOn` still said 7 Sep.
+ *
+ * Run against the v5 fixture after v6 and v7, which is what a Samsung that has
+ * been running the shipped builds holds: series that started with the term, an
+ * alternating class on the odd half of its fortnight, a split, a one-off.
+ */
+async function testTimetableStartExtendsPattern() {
+  section("P. Moving the timetable's start earlier extends the pattern, and only the pattern");
+
+  const path = await buildV5Database();
+  const { db } = await open(path);
+  let state = await loadTimetable(db);
+
+  // v7's classification of real data.
+  equal("v7: the weekly class starts with the timetable", placementById(state, "p-maths").startsWithTimetable, true);
+  equal("v7: so does the alternating class", placementById(state, "p-history").startsWithTimetable, true);
+  equal("v7: so does a split's earlier half", placementById(state, "p-physics-old").startsWithTimetable, true);
+  equal("v7: a split's later half starts on its own date", placementById(state, "p-physics-new").startsWithTimetable, false);
+  equal("v7: a one-off is only ever its date", placementById(state, "p-trip").startsWithTimetable, false);
+  const inferred = inferStartsWithTimetable(state.placements);
+  equal(
+    "the migration's SQL and the snapshot inference agree on every class",
+    state.placements.map((p) => `${p.id}:${p.startsWithTimetable}`).sort().join(","),
+    state.placements.map((p) => `${p.id}:${inferred.get(p.id)}`).sort().join(","),
+  );
+  equal("v7 moved no anchor: the weekly class", placementById(state, "p-maths").startsOn, TERM.start);
+  equal("...nor the alternating one", placementById(state, "p-history").startsOn, "2026-09-15");
+
+  const at = (start) => ({ ...state, timetableStart: start });
+  const EARLIER = "2026-08-24";
+
+  // D: weekly.
+  equal(
+    "D. starting 7 Sep, the weekly class first meets on 7 Sep",
+    drawnDates(at(TERM.start), "p-maths", "2026-08-01", "2026-09-14").join(","),
+    "2026-09-07,2026-09-14",
+  );
+  equal(
+    "D. moved back to 24 Aug, it meets on 24 and 31 Aug as well",
+    drawnDates(at(EARLIER), "p-maths", "2026-08-01", "2026-09-14").join(","),
+    "2026-08-24,2026-08-31,2026-09-07,2026-09-14",
+  );
+  equal("D. the editor shows its first lesson, not its stored anchor", firstSeriesDate(placementById(state, "p-maths"), EARLIER), EARLIER);
+
+  // E: biweekly, parity intact.
+  equal(
+    "E. starting 7 Sep, the alternating class first meets on 15 Sep",
+    drawnDates(at(TERM.start), "p-history", "2026-08-01", "2026-09-30").join(","),
+    "2026-09-15,2026-09-29",
+  );
+  equal(
+    "E. moved back to 24 Aug it gains 1 Sep — its own fortnight, not the other one",
+    drawnDates(at(EARLIER), "p-history", "2026-08-01", "2026-09-30").join(","),
+    "2026-09-01,2026-09-15,2026-09-29",
+  );
+  for (const start of [EARLIER, "2026-08-26", "2026-08-31", "2026-09-02", "2026-08-03", "2025-11-12"]) {
+    const dates = drawnDates(at(start), "p-history", addDaysIso(start, -30), "2026-10-31");
+    check(
+      `E. start ${start}: every meeting is on the anchor's fortnight`,
+      dates.length > 0 && dates.every((date) => (Date.parse(date) - Date.parse("2026-09-15")) / 86400000 % 14 === 0),
+      dates.join(","),
+    );
+    check(`E. start ${start}: ...and none before the start`, dates.every((date) => date >= start), dates.join(","));
+  }
+  equal("E. the editor shows the first lesson on the right fortnight", firstSeriesDate(placementById(state, "p-history"), EARLIER), "2026-09-01");
+
+  // F: the split boundary holds.
+  equal(
+    "F. the later half still begins exactly on its split date",
+    drawnDates(at(EARLIER), "p-physics-new", "2026-08-01", "2026-10-31")[0],
+    "2026-10-22",
+  );
+  equal(
+    "F. ...even with the start moved back a whole year",
+    drawnDates(at("2025-09-01"), "p-physics-new", "2025-09-01", "2026-10-31")[0],
+    "2026-10-22",
+  );
+  const earlierHalf = drawnDates(at(EARLIER), "p-physics-old", "2026-08-01", "2026-12-31");
+  equal("F. the earlier half extends back to the new start", earlierHalf[0], "2026-08-27");
+  equal("F. ...and still stops where it was split", earlierHalf[earlierHalf.length - 1], "2026-10-15");
+  const thursdays = [];
+  for (let date = "2026-08-27"; date <= "2026-12-31"; date = addDaysIso(date, 7)) thursdays.push(date);
+  const physicsByDate = new Map();
+  for (const id of ["p-physics-old", "p-physics-new"]) {
+    for (const date of drawnDates(at(EARLIER), id, "2026-08-01", "2026-12-31")) {
+      physicsByDate.set(date, (physicsByDate.get(date) ?? 0) + 1);
+    }
+  }
+  check(
+    "F. every Thursday has exactly one physics lesson — never both halves",
+    thursdays.every((date) => physicsByDate.get(date) === 1),
+    thursdays.map((date) => `${date}:${physicsByDate.get(date) ?? 0}`).join(","),
+  );
+  equal("F. the editor shows the split date for the later half", firstSeriesDate(placementById(state, "p-physics-new"), EARLIER), "2026-10-22");
+
+  // G: one-offs.
+  equal("G. a one-off is drawn on its day", drawnDates(at(EARLIER), "p-trip", "2025-01-01", "2027-12-31").join(","), "2026-10-16");
+  equal("G. ...however far back the start moves", drawnDates(at("2025-01-01"), "p-trip", "2025-01-01", "2027-12-31").join(","), "2026-10-16");
+  equal("G. ...and is hidden by a start after it", drawnDates(at("2026-10-17"), "p-trip", "2025-01-01", "2027-12-31").length, 0);
+
+  // Clashes follow the extension: a week the timetable now has is a week the class defends.
+  const oneOffOn = (date) => ({
+    placementId: undefined,
+    weekday: "monday",
+    timeSlotId: "slot-3",
+    slotSpan: 1,
+    recurrenceType: "once",
+    startsOn: date,
+    endsOn: date,
+    startsWithTimetable: false,
+  });
+  equal("starting 7 Sep, 31 Aug is free in the weekly class's slot", findPlacementConflict(at(TERM.start), oneOffOn("2026-08-31")), undefined);
+  check(
+    "moved back to 24 Aug, the weekly class defends 31 Aug too",
+    findPlacementConflict(at(EARLIER), oneOffOn("2026-08-31")) !== undefined,
+    "no clash",
+  );
+
+  // Editing a week the move brought back, before the series' own anchor.
+  const editable = { timeSlots: state.timeSlots, courses: state.courses, placements: state.placements, exceptions: state.exceptions, timetableStart: EARLIER };
+  const onlyThis = applyClassEditScope(editable, draftFor(state, "p-maths", "2026-08-31", { room: "Lab" }, EARLIER), "onlyThis", NOW);
+  check("'only this' works on a brought-back week", onlyThis.ok, JSON.stringify(onlyThis.error ?? null));
+  const edited = resolveOccurrences({ ...state, ...onlyThis.next, timetableStart: EARLIER }, ["2026-08-31"]).filter(
+    (occurrence) => occurrence.basePlacement.id === "p-maths",
+  );
+  equal("...drawn once, with its own room", edited.map((occurrence) => occurrence.course.room).join(","), "Lab");
+
+  const split = applyClassEditScope(editable, draftFor(state, "p-maths", "2026-08-31", { room: "Room 9" }, EARLIER), "thisAndFuture", NOW);
+  check("'this and future' works on a brought-back week", split.ok, JSON.stringify(split.error ?? null));
+  const cutEarlier = split.next.placements.find((p) => p.id === "p-maths");
+  const cutLater = split.next.placements.find((p) => !state.placements.some((old) => old.id === p.id));
+  equal("...the earlier half survives, ending the day before", `${cutEarlier.deletedAt}|${cutEarlier.endsOn}`, "null|2026-08-30");
+  check("...its anchor moved back by whole fortnights so it still ends after it starts", cutEarlier.startsOn <= cutEarlier.endsOn, cutEarlier.startsOn);
+  equal("...which is exactly that", cutEarlier.startsOn, anchorOnOrBefore(TERM.start, "2026-08-30"));
+  equal("...and it still starts with the timetable", cutEarlier.startsWithTimetable, true);
+  equal("...the later half starts on the split date", cutLater.startsOn, "2026-08-31");
+  equal("...and genuinely starts there", cutLater.startsWithTimetable, false);
+  const afterSplit = { ...state, ...split.next, timetableStart: "2026-08-10" };
+  const mondays = ["2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31", "2026-09-07", "2026-09-14"];
+  const family = [...drawnDates(afterSplit, "p-maths", "2026-08-01", "2026-09-14"), ...drawnDates(afterSplit, cutLater.id, "2026-08-01", "2026-09-14")].sort();
+  equal("moving the start earlier again extends only the earlier half — one lesson every Monday", family.join(","), mondays.join(","));
+
+  // H: forward, then back, through the real save path and a cold reopen.
+  const recurrenceBefore = JSON.stringify({ placements: state.placements, exceptions: state.exceptions });
+  const moveStart = async (start) => {
+    const next = { ...state, timetable: { ...state.timetable, anchorDate: start, updatedAt: NOW } };
+    await saveTimetable(db, next, state);
+    state = next;
+  };
+  await moveStart("2026-10-05");
+  equal("H. moved forward to 5 Oct, September is hidden", drawnDates(at("2026-10-05"), "p-maths", "2026-09-01", "2026-10-12").join(","), "2026-10-05,2026-10-12");
+  await moveStart(EARLIER);
+  db.closeSync();
+  const relaunched = await reopen(path);
+  state = relaunched.state;
+  equal("H. then back to 24 Aug: it survives a cold reopen", state.timetable.anchorDate, EARLIER);
+  // 22 Sep rather than 21: the fixture's one-off move of that lesson, which
+  // came back with everything else.
+  equal(
+    "H. ...and everything hidden is back, plus the newly included weeks",
+    drawnDates(at(state.timetable.anchorDate), "p-maths", "2026-08-01", "2026-10-12").join(","),
+    "2026-08-24,2026-08-31,2026-09-07,2026-09-14,2026-09-22,2026-09-28,2026-10-05,2026-10-12",
+  );
+  equal("H. not one series or exception was rewritten along the way", JSON.stringify({ placements: state.placements, exceptions: state.exceptions }), recurrenceBefore);
+
+  // An archive written before v7 carries no flag; restoring it infers the same answer.
+  const flagsOf = (snapshotState) => snapshotState.placements.map((p) => `${p.id}:${p.startsWithTimetable}`).sort().join(",");
+  const expectedFlags = flagsOf(state);
+  const replaced = await createTimetable(relaunched.db, state, newTimetableInput("Spring 2027"));
+  check("archiving it succeeded", replaced.ok, JSON.stringify(replaced.reason ?? null));
+  const row = await relaunched.db.getFirstAsync("SELECT snapshot FROM archived_timetables WHERE id = ?", TERM.id);
+  const legacy = JSON.parse(row.snapshot);
+  check("the archive carries the flag", legacy.placements.every((p) => typeof p.startsWithTimetable === "boolean"), "missing");
+  for (const placement of legacy.placements) delete placement.startsWithTimetable;
+  await relaunched.db.runAsync("UPDATE archived_timetables SET snapshot = ? WHERE id = ?", JSON.stringify(legacy), TERM.id);
+  const restored = await restoreArchivedTimetable(relaunched.db, replaced.state, TERM.id, NOW);
+  check("a pre-v7 archive still restores", restored.ok, JSON.stringify(restored.reason ?? null));
+  equal("...with every series classified exactly as v7 classified it", flagsOf(restored.state), expectedFlags);
+  relaunched.db.closeSync();
+}
+
+/* ------------------------------------------------ optional names (A, B, C) */
+
+function emptyAppState() {
+  return {
+    settings: {
+      weekendMode: "saturdaySunday",
+      gridOrientation: "vertical",
+      academicDayStart: "07:30",
+      defaultLessonDurationMinutes: 90,
+      defaultBreakDurationMinutes: 20,
+      slotCount: 8,
+      defaultReminderMinutes: 30,
+      appearancePreference: "system",
+      languagePreference: "system",
+      onboardingCompleted: false,
+    },
+    timetable: null,
+    timeSlots: [],
+    courses: [],
+    placements: [],
+    exceptions: [],
+  };
+}
+
+async function testOptionalNames() {
+  section("Optional names: blank becomes a localized default, numbered only when taken");
+
+  // A: the rule itself, in all three languages.
+  equal("A. nothing taken: the plain word", nextDefaultTimetableName("Timetable", []), "Timetable");
+  equal("A. Russian", nextDefaultTimetableName("Расписание", []), "Расписание");
+  equal("A. German", nextDefaultTimetableName("Stundenplan", []), "Stundenplan");
+  equal("A. taken: the next number", nextDefaultTimetableName("Расписание", ["Расписание"]), "Расписание 2");
+  equal("A. ...and the next", nextDefaultTimetableName("Stundenplan", ["Stundenplan", "Stundenplan 2"]), "Stundenplan 3");
+  equal("A. the lowest free number, not one past the highest", nextDefaultTimetableName("Timetable", ["Timetable", "Timetable 3"]), "Timetable 2");
+  equal("A. case and spaces do not make a name free", nextDefaultTimetableName("Timetable", [" timetable "]), "Timetable 2");
+  equal("A. another language's names do not collide", nextDefaultTimetableName("Расписание", ["Timetable", "Timetable 2"]), "Расписание");
+
+  // B: through the real creation path, which is where the name is chosen.
+  const path = nextPath();
+  const { db } = await open(path);
+  let state = emptyAppState();
+
+  // Walking the flow and abandoning it reserves nothing.
+  const abandoned = newTimetableInput("");
+  check("an abandoned flow built its input", abandoned.name === "", "fixture");
+
+  const created = [];
+  for (const typed of ["", "   ", "\t "]) {
+    const result = await createTimetable(db, state, newTimetableInput(typed));
+    check(`B. creating with name ${JSON.stringify(typed)} succeeded`, result.ok, JSON.stringify(result.reason ?? null));
+    created.push(result.state.timetable.name);
+    state = result.state;
+  }
+  equal("B. three blank creations are numbered in turn", created.join("|"), "Timetable|Timetable 2|Timetable 3");
+  equal("B. ...counting the archives, not just the active one", (await listArchivedTimetables(db)).map((entry) => entry.name).sort().join("|"), "Timetable|Timetable 2");
+
+  const russian = await createTimetable(db, state, { ...newTimetableInput(""), defaultName: "Расписание" });
+  equal("B. a Russian user's blank timetable", russian.state.timetable.name, "Расписание");
+  state = russian.state;
+
+  const second = (await listArchivedTimetables(db)).find((entry) => entry.name === "Timetable 2");
+  await deleteArchivedTimetable(db, second.id);
+  const reused = await createTimetable(db, state, newTimetableInput(""));
+  equal("B. a number freed by deleting its timetable is used again", reused.state.timetable.name, "Timetable 2");
+  state = reused.state;
+
+  // C: what the user types is theirs, duplicates included.
+  const first = await createTimetable(db, state, newTimetableInput("SoSe26"));
+  const again = await createTimetable(db, first.state, newTimetableInput("  SoSe26  "));
+  check("C. a second timetable with the same typed name is allowed", again.ok, JSON.stringify(again.reason ?? null));
+  equal("C. ...trimmed, and not renumbered", again.state.timetable.name, "SoSe26");
+  equal("C. ...so two timetables are called SoSe26", [again.state.timetable.name, ...(await listArchivedTimetables(db)).map((entry) => entry.name)].filter((name) => name === "SoSe26").length, 2);
+  const typedDefault = await createTimetable(db, again.state, newTimetableInput("Timetable"));
+  equal("C. typing the default word itself is allowed even though it is taken", typedDefault.state.timetable.name, "Timetable");
+
+  const refused = await createTimetable(db, typedDefault.state, { ...newTimetableInput(""), defaultName: "  " });
+  equal("with no name and no default to build one from, creation is refused", refused.ok ? "ok" : refused.reason.kind, "nameRequired");
+
+  db.closeSync();
+  const relaunched = await reopen(path);
+  equal("the names survive a cold reopen", relaunched.state.timetable.name, "Timetable");
+  // Seven creations, one deletion: six archived, one active.
+  equal("...archives included", (await listArchivedTimetables(relaunched.db)).length, 6);
+  relaunched.db.closeSync();
+}
+
 /* -------------------------------------------------------------------- entry */
 
 export async function runLifecycleHarness() {
@@ -1702,7 +2017,9 @@ export async function runLifecycleHarness() {
     await testNoActiveTimetable();
     await testNavigationGate();
     await testTimetableStartDate();
+    await testTimetableStartExtendsPattern();
     testNames();
+    await testOptionalNames();
   } finally {
     try {
       rmSync(directory, { recursive: true, force: true });

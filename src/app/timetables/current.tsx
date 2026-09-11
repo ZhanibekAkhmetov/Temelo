@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Alert, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
 import { ChoiceRowField } from "@/components/ChoiceRowField";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DateField } from "@/components/DateField";
 import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { FormSection, NavigationRow } from "@/components/FormSection";
@@ -36,7 +37,8 @@ import { useTheme } from "@/theme/useTheme";
  * and behind a confirmation, because it is the one action here with a
  * consequence, and the confirmation has to say what the consequence actually
  * is — which is much less alarming than the word "archive" sounds, and saying
- * so is the point.
+ * so is the point. The confirmation is Temelo's own `ConfirmDialog`, not the
+ * platform alert.
  */
 export default function CurrentTimetableScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
@@ -48,6 +50,9 @@ export default function CurrentTimetableScreen() {
   const [nameError, setNameError] = useState<DomainError | undefined>();
   const [busy, setBusy] = useState(false);
   const [startSheetOpen, setStartSheetOpen] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  /** Why the last archive did not happen, shown beside the button that tried. */
+  const [archiveError, setArchiveError] = useState<DomainError | undefined>();
 
   /*
    * Archiving from this very screen is what removes the active timetable, and
@@ -90,33 +95,24 @@ export default function CurrentTimetableScreen() {
   }
 
   function handleArchive() {
-    Alert.alert(
-      t("timetables.archiveTitle"),
-      t("timetables.archiveMessage", { name: currentName }),
-      [
-        { text: t("common.cancel"), style: "cancel" },
-        {
-          text: t("timetables.archiveConfirm"),
-          style: "destructive",
-          onPress: () => {
-            setBusy(true);
-            void archiveCurrentTimetable().then((result) => {
-              setBusy(false);
-              if (!result.ok) {
-                Alert.alert(t("timetables.archiveAction"), t(result.error.key, result.error.params));
-                return;
-              }
-              /*
-               * Back to the Timetables screen rather than all the way out: the
-               * timetable is now in the Archived list right there, which is
-               * the only reassurance that matters after pressing Archive.
-               */
-              router.back();
-            });
-          },
-        },
-      ],
-    );
+    setArchiveConfirmOpen(false);
+    setArchiveError(undefined);
+    setBusy(true);
+    void archiveCurrentTimetable().then((result) => {
+      setBusy(false);
+      if (!result.ok) {
+        // The timetable is still active and intact — the swap is atomic — so
+        // the user stays here, with the reason next to the button.
+        setArchiveError(result.error);
+        return;
+      }
+      /*
+       * Back to the Timetables screen rather than all the way out: the
+       * timetable is now in the Archived list right there, which is the only
+       * reassurance that matters after pressing Archive.
+       */
+      router.back();
+    });
   }
 
   return (
@@ -178,13 +174,30 @@ export default function CurrentTimetableScreen() {
         <Button
           label={t("timetables.archiveAction")}
           variant="destructive"
-          onPress={handleArchive}
+          onPress={() => setArchiveConfirmOpen(true)}
           disabled={busy}
         />
+        {archiveError ? (
+          <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
+            {t(archiveError.key, archiveError.params)}
+          </Text>
+        ) : null}
       </View>
 
       <View style={{ height: spacing.xl }} />
     </ScreenContainer>
+
+      {/* Not destructive in tone: archiving deletes nothing and is undone by
+          Restore, and the dialog's job is to say exactly that. */}
+      {archiveConfirmOpen ? (
+        <ConfirmDialog
+          title={t("timetables.archiveTitle", { name: currentName })}
+          message={t("timetables.archiveMessage")}
+          confirmLabel={t("timetables.archiveConfirm")}
+          onConfirm={handleArchive}
+          onCancel={() => setArchiveConfirmOpen(false)}
+        />
+      ) : null}
 
       {startSheetOpen ? (
         <DatePickerSheet

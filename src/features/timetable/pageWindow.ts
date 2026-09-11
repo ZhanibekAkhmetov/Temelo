@@ -53,9 +53,57 @@ export interface WeekPageSlot {
   pageIndex: number;
 }
 
-/** Which slot a page index lives in. Non-negative for negative indices too. */
-function slotOf(pageIndex: number): number {
-  return ((pageIndex % PAGE_WINDOW_SIZE) + PAGE_WINDOW_SIZE) % PAGE_WINDOW_SIZE;
+/** Which of `size` slots a page index lives in. Non-negative for negative indices too. */
+function slotOf(pageIndex: number, size: number): number {
+  return ((pageIndex % size) + size) % size;
+}
+
+/**
+ * A window of `radius` pages either side of `baseIndex`, addressed as a ring
+ * of `radius * 2 + 1` slots and returned in slot order — the week pager's
+ * rule, for any pager. See the note at the top of this module.
+ */
+export function ringPageWindow(baseIndex: number, radius: number, keyPrefix: string): WeekPageSlot[] {
+  const size = radius * 2 + 1;
+  const slots: WeekPageSlot[] = new Array(size);
+  for (let offset = -radius; offset <= radius; offset++) {
+    const pageIndex = baseIndex + offset;
+    const slot = slotOf(pageIndex, size);
+    slots[slot] = { key: `${keyPrefix}-${slot}`, pageIndex };
+  }
+  return slots;
+}
+
+/**
+ * How many months either side of the one in view the date picker keeps
+ * mounted. Two: a swipe travels at most one month from where it started, so
+ * the second is the slack that lets React be a whole month behind a fast run
+ * of swipes without the finger ever reaching a page that is not there.
+ */
+export const MONTH_WINDOW_RADIUS = 2;
+
+/** Month pages mounted at any moment — five, for the life of the picker. */
+export const MONTH_WINDOW_SIZE = MONTH_WINDOW_RADIUS * 2 + 1;
+
+/**
+ * The date picker's mounted months, centred on the month in view.
+ *
+ * The same ring as the weeks, for the same reason, and it is the fix for rapid
+ * month swipes stalling every two or three months. The pager used to key each
+ * page by its month and re-centre only once the month in view reached the edge
+ * of what was mounted — so every second month it retired two whole calendar
+ * grids and built two new ones, eighty-odd pressable day cells, in one commit,
+ * on the JS thread, at exactly the moment the finger needed the next page. And
+ * the drag is clamped to pages React has committed, so until that commit
+ * landed the next swipe had nowhere to go. That was the pause.
+ *
+ * As a ring, re-centring is cheap enough to do on every month crossed: one
+ * slot, the one that has just fallen three months behind, is re-addressed to
+ * the month two ahead — new props on views that already exist, not a mount.
+ * Nothing waits for the window to reach its edge, so it never does.
+ */
+export function monthPageWindow(centre: number): WeekPageSlot[] {
+  return ringPageWindow(centre, MONTH_WINDOW_RADIUS, "month-slot");
 }
 
 /**
@@ -68,12 +116,7 @@ function slotOf(pageIndex: number): number {
  * own `startsOn` — a past week legitimately draws an empty grid.
  */
 export function weekPageWindow(baseIndex: number): WeekPageSlot[] {
-  const slots: WeekPageSlot[] = new Array(PAGE_WINDOW_SIZE);
-  for (let offset = -PAGE_WINDOW_RADIUS; offset <= PAGE_WINDOW_RADIUS; offset++) {
-    const pageIndex = baseIndex + offset;
-    slots[slotOf(pageIndex)] = { key: `week-slot-${slotOf(pageIndex)}`, pageIndex };
-  }
-  return slots;
+  return ringPageWindow(baseIndex, PAGE_WINDOW_RADIUS, "week-slot");
 }
 
 /**

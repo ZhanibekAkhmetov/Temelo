@@ -271,8 +271,8 @@ const UPSERT_COURSE = `
 const UPSERT_PLACEMENT = `
   INSERT INTO placements (
     id, course_id, weekday, time_slot_id, slot_span, recurrence_type,
-    starts_on, ends_on, reminder_minutes, created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    starts_on, ends_on, starts_with_timetable, reminder_minutes, created_at, updated_at, deleted_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     course_id = excluded.course_id,
     weekday = excluded.weekday,
@@ -281,6 +281,7 @@ const UPSERT_PLACEMENT = `
     recurrence_type = excluded.recurrence_type,
     starts_on = excluded.starts_on,
     ends_on = excluded.ends_on,
+    starts_with_timetable = excluded.starts_with_timetable,
     reminder_minutes = excluded.reminder_minutes,
     updated_at = excluded.updated_at,
     deleted_at = excluded.deleted_at
@@ -596,6 +597,7 @@ async function writeDiffWithin(db: SQLiteDatabase, next: PersistedTimetable, dif
       row.recurrence_type,
       row.starts_on,
       row.ends_on,
+      row.starts_with_timetable,
       row.reminder_minutes,
       row.created_at,
       row.updated_at,

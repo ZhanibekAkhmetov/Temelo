@@ -118,6 +118,7 @@ export function createSampleTimetable(): SampleTimetable {
         recurrenceType: entry.recurrence,
         startsOn,
         endsOn: defaultSeriesEndDate(),
+        startsWithTimetable: entry.recurrence !== "once",
         reminderMinutes: DEFAULT_SETTINGS.defaultReminderMinutes,
         createdAt: now,
         updatedAt: now,

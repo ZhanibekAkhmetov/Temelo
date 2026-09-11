@@ -36,8 +36,44 @@ export function isOpenEndedSeries(endsOn: string): boolean {
 export interface RecurringSlot {
   weekday: Weekday;
   recurrenceType: RecurrenceType;
+  /** Always the parity anchor; also the first date only when the series does not start with the timetable. */
   startsOn: string;
   endsOn: string;
+  /**
+   * Whether the series reaches back as far as the timetable does — see
+   * `seriesLowerBound`. Absent reads as false, which is the behaviour every
+   * series had before the distinction existed.
+   */
+  startsWithTimetable?: boolean;
+}
+
+/**
+ * The first date a series may meet on.
+ *
+ * `startsOn` used to answer three different questions at once, and the reason
+ * moving a timetable's start earlier brought nothing back is that it could only
+ * give one answer:
+ *
+ *  A. how far back the *timetable* reaches — `Timetable.anchorDate`, passed in
+ *     here as `timetableStart`;
+ *  B. which half of the fortnight an alternating class falls on — always
+ *     `startsOn`, counted from the first occurrence on or after it;
+ *  C. where a series genuinely begins — the later half of a "this and future"
+ *     split, or a start date the user chose in the editor.
+ *
+ * A series that `startsWithTimetable` is part of the timetable's pattern: its
+ * bound is A, and its `startsOn` is only B. Every other series is bounded by
+ * C, which is its own `startsOn`. So moving the timetable's start earlier
+ * extends an ordinary weekly or alternating class into the newly included
+ * weeks — on the same parity, because B does not move — while a split's later
+ * half still starts exactly where it was split.
+ *
+ * With no timetable start to go by, every series falls back to its own
+ * `startsOn`: nothing is ever made to reach back without limit.
+ */
+export function seriesLowerBound(slot: RecurringSlot, timetableStart?: string | null): string {
+  if (slot.recurrenceType === "once" || !slot.startsWithTimetable || !timetableStart) return slot.startsOn;
+  return timetableStart;
 }
 
 /**
@@ -57,19 +93,26 @@ export function firstOccurrenceOnOrAfter(iso: string, weekday: Weekday): string 
 /**
  * Whether a placement meets on one specific calendar date.
  *
- * Everything here is a function of the placement's own anchor and the date
- * passed in — which callers take from the immutable week a page is
- * rendering. Nothing reads a "currently displayed" week, so an alternating
- * class cannot change which weeks it appears in while the pager is moving.
+ * Everything here is a function of the placement's own anchor, the
+ * timetable's start and the date passed in — which callers take from the
+ * immutable week a page is rendering. Nothing reads a "currently displayed"
+ * week, so an alternating class cannot change which weeks it appears in while
+ * the pager is moving.
+ *
+ * `timetableStart` only ever widens a series that starts with the timetable;
+ * see `seriesLowerBound`. It is not also applied as a bound on its own here —
+ * `resolveOccurrences` does that, for exceptions and previews as well.
  */
-export function occursOn(slot: RecurringSlot, isoDate: string): boolean {
+export function occursOn(slot: RecurringSlot, isoDate: string, timetableStart?: string | null): boolean {
   if (slot.recurrenceType === "once") return isoDate === slot.startsOn;
   if (weekdayOfIsoDate(isoDate) !== slot.weekday) return false;
-  if (!isIsoDateBeforeOrEqual(slot.startsOn, isoDate)) return false;
+  if (!isIsoDateBeforeOrEqual(seriesLowerBound(slot, timetableStart), isoDate)) return false;
   if (!isIsoDateBeforeOrEqual(isoDate, slot.endsOn)) return false;
   if (slot.recurrenceType === "biweekly") {
     // Parity of the whole-week distance from the placement's first
-    // occurrence: an integer, from dates alone.
+    // occurrence: an integer, from dates alone — and just as exact for a date
+    // *before* that occurrence, which a series starting with the timetable
+    // legitimately has. (-2 % 2 is -0, which is 0.)
     const anchor = firstOccurrenceOnOrAfter(slot.startsOn, slot.weekday);
     return weeksBetweenIso(anchor, isoDate) % 2 === 0;
   }
@@ -83,13 +126,18 @@ export function occursOn(slot: RecurringSlot, isoDate: string): boolean {
  * placement whose remaining range contains no occurrence at all is not a
  * shortened series, it is one that no longer exists.
  */
-export function hasOccurrenceBetween(slot: RecurringSlot, from: string, until: string): boolean {
+export function hasOccurrenceBetween(
+  slot: RecurringSlot,
+  from: string,
+  until: string,
+  timetableStart?: string | null,
+): boolean {
   if (from > until) return false;
   if (slot.recurrenceType === "once") return occursOn(slot, slot.startsOn) && slot.startsOn >= from && slot.startsOn <= until;
 
   let date = firstOccurrenceOnOrAfter(from, slot.weekday);
   for (let step = 0; date <= until && step < MAX_OCCURRENCE_STEPS; step++) {
-    if (occursOn(slot, date)) return true;
+    if (occursOn(slot, date, timetableStart)) return true;
     date = addDaysIso(date, 7);
   }
   return false;
@@ -104,11 +152,17 @@ export function hasOccurrenceBetween(slot: RecurringSlot, from: string, until: s
  * is every one-off, has no honest answer at that level at all. Two lists of
  * concrete dates have exactly one question between them: do they share one.
  */
-export function occurrenceDates(slot: RecurringSlot, horizon: string = OPEN_ENDED_DATE): string[] {
-  if (slot.startsOn > slot.endsOn) return [];
+export function occurrenceDates(
+  slot: RecurringSlot,
+  horizon: string = OPEN_ENDED_DATE,
+  timetableStart?: string | null,
+): string[] {
   // A one-off *is* its date. Its weekday field is decoration and must not be
   // consulted, because nothing keeps the two in step.
-  if (slot.recurrenceType === "once") return [slot.startsOn];
+  if (slot.recurrenceType === "once") return slot.startsOn > slot.endsOn ? [] : [slot.startsOn];
+
+  const from = seriesLowerBound(slot, timetableStart);
+  if (from > slot.endsOn) return [];
 
   // An open-ended series has no last date of its own, so enumerating it is only
   // meaningful up to a horizon the caller can justify — see `clashHorizon`.
@@ -116,12 +170,107 @@ export function occurrenceDates(slot: RecurringSlot, horizon: string = OPEN_ENDE
   const until = slot.endsOn < horizon ? slot.endsOn : horizon;
 
   const dates: string[] = [];
-  let date = firstOccurrenceOnOrAfter(slot.startsOn, slot.weekday);
+  let date = firstOccurrenceOnOrAfter(from, slot.weekday);
   for (let step = 0; date <= until && step < MAX_OCCURRENCE_STEPS; step++) {
-    if (occursOn(slot, date)) dates.push(date);
+    if (occursOn(slot, date, timetableStart)) dates.push(date);
     date = addDaysIso(date, 7);
   }
   return dates;
+}
+
+/**
+ * The first date a series actually meets on, as the user sees it — which for
+ * a series that starts with the timetable is not its stored anchor but the
+ * first matching week on or after the timetable's start. What the class
+ * editor shows as the series' start date.
+ */
+export function firstSeriesDate(slot: RecurringSlot, timetableStart?: string | null): string {
+  if (slot.recurrenceType === "once") return slot.startsOn;
+  let date = firstOccurrenceOnOrAfter(seriesLowerBound(slot, timetableStart), slot.weekday);
+  // At most one extra week: the first matching weekday is either on the
+  // series' parity or exactly one week off it.
+  if (!occursOn(slot, date, timetableStart)) date = addDaysIso(date, 7);
+  return date;
+}
+
+/**
+ * The same parity anchor, moved back by whole fortnights until it is on or
+ * before `limit`.
+ *
+ * For a series that starts with the timetable, `startsOn` is only a parity
+ * anchor and can legitimately be later than an occurrence the user can see.
+ * A split cutting such a series *before* its anchor would otherwise leave the
+ * earlier half ending before it "starts" — which every validator in the app
+ * rightly refuses. Fourteen days at a time is a no-op for an alternating
+ * class's parity and for a weekly class's weekday alike.
+ */
+export function anchorOnOrBefore(startsOn: string, limit: string): string {
+  if (startsOn <= limit) return startsOn;
+  const fortnights = Math.ceil(diffInDaysIso(limit, startsOn) / 14);
+  return addDaysIso(startsOn, -14 * fortnights);
+}
+
+/** What `inferStartsWithTimetable` reads of each placement. */
+export interface SeriesHistoryRecord {
+  id: string;
+  recurrenceType: RecurrenceType;
+  startsOn: string;
+  endsOn: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * For placements saved before the distinction existed: which of them start
+ * with the timetable.
+ *
+ * Every repeating series does, except the later half of a "this and future"
+ * split — and a split leaves a trace that can be recognised after the fact,
+ * because it writes both halves in one moment:
+ *
+ *  - the earlier half gets a real end date: the day before the split;
+ *  - the later half starts at the edited occurrence, which is that day plus
+ *    whatever distance the user dragged it — within a week or so either way;
+ *  - the earlier half's `updatedAt` and the later half's `createdAt` are the
+ *    same timestamp, and the earlier one already existed.
+ *
+ * So a series is taken to be a split's later half when some other repeating
+ * series, created no later than it and last updated no earlier than it was
+ * created, ended between fourteen days before its start and twelve days
+ * after. Soft-deleted series count as earlier halves — deleting the earlier
+ * half must not let the later one leak back into its weeks.
+ *
+ * The rule errs one way only. A series wrongly recognised as a later half
+ * keeps exactly the behaviour every series had before this change; one wrongly
+ * missed would be drawn a second time inside weeks its earlier half already
+ * covers. Only the first is harmless, so the window is generous.
+ *
+ * Migration v7 applies the same rule in SQL, written out there as literals for
+ * the usual reason; the harness checks the two agree. This copy is for archive
+ * snapshots written before v7, which carry no flag of their own.
+ */
+export function inferStartsWithTimetable(placements: SeriesHistoryRecord[]): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  for (const series of placements) {
+    if (series.recurrenceType === "once") {
+      result.set(series.id, false);
+      continue;
+    }
+    const windowStart = addDaysIso(series.startsOn, -14);
+    const windowEnd = addDaysIso(series.startsOn, 12);
+    const isLaterHalf = placements.some(
+      (earlier) =>
+        earlier.id !== series.id &&
+        earlier.recurrenceType !== "once" &&
+        !isOpenEndedSeries(earlier.endsOn) &&
+        earlier.endsOn >= windowStart &&
+        earlier.endsOn <= windowEnd &&
+        earlier.createdAt <= series.createdAt &&
+        earlier.updatedAt >= series.createdAt,
+    );
+    result.set(series.id, !isLaterHalf);
+  }
+  return result;
 }
 
 /** The dates a timetable mentions, as far as a clash check has to look. */
@@ -220,13 +369,11 @@ export function seriesRangeMovedTo(range: SeriesRange, fromDate: string, toDate:
  * half of the fortnight, and so into permanent conflict with each other. The
  * week the user tapped is the week they meant, so that is the anchor.
  *
- * A weekly class meets every week wherever it is anchored, so all its start
- * date decides is how far *back* it is visible. It takes the timetable's own
- * anchor — the week the timetable was created in — so a class added in
- * November is still there when the user pages back to October, which is what a
- * timetable is for. If they are looking at a week *earlier* than that anchor
- * when they add it, the tapped week wins instead: a class must always appear
- * in the cell that was tapped.
+ * A weekly class meets every week wherever it is anchored. A new class starts
+ * with the timetable (`startsWithTimetable`), so how far back it is visible is
+ * the timetable's start and not this date at all; the timetable's start is
+ * still what it is given, so the stored anchor reads sensibly, and the tapped
+ * week wins when it is earlier.
  */
 export function defaultSeriesStartDate(
   recurrenceType: RecurrenceType,

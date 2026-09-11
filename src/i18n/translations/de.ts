@@ -212,7 +212,10 @@ export const de: Translations = {
   "timetables.days": "Angezeigte Tage",
   "timetables.startsOn": "Startdatum",
   "timetables.startDateTitle": "Beginn des Stundenplans",
-  "timetables.startDateNote": "Termine vor diesem Datum werden nicht angezeigt. Es werden keine Daten gelöscht.",
+  "timetables.startDateNote":
+    "Termine vor diesem Datum werden nicht angezeigt. Wählst du ein früheres Datum, erscheinen wiederkehrende Kurse auch in diesen Wochen. Gelöscht wird nichts.",
+  "timetables.defaultName": "Stundenplan",
+  "timetables.nameOptionalHint": "Optional. Lässt du es leer, vergibt Temelo einen Namen.",
   "timetables.currentBadge": "Aktuell",
   "timetables.archivedOn": "Archiviert am {date}",
   "timetables.summary": "{days} · {hours}",
@@ -220,19 +223,18 @@ export const de: Translations = {
   "timetables.rename": "Umbenennen",
   "timetables.renamePrompt": "Name des Stundenplans",
   "timetables.archiveAction": "Stundenplan archivieren",
-  "timetables.archiveTitle": "Stundenplan archivieren?",
+  "timetables.archiveTitle": "„{name}“ archivieren?",
   "timetables.archiveMessage":
-    "Deine Kurse bleiben erhalten. {name} wandert ins Archiv und lässt sich später zurückholen. Solange er archiviert ist, erinnert Temelo nicht an seine Kurse.",
+    "Deine Kurse bleiben erhalten. Der Stundenplan wandert ins Archiv und lässt sich später zurückholen. Solange er archiviert ist, erinnert Temelo nicht an seine Kurse.",
   "timetables.archiveConfirm": "Archivieren",
   "timetables.restoreAction": "Stundenplan zurückholen",
-  "timetables.restoreTitle": "{name} zurückholen?",
-  "timetables.restoreMessage":
-    "Dein aktueller Stundenplan {current} wird zuerst archiviert. Gelöscht wird nichts.",
+  "timetables.restoreTitle": "„{name}“ zurückholen?",
+  "timetables.restoreMessage": "Dein aktueller Stundenplan „{current}“ wird archiviert.\nGelöscht wird nichts.",
   "timetables.restoreConfirm": "Zurückholen",
   "timetables.deleteAction": "Endgültig löschen",
-  "timetables.deleteTitle": "{name} endgültig löschen?",
+  "timetables.deleteTitle": "„{name}“ löschen?",
   "timetables.deleteMessage":
-    "Dieser Stundenplan und seine Kurse werden von diesem Gerät entfernt. Das lässt sich nicht rückgängig machen.",
+    "Dieser Stundenplan und seine Kurse werden endgültig von diesem Gerät entfernt. Das lässt sich nicht rückgängig machen.",
   "timetables.deleteConfirm": "Löschen",
   "timetables.damaged": "Dieser archivierte Stundenplan ist nicht lesbar und kann nicht zurückgeholt werden.",
   "timetables.createTitle": "Neuer Stundenplan",
@@ -240,6 +242,9 @@ export const de: Translations = {
   "timetables.createReplaceNotice":
     "{name} wird erst archiviert, wenn dieser Stundenplan erstellt ist. Gelöscht wird nichts.",
   "timetables.createFinish": "Stundenplan erstellen",
+  "timetables.createConfirmTitle": "Neuen Stundenplan erstellen?",
+  "timetables.createConfirmMessage": "Dein aktueller Stundenplan „{current}“ wird archiviert.\nGelöscht wird nichts.",
+  "timetables.createConfirm": "Erstellen",
 
   "errors.slotInUse": "Dieser Platz ist bereits von {name} belegt.",
   "errors.classNameRequired": "Bitte einen Kursnamen angeben.",

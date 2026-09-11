@@ -30,10 +30,13 @@ import { planReminders } from "@/domain/reminderSchedule";
 import { getOrderedWeekdays } from "@/domain/week";
 import {
   directJump,
+  monthPageWindow,
   pagerStep,
   pagesInView,
   weekOffsetOfPage,
   weekPageWindow,
+  MONTH_WINDOW_RADIUS,
+  MONTH_WINDOW_SIZE,
   PAGE_WINDOW_RADIUS,
   PAGE_WINDOW_SIZE,
 } from "@/features/timetable/pageWindow";
@@ -745,6 +748,97 @@ function testTimetableStartBound() {
   );
 }
 
+/* ------------------------- K: the date picker's month ring never stalls */
+
+/**
+ * A continuous run of month swipes, with React one month behind.
+ *
+ * Each swipe heads for the month after the one in view and is clamped to
+ * pages React has *committed*. The month in view changes on the midpoint
+ * crossing, which is when the pager decides where the window should be — but
+ * that decision only lands with the next commit, so while the following swipe
+ * starts, React may still be showing the window from one crossing earlier.
+ *
+ * Returns the number of the first swipe that finds its destination not yet
+ * mounted, or null if none in the run does.
+ */
+function firstStalledSwipe(centreAfter, swipes, direction = 1) {
+  let dominant = 0;
+  let committed = 0;
+  let decided = 0;
+  for (let swipe = 1; swipe <= swipes; swipe++) {
+    const target = dominant + direction;
+    if (Math.abs(target - committed) > MONTH_WINDOW_RADIUS) return swipe;
+    committed = decided;
+    dominant = target;
+    decided = centreAfter(decided, dominant);
+  }
+  return null;
+}
+
+function testMonthRingNeverStalls() {
+  section("K. The date picker pages through months continuously on a fixed ring of five");
+
+  equal("five month pages are mounted", MONTH_WINDOW_SIZE, 5);
+  equal("...two either side of the one in view", MONTH_WINDOW_RADIUS, 2);
+
+  /*
+   * The device report, reproduced. The old pager moved its window only once
+   * the month in view reached the window's edge. With React one month behind,
+   * that leaves the third swipe of a fast run facing a month that is not
+   * mounted — "about two or three months, then a pause".
+   */
+  const oldValve = (centre, dominant) => (Math.abs(dominant - centre) < MONTH_WINDOW_RADIUS ? centre : dominant);
+  equal("the old edge-triggered window stalled on the third fast swipe", firstStalledSwipe(oldValve, 50), 3);
+
+  // The ring follows the month in view on every crossing.
+  const follow = (_centre, dominant) => dominant;
+  equal("the ring never stalls over 500 swipes forward", firstStalledSwipe(follow, 500, 1), null);
+  equal("...or 500 back", firstStalledSwipe(follow, 500, -1), null);
+
+  /*
+   * And the page count stays bounded while it does. The old pager keyed each
+   * page by its month, so a long session created a new page identity for
+   * every month it reached; the ring has five for its whole life, and moving
+   * one month re-addresses exactly one of them.
+   */
+  for (const direction of [1, -1]) {
+    const keysEverSeen = new Set();
+    const sizes = new Set();
+    let recycled = 0;
+    let previous = monthPageWindow(0);
+    for (const slot of previous) keysEverSeen.add(slot.key);
+    for (let step = 1; step <= 600; step++) {
+      const current = monthPageWindow(step * direction);
+      sizes.add(current.length);
+      for (const slot of current) keysEverSeen.add(slot.key);
+      if (!current.every((slot, index) => slot.key === previous[index].key)) {
+        throw new Error(`the month slot order changed at step ${step}`);
+      }
+      recycled += current.filter((slot, index) => slot.pageIndex !== previous[index].pageIndex).length;
+      previous = current;
+    }
+    const way = direction > 0 ? "forward" : "back";
+    equal(`600 months ${way}: the mounted count never varies`, [...sizes].join(","), "5");
+    equal(`600 months ${way}: only five page identities ever existed`, keysEverSeen.size, 5);
+    equal(`600 months ${way}: exactly one slot re-addressed per month`, recycled, 600);
+  }
+
+  equal(
+    "the window is the month in view and two either side",
+    monthPageWindow(7)
+      .map((slot) => slot.pageIndex)
+      .sort((a, b) => a - b)
+      .join(","),
+    "5,6,7,8,9",
+  );
+  equal(
+    "the week pager's ring is unchanged by sharing the rule",
+    weekPageWindow(7).map((slot) => `${slot.key}@${slot.pageIndex}`).join(","),
+    "week-slot-0@6,week-slot-1@7,week-slot-2@8",
+  );
+}
+
 export function runNavigationHarness() {
   testBoundedPageWindow();
   testResolutionIsLocal();
@@ -755,4 +849,5 @@ export function runNavigationHarness() {
   testMonthPagerSwipeSemantics();
   testDirectJumpLandsOnScreen();
   testTimetableStartBound();
+  testMonthRingNeverStalls();
 }

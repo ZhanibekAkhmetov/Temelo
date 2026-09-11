@@ -226,7 +226,10 @@ export const en = {
   "timetables.days": "Days shown",
   "timetables.startsOn": "Starts on",
   "timetables.startDateTitle": "Timetable start",
-  "timetables.startDateNote": "Classes before this date won't appear. Nothing will be deleted.",
+  "timetables.startDateNote":
+    "Classes before this date won't appear. Moving it earlier brings repeating classes into those weeks. Nothing is deleted.",
+  "timetables.defaultName": "Timetable",
+  "timetables.nameOptionalHint": "Optional. Leave it blank and Temelo will name it for you.",
   "timetables.currentBadge": "Current",
   "timetables.archivedOn": "Archived {date}",
   "timetables.summary": "{days} · {hours}",
@@ -234,19 +237,18 @@ export const en = {
   "timetables.rename": "Rename timetable",
   "timetables.renamePrompt": "Timetable name",
   "timetables.archiveAction": "Archive timetable",
-  "timetables.archiveTitle": "Archive this timetable?",
+  "timetables.archiveTitle": "Archive {name}?",
   "timetables.archiveMessage":
-    "Your classes are kept. {name} moves to Archived and can be restored later. Its reminders stop while it is archived.",
+    "Your classes are kept. It moves to Archived and can be restored later. Its reminders stop while it is archived.",
   "timetables.archiveConfirm": "Archive",
   "timetables.restoreAction": "Restore timetable",
   "timetables.restoreTitle": "Restore {name}?",
-  "timetables.restoreMessage":
-    "Your current timetable {current} will be archived first. Nothing will be deleted.",
+  "timetables.restoreMessage": "Your current timetable “{current}” will be archived.\nNothing will be deleted.",
   "timetables.restoreConfirm": "Restore",
   "timetables.deleteAction": "Delete permanently",
-  "timetables.deleteTitle": "Delete {name} permanently?",
+  "timetables.deleteTitle": "Delete “{name}”?",
   "timetables.deleteMessage":
-    "This timetable and its classes will be removed from this device. This cannot be undone.",
+    "This timetable and its classes will be permanently removed from this device. This cannot be undone.",
   "timetables.deleteConfirm": "Delete",
   "timetables.damaged": "This archived timetable cannot be read and cannot be restored.",
   "timetables.createTitle": "New timetable",
@@ -254,6 +256,9 @@ export const en = {
   "timetables.createReplaceNotice":
     "{name} will be archived when this timetable is created — not before. Nothing is deleted.",
   "timetables.createFinish": "Create timetable",
+  "timetables.createConfirmTitle": "Create new timetable?",
+  "timetables.createConfirmMessage": "Your current timetable “{current}” will be archived.\nNothing will be deleted.",
+  "timetables.createConfirm": "Create",
 
   // ---------------------------------------------------------------- errors
   "errors.slotInUse": "This slot is already used by {name}.",

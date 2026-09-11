@@ -3,10 +3,11 @@ import { StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 
 import { Button } from "@/components/Button";
-import { FormSection, ListGroup, ListRow } from "@/components/FormSection";
+import { FormSection, ListGroup } from "@/components/FormSection";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { timetableSummary, shapeOfActive } from "@/features/timetables/summary";
+import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import type { ArchivedTimetableSummary } from "@/storage/timetableLifecycle";
@@ -74,11 +75,11 @@ export default function TimetablesScreen() {
       <FormSection title={t("timetables.sectionCurrent")}>
         <ListGroup>
           {current ? (
-            <ListRow
+            <TimetableSummaryRow
               grouped
-              title={current.name}
-              subtitle={currentSummary ?? undefined}
-              meta={t("timetables.currentBadge")}
+              name={current.name}
+              summary={currentSummary ?? undefined}
+              status={t("timetables.currentBadge")}
               onPress={() => router.push("/timetables/current")}
               last
             />
@@ -123,11 +124,11 @@ export default function TimetablesScreen() {
           // the archive reads as one list of timetables.
           <ListGroup>
             {archived.map((entry, index) => (
-              <ListRow
+              <TimetableSummaryRow
                 key={entry.id}
                 grouped
-                title={entry.name}
-                subtitle={
+                name={entry.name}
+                summary={
                   entry.contents
                     ? timetableSummary(t, format, entry.contents)
                     : t("timetables.archivedOn", { date: format.dateLong(entry.archivedAt.slice(0, 10)) })

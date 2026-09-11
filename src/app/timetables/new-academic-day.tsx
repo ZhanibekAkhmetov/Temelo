@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Text } from "react-native";
+import { Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import type { DomainError } from "@/domain/errors";
@@ -34,7 +35,7 @@ function weekendModeFrom(value: unknown): WeekendMode {
 export default function NewAcademicDayScreen() {
   const { colors, spacing, typography } = useTheme();
   const { t } = useI18n();
-  const { createNewTimetable } = useAppState();
+  const { state, createNewTimetable } = useAppState();
   const params = useLocalSearchParams<{ name?: string; startDate?: string; weekendMode?: string }>();
 
   const name = typeof params.name === "string" ? params.name : "";
@@ -51,11 +52,26 @@ export default function NewAcademicDayScreen() {
   });
   const [formError, setFormError] = useState<DomainError | undefined>();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const current = state.timetable;
+
+  /*
+   * Creating while another timetable is active archives that one, so the press
+   * that does it is confirmed — the same dialog Restore uses, for the same
+   * swap. Step one said so up front; this is the moment it actually happens.
+   * With nothing active there is nothing to replace, and nothing to ask.
+   */
+  function handleCreatePress() {
+    if (current) setConfirmOpen(true);
+    else handleCreate();
+  }
 
   function handleCreate() {
+    setConfirmOpen(false);
     setFormError(undefined);
     setBusy(true);
-    void createNewTimetable({ name, startDate, weekendMode, academicDay }).then((result) => {
+    const defaultName = t("timetables.defaultName");
+    void createNewTimetable({ name, defaultName, startDate, weekendMode, academicDay }).then((result) => {
       setBusy(false);
       if (!result.ok) {
         setFormError(result.error);
@@ -72,6 +88,7 @@ export default function NewAcademicDayScreen() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <ScreenContainer>
       <Text style={[typography.title, { color: colors.textPrimary }]}>{t("onboarding.academicDayTitle")}</Text>
       <Text style={[typography.body, { color: colors.textSecondary, marginTop: spacing.xs }]}>
@@ -88,10 +105,21 @@ export default function NewAcademicDayScreen() {
 
       <OnboardingNav
         onBack={() => router.back()}
-        onContinue={handleCreate}
+        onContinue={handleCreatePress}
         continueLabel={t("timetables.createFinish")}
-        continueDisabled={busy || name.trim().length === 0 || !isUsableAcademicDay(academicDay)}
+        continueDisabled={busy || !isUsableAcademicDay(academicDay)}
       />
     </ScreenContainer>
+
+      {confirmOpen && current ? (
+        <ConfirmDialog
+          title={t("timetables.createConfirmTitle")}
+          message={t("timetables.createConfirmMessage", { current: current.name })}
+          confirmLabel={t("timetables.createConfirm")}
+          onConfirm={handleCreate}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      ) : null}
+    </View>
   );
 }

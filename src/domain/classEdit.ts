@@ -22,7 +22,13 @@ import { domainError, type DomainError } from "@/domain/errors";
 import { createId } from "@/domain/id";
 import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
 import { findOccurrenceConflict, findPlacementConflict } from "@/domain/conflict";
-import { hasOccurrenceBetween, seriesRangeMovedTo, type SeriesRange } from "@/domain/recurrence";
+import {
+  anchorOnOrBefore,
+  hasOccurrenceBetween,
+  seriesLowerBound,
+  seriesRangeMovedTo,
+  type SeriesRange,
+} from "@/domain/recurrence";
 import { reminderOverrideFor, type ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { Course, OccurrenceException, Placement, RecurrenceType, TimeSlot } from "@/types/models";
@@ -70,6 +76,8 @@ export interface ClassEditDraft {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  /** False once the user has chosen the series' start date themselves. */
+  startsWithTimetable: boolean;
   reminderMinutes: ReminderMinutes;
   changed: EditedFields;
   source: EditSource;
@@ -99,6 +107,7 @@ export interface ClassEditInput {
   recurrenceType?: RecurrenceType;
   startsOn?: string;
   endsOn?: string;
+  startsWithTimetable?: boolean;
   /** Omitted means "as this occurrence is already reminded about". */
   reminderMinutes?: ReminderMinutes;
 }
@@ -132,6 +141,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
   const recurrenceType = input.recurrenceType ?? base.recurrenceType;
   const startsOn = input.startsOn ?? base.startsOn;
   const endsOn = input.endsOn ?? base.endsOn;
+  const startsWithTimetable = input.startsWithTimetable ?? base.startsWithTimetable;
   // `??` would read a deliberate "None" as "not supplied", so the presence
   // of the key is what decides whether the caller had an opinion.
   const reminderMinutes =
@@ -148,7 +158,11 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
     teacher: teacher !== occurrence.course.teacher,
     notes: notes !== occurrence.course.notes,
     appearance: appearanceId !== occurrence.course.appearanceId,
-    recurrence: recurrenceType !== base.recurrenceType || startsOn !== base.startsOn || endsOn !== base.endsOn,
+    recurrence:
+      recurrenceType !== base.recurrenceType ||
+      startsOn !== base.startsOn ||
+      endsOn !== base.endsOn ||
+      startsWithTimetable !== base.startsWithTimetable,
     reminder: reminderMinutes !== occurrence.placement.reminderMinutes,
   };
 
@@ -168,6 +182,7 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
     recurrenceType,
     startsOn,
     endsOn,
+    startsWithTimetable,
     reminderMinutes,
     changed,
     source: input.source,
@@ -230,8 +245,9 @@ export interface EditableTimetable {
   exceptions: OccurrenceException[];
   /**
    * The timetable's start date, so a clash is only judged on dates the
-   * timetable actually has. Read by the conflict check and nothing else here:
-   * splitting and rebasing reason about series, which the bound never changes.
+   * timetable actually has — and so a split knows how far back the series it
+   * is cutting really reaches, which for one that starts with the timetable
+   * is not its own anchor. It is never written to any series.
    */
   timetableStart?: string | null;
 }
@@ -545,8 +561,19 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
     return { ok: false, error: domainError("errors.endBeforeOccurrence") };
   }
 
-  const truncated: Placement = { ...base, endsOn: previousEnd, updatedAt: now };
-  const pastSurvives = hasOccurrenceBetween(truncated, truncated.startsOn, previousEnd);
+  /*
+   * Whether anything is left before the split is asked from where the series
+   * really begins. For one that starts with the timetable that is the
+   * timetable's start, not its anchor — the anchor can even be *after* the
+   * split, when the timetable's start was moved earlier and the user is
+   * editing one of the weeks that brought back. The earlier half then keeps
+   * that anchor moved back by whole fortnights, so it still ends after it
+   * starts and still meets on exactly the same weeks.
+   */
+  const timetableStart = current.timetableStart ?? null;
+  const cut: Placement = { ...base, endsOn: previousEnd, updatedAt: now };
+  const pastSurvives = hasOccurrenceBetween(cut, seriesLowerBound(cut, timetableStart), previousEnd, timetableStart);
+  const truncated: Placement = { ...cut, startsOn: anchorOnOrBefore(cut.startsOn, previousEnd) };
 
   // Past occurrences must keep reading the way they always did, so a changed
   // course is cloned rather than edited under them.
@@ -564,6 +591,15 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
     recurrenceType: draft.recurrenceType,
     startsOn: draft.effectiveDate,
     endsOn,
+    /*
+     * The split is a genuine beginning: the weeks before it belong to the
+     * earlier half, and moving the timetable's start earlier must never bring
+     * this half back into them. The one exception is a split with no earlier
+     * half left at all — the edit was made on the very first occurrence — which
+     * is the whole series under a new schedule, and keeps reaching back as
+     * the series did (unless the user chose a start date in this edit).
+     */
+    startsWithTimetable: !pastSurvives && draft.startsWithTimetable,
     // The draft carries the edited occurrence's *effective* reminder, which
     // may be a one-off override. Promoting that to the whole new series would
     // silence every future lesson because one of them was silenced, so an
@@ -621,7 +657,7 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
     if (exception.originalDate === splitDate) return rebaseEditedException(exception, draft, splitTarget, now);
 
     const dates = shiftedExceptionDates(exception, splitShift);
-    return hasOccurrenceBetween(nextPlacement, dates.originalDate, dates.originalDate)
+    return hasOccurrenceBetween(nextPlacement, dates.originalDate, dates.originalDate, timetableStart)
       ? { ...exception, ...dates, placementId: nextPlacement.id, updatedAt: now }
       : { ...exception, deletedAt: now, updatedAt: now };
   });
@@ -656,6 +692,7 @@ function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Place
     recurrenceType: changed.recurrence ? draft.recurrenceType : base.recurrenceType,
     startsOn: changed.recurrence ? draft.startsOn : moved.startsOn,
     endsOn: changed.recurrence ? draft.endsOn : moved.endsOn,
+    startsWithTimetable: changed.recurrence ? draft.startsWithTimetable : base.startsWithTimetable,
     reminderMinutes: changed.reminder ? draft.reminderMinutes : base.reminderMinutes,
     updatedAt: now,
   };

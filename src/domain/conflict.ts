@@ -36,6 +36,8 @@ export interface PlacementCandidate {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  /** Whether the candidate reaches back to the timetable's start; see `seriesLowerBound`. */
+  startsWithTimetable?: boolean;
 }
 
 export interface OccurrenceCandidate {
@@ -91,7 +93,10 @@ function firstClashOn(
 export function findPlacementConflict(source: ConflictSource, candidate: PlacementCandidate): Occurrence | undefined {
   return firstClashOn(
     source,
-    occurrenceDates(candidate, clashHorizon(source, candidate.startsOn)),
+    // From the timetable's start, for a candidate that reaches back to it: those
+    // earlier weeks are weeks it will be drawn in, so they are weeks it must
+    // be free in.
+    occurrenceDates(candidate, clashHorizon(source, candidate.startsOn), source.timetableStart),
     candidate.timeSlotId,
     candidate.slotSpan,
     // The series being edited cannot clash with itself, and neither can its

@@ -36,8 +36,11 @@ development build, not Expo Go.
   time. A repeating series is open-ended (`OPEN_ENDED_DATE` in
   `domain/recurrence`); a real end date on one means it genuinely stops
   there, which in practice means a "this and future" edit split it.
-- `startsOn` is a per-series parity anchor as well as a beginning. Nothing
-  global anchors biweekly recurrence.
+- `startsOn` is always a per-series parity anchor; nothing global anchors
+  biweekly recurrence. It is also the series' first date only when
+  `startsWithTimetable` is false (a split's later half, or a start the user
+  picked in the editor). Otherwise the series reaches back as far as the
+  timetable does — see `seriesLowerBound` in `domain/recurrence`.
 - One active timetable lives in the normalised working tables; archived ones
   are versioned JSON snapshots in `archived_timetables`. Archive, restore
   and create-new are atomic swaps in `storage/timetableLifecycle`.
@@ -55,7 +58,14 @@ development build, not Expo Go.
 - A timetable has one start date ("Starts on", stored as v6's `anchor_date`)
   and no end date. It is a lower bound on occurrences — nothing is drawn,
   clash-checked or reminded before it — never a re-anchor: changing it
-  rewrites no placement. The calendar stays navigable before it.
+  rewrites no placement. Moving it earlier extends every series that starts
+  with the timetable into the new weeks. The calendar stays navigable before it.
+- Naming a timetable is optional. A blank name becomes a localized default
+  ("Timetable", "Timetable 2", …), chosen only when creation commits.
+- Lifecycle confirmations (archive, restore, delete, replace) use
+  `ConfirmDialog`, never the platform `Alert`.
+- There is no automatic archiving and no end date; archiving is always the
+  user's explicit action.
 - There is no user-facing "term", "semester start" or "semester end". Do not
   reintroduce one. A user who thinks in semesters names a timetable and
   archives it.

@@ -11,7 +11,7 @@
  */
 
 import { weekdayOfIsoDate } from "@/domain/calendar";
-import { occursOn } from "@/domain/recurrence";
+import { occursOn, seriesLowerBound } from "@/domain/recurrence";
 import { resolveReminder } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { Course, OccurrenceException, Placement } from "@/types/models";
@@ -70,12 +70,14 @@ export interface OccurrenceSource {
   /**
    * The timetable's start date: nothing in the timetable occurs before it.
    *
-   * A lower bound on *dates*, applied on top of every series' own rule rather
-   * than instead of it. It does not touch a placement's `startsOn`, so an
-   * alternating class keeps its parity however often the timetable's start is
-   * moved, and moving it back brings the earlier occurrences back unchanged.
-   * Absent or null means no bound — which is what recurrence-level reasoning
-   * such as splitting a series wants.
+   * Two jobs, both read from this one date. It is a lower bound on *dates*,
+   * applied on top of every series' own rule. And it is how far back a series
+   * that `startsWithTimetable` reaches — so moving it earlier extends ordinary
+   * classes into the newly included weeks. It never touches a placement's
+   * `startsOn`, so an alternating class keeps its parity however often the
+   * timetable's start is moved, and moving it back and forth deletes nothing.
+   * Absent or null means no bound, and every series then falls back to its own
+   * `startsOn`; see `seriesLowerBound`.
    */
   timetableStart?: string | null;
 }
@@ -122,8 +124,14 @@ export function courseWithOverrides(base: Course, exception: OccurrenceException
  * where it was moved to — an occurrence dragged past the end of term is
  * still that occurrence, and shortening the term is what removes it.
  */
-function withinSeries(placement: Placement, exception: OccurrenceException): boolean {
-  return placement.startsOn <= exception.originalDate && exception.originalDate <= placement.endsOn;
+function withinSeries(placement: Placement, exception: OccurrenceException, timetableStart?: string | null): boolean {
+  // A series that starts with the timetable has occurrences before its own
+  // anchor, and an exception may stand in for any of them. Whichever of the two
+  // dates is earlier, so that moving the timetable's start later never orphans
+  // an exception whose occurrence was moved into the timetable from before it.
+  const bound = seriesLowerBound(placement, timetableStart);
+  const lowest = bound < placement.startsOn ? bound : placement.startsOn;
+  return lowest <= exception.originalDate && exception.originalDate <= placement.endsOn;
 }
 
 function exceptionsByPlacement(exceptions: OccurrenceException[]): Map<string, OccurrenceException[]> {
@@ -167,7 +175,7 @@ export function resolveOccurrences(source: OccurrenceSource, dates: string[]): O
 
     for (const date of wanted) {
       const replaced = placementExceptions.find((exception) => exception.originalDate === date);
-      if (occursOn(placement, date) && !replaced) {
+      if (occursOn(placement, date, timetableStart) && !replaced) {
         found.push({
           occurrenceId: occurrenceIdFor(placement.id, date),
           placement,
@@ -189,7 +197,7 @@ export function resolveOccurrences(source: OccurrenceSource, dates: string[]): O
     for (const exception of placementExceptions) {
       if (exception.state === "cancelled") continue;
       if (!wanted.has(exception.effectiveDate)) continue;
-      if (!withinSeries(placement, exception)) continue;
+      if (!withinSeries(placement, exception, timetableStart)) continue;
       const effective = placementWithOverrides(placement, exception);
       found.push({
         occurrenceId: occurrenceIdFor(placement.id, exception.originalDate),

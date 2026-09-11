@@ -106,6 +106,8 @@ export interface PlacementRow {
   recurrence_type: string;
   starts_on: string;
   ends_on: string;
+  /** 1 when the series reaches back to the timetable's start; since v7. */
+  starts_with_timetable: number;
   /** Minutes of lead time; NULL is "no reminder". */
   reminder_minutes: number | null;
   created_at: string;
@@ -314,6 +316,7 @@ export function placementToRow(placement: Placement): PlacementRow {
     recurrence_type: placement.recurrenceType,
     starts_on: placement.startsOn,
     ends_on: placement.endsOn,
+    starts_with_timetable: placement.startsWithTimetable ? 1 : 0,
     reminder_minutes: placement.reminderMinutes,
     created_at: placement.createdAt,
     updated_at: placement.updatedAt,
@@ -331,6 +334,9 @@ export function placementFromRow(row: PlacementRow): Placement {
     recurrenceType: narrow(row.recurrence_type, RECURRENCE_TYPES, "weekly"),
     startsOn: row.starts_on,
     endsOn: row.ends_on,
+    // Only an explicit 0 bounds a series by its own start; the column's own
+    // default is 1, so anything else is the ordinary case.
+    startsWithTimetable: row.starts_with_timetable !== 0,
     reminderMinutes: reminderMinutesFromColumn(row.reminder_minutes),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

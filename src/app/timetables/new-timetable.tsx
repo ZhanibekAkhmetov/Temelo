@@ -44,12 +44,13 @@ export default function NewTimetableScreen() {
   const [weekendMode, setWeekendMode] = useState<WeekendMode>(state.settings.weekendMode);
 
   const current = state.timetable;
-  const trimmedName = name.trim();
 
   function handleContinue() {
+    // Blank travels as blank. The name is only generated when the timetable
+    // is actually created, so walking back out of the flow reserves nothing.
     router.push({
       pathname: "/timetables/new-academic-day",
-      params: { name: trimmedName, startDate, weekendMode },
+      params: { name: name.trim(), startDate, weekendMode },
     });
   }
 
@@ -74,11 +75,14 @@ export default function NewTimetableScreen() {
         ) : null}
 
         <FormSection>
+          {/* Optional. The placeholder is the word a blank name becomes, so
+              leaving it empty is visibly a choice rather than an omission. */}
           <TextField
             label={t("onboarding.timetableName")}
             value={name}
             onChangeText={setName}
-            placeholder={t("onboarding.timetableNamePlaceholder")}
+            placeholder={t("timetables.defaultName")}
+            helperText={t("timetables.nameOptionalHint")}
             autoFocus
             maxLength={MAX_TIMETABLE_NAME_LENGTH}
           />
@@ -101,11 +105,7 @@ export default function NewTimetableScreen() {
           ))}
         </FormSection>
 
-        <OnboardingNav
-          onBack={router.canGoBack() ? () => router.back() : undefined}
-          onContinue={handleContinue}
-          continueDisabled={trimmedName.length === 0}
-        />
+        <OnboardingNav onBack={router.canGoBack() ? () => router.back() : undefined} onContinue={handleContinue} />
       </ScreenContainer>
 
       {startSheetOpen ? (

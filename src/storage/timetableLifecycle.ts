@@ -33,6 +33,7 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { createId } from "@/domain/id";
+import { nextDefaultTimetableName } from "@/domain/timetableName";
 import {
   courseToRow,
   exceptionToRow,
@@ -288,8 +289,8 @@ async function writeActiveWithin(
     await db.runAsync(
       `INSERT INTO placements (
          id, course_id, weekday, time_slot_id, slot_span, recurrence_type,
-         starts_on, ends_on, reminder_minutes, created_at, updated_at, deleted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         starts_on, ends_on, starts_with_timetable, reminder_minutes, created_at, updated_at, deleted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       row.id,
       row.course_id,
       row.weekday,
@@ -298,6 +299,7 @@ async function writeActiveWithin(
       row.recurrence_type,
       row.starts_on,
       row.ends_on,
+      row.starts_with_timetable,
       row.reminder_minutes,
       row.created_at,
       row.updated_at,
@@ -353,10 +355,24 @@ async function readBackWithin(db: SQLiteDatabase): Promise<PersistedTimetable> {
   return state;
 }
 
+/** Every timetable name in use: the active timetable's and each archive's. */
+async function existingNamesWithin(db: SQLiteDatabase, current: PersistedTimetable): Promise<string[]> {
+  const rows = await db.getAllAsync<{ name: string }>("SELECT name FROM archived_timetables");
+  const names = rows.map((row) => row.name);
+  return current.timetable ? [current.timetable.name, ...names] : names;
+}
+
 /* -------------------------------------------------------------- operations */
 
 export interface NewTimetableInput {
+  /** What the user typed. Blank is allowed: see `defaultName`. */
   name: string;
+  /**
+   * The word a blank name is built from, already translated — storage has no
+   * languages. The number, if one is needed, is chosen here, inside the
+   * transaction, against every name that exists at that moment.
+   */
+  defaultName: string;
   /** The timetable-specific settings the creation flow collected. */
   settings: TimetableSettings;
   /** Generated from those settings; ids already assigned. */
@@ -385,16 +401,9 @@ export async function createTimetable(
   current: PersistedTimetable,
   input: NewTimetableInput,
 ): Promise<LifecycleResult> {
-  const name = normalizeTimetableName(input.name);
-  if (!name) return { ok: false, reason: { kind: "nameRequired" } };
-
-  const timetable: Timetable = {
-    id: createId(),
-    name,
-    anchorDate: input.anchorDate,
-    createdAt: input.now,
-    updatedAt: input.now,
-  };
+  const typed = normalizeTimetableName(input.name);
+  const fallback = normalizeTimetableName(input.defaultName);
+  if (!typed && !fallback) return { ok: false, reason: { kind: "nameRequired" } };
 
   const settings: Settings = {
     ...settingsWithTimetableSettings(current.settings, input.settings),
@@ -404,6 +413,22 @@ export async function createTimetable(
   };
 
   const state = await withTransaction(db, async () => {
+    /*
+     * A generated name is chosen here, in the same transaction that creates
+     * the timetable, against every name that exists right now — the active
+     * one and each archive. Chosen any earlier, it could be taken by the time
+     * it was used; chosen outside the transaction, two creations could pick
+     * the same number.
+     */
+    const name = typed ?? nextDefaultTimetableName(fallback ?? "", await existingNamesWithin(db, current));
+    const timetable: Timetable = {
+      id: createId(),
+      name,
+      anchorDate: input.anchorDate,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+
     if (current.timetable) await archiveWithin(db, current, current.timetable, input.now);
     await clearActiveWithin(db);
     await writeActiveWithin(db, timetable, settings, input.timeSlots, [], [], []);

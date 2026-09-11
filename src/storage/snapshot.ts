@@ -46,6 +46,7 @@
 
 import { normalizeClassColorId } from "@/domain/classColor";
 import { isValidIsoDate } from "@/domain/date";
+import { inferStartsWithTimetable } from "@/domain/recurrence";
 import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
 import { ALL_WEEKDAYS_MONDAY_FIRST, ALL_WEEKEND_MODES, type Weekday, type WeekendMode } from "@/domain/week";
 import {
@@ -266,28 +267,64 @@ function parseCourse(value: unknown): Course {
   };
 }
 
-function parsePlacement(value: unknown): Placement {
+/** A placement, and whether the snapshot said if it starts with the timetable. */
+interface ParsedPlacement {
+  placement: Placement;
+  /** null for a snapshot written before the field existed. */
+  startsWithTimetable: boolean | null;
+}
+
+function parsePlacement(value: unknown): ParsedPlacement {
   if (!isObject(value)) throw new Invalid("placements[] is not an object");
   const slotSpan = require_(int(value, "slotSpan"), "placement.slotSpan");
   if (slotSpan < 1) throw new Invalid("placement.slotSpan must be at least 1");
   const startsOn = require_(isoDate(value, "startsOn"), "placement.startsOn");
   const endsOn = require_(isoDate(value, "endsOn"), "placement.endsOn");
   if (endsOn < startsOn) throw new Invalid("placement ends before it starts");
+  const flag = value.startsWithTimetable;
+  const startsWithTimetable = typeof flag === "boolean" ? flag : null;
   return {
-    id: require_(str(value, "id"), "placement.id"),
-    courseId: require_(str(value, "courseId"), "placement.courseId"),
-    weekday: require_(oneOf<Weekday>(value, "weekday", ALL_WEEKDAYS_MONDAY_FIRST), "placement.weekday"),
-    timeSlotId: require_(str(value, "timeSlotId"), "placement.timeSlotId"),
-    slotSpan,
-    recurrenceType: require_(
-      oneOf<RecurrenceType>(value, "recurrenceType", RECURRENCE_TYPES),
-      "placement.recurrenceType",
-    ),
-    startsOn,
-    endsOn,
-    reminderMinutes: reminderMinutes(value, "reminderMinutes"),
-    ...timestamps(value, "placement"),
+    startsWithTimetable,
+    placement: {
+      id: require_(str(value, "id"), "placement.id"),
+      courseId: require_(str(value, "courseId"), "placement.courseId"),
+      weekday: require_(oneOf<Weekday>(value, "weekday", ALL_WEEKDAYS_MONDAY_FIRST), "placement.weekday"),
+      timeSlotId: require_(str(value, "timeSlotId"), "placement.timeSlotId"),
+      slotSpan,
+      recurrenceType: require_(
+        oneOf<RecurrenceType>(value, "recurrenceType", RECURRENCE_TYPES),
+        "placement.recurrenceType",
+      ),
+      startsOn,
+      endsOn,
+      // Provisional until `parsePlacements` has seen the whole list.
+      startsWithTimetable: startsWithTimetable ?? true,
+      reminderMinutes: reminderMinutes(value, "reminderMinutes"),
+      ...timestamps(value, "placement"),
+    },
   };
+}
+
+/**
+ * Every placement, with `startsWithTimetable` settled.
+ *
+ * A snapshot archived before the field existed does not say, and the answer
+ * for one series depends on the others — whether it is the later half of a
+ * split — so it is inferred over the whole list, by the same rule migration v7
+ * applied to the working tables. That is what lets an old archive restore into
+ * exactly the timetable an upgraded device would have had, without the format
+ * version moving: the field is new, and an older build reading it back simply
+ * ignores it.
+ */
+function parsePlacements(values: unknown[]): Placement[] {
+  const parsed = values.map(parsePlacement);
+  if (parsed.every((entry) => entry.startsWithTimetable !== null)) return parsed.map((entry) => entry.placement);
+
+  const inferred = inferStartsWithTimetable(parsed.map((entry) => entry.placement));
+  return parsed.map(({ placement, startsWithTimetable }) => ({
+    ...placement,
+    startsWithTimetable: startsWithTimetable ?? inferred.get(placement.id) ?? true,
+  }));
 }
 
 function parseException(value: unknown): OccurrenceException {
@@ -435,7 +472,7 @@ export function parseTimetableSnapshot(text: string): SnapshotParseResult {
       settings: parseSettings(raw.settings),
       timeSlots: list("timeSlots").map(parseTimeSlot),
       courses: list("courses").map(parseCourse),
-      placements: list("placements").map(parsePlacement),
+      placements: parsePlacements(list("placements")),
       exceptions: list("exceptions").map(parseException),
     };
 

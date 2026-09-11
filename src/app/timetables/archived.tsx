@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react";
-import { Alert, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { Button } from "@/components/Button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FieldRow, FieldValue } from "@/components/FieldRow";
 import { FormSection } from "@/components/FormSection";
 import { ScreenContainer } from "@/components/ScreenContainer";
@@ -27,6 +28,9 @@ import { useTheme } from "@/theme/useTheme";
  * it was archived. Not its id, not the snapshot format, not how many classes are in
  * it. The user archived it; they know what is in it, and a row reading
  * "34 records" would be the app talking about itself.
+ *
+ * Both confirmations are Temelo's own `ConfirmDialog`, and a failure is said
+ * on this screen under the buttons rather than in a platform alert.
  */
 export default function ArchivedTimetableScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
@@ -39,6 +43,9 @@ export default function ArchivedTimetableScreen() {
   const [name, setName] = useState<string | null>(null);
   const [nameError, setNameError] = useState<DomainError | undefined>();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState<"restore" | "delete" | null>(null);
+  /** Why the last restore or delete did not happen. */
+  const [actionError, setActionError] = useState<DomainError | undefined>();
 
   /*
    * Read on focus, from the list rather than from app state: archived
@@ -93,6 +100,7 @@ export default function ArchivedTimetableScreen() {
 
   const contents = entry.contents;
   const hours = contents ? hoursLabel(t, contents) : null;
+  const current = state.timetable;
 
   async function handleRename() {
     const result = await renameArchive(archiveId, name ?? "");
@@ -104,7 +112,6 @@ export default function ArchivedTimetableScreen() {
   }
 
   function handleRestore() {
-    const current = state.timetable;
     // With nothing active there is nothing to weigh up, so the restore just
     // happens. The confirmation exists to explain what becomes of the
     // timetable the user is using — and when there is none, it would be a
@@ -113,18 +120,12 @@ export default function ArchivedTimetableScreen() {
       void runRestore();
       return;
     }
-
-    Alert.alert(
-      t("timetables.restoreTitle", { name: entry!.name }),
-      t("timetables.restoreMessage", { current: current.name }),
-      [
-        { text: t("common.cancel"), style: "cancel" },
-        { text: t("timetables.restoreConfirm"), onPress: () => void runRestore() },
-      ],
-    );
+    setConfirming("restore");
   }
 
   async function runRestore() {
+    setConfirming(null);
+    setActionError(undefined);
     setBusy(true);
     const result = await restoreTimetable(archiveId);
     setBusy(false);
@@ -135,7 +136,7 @@ export default function ArchivedTimetableScreen() {
      * atomic swap guarantees — so there is nothing to navigate away from.
      */
     if (!result.ok) {
-      Alert.alert(t("timetables.restoreAction"), t(result.error.key, result.error.params));
+      setActionError(result.error);
       return;
     }
 
@@ -153,101 +154,121 @@ export default function ArchivedTimetableScreen() {
     router.replace("/timetable");
   }
 
-  function handleDelete() {
-    Alert.alert(t("timetables.deleteTitle", { name: entry!.name }), t("timetables.deleteMessage"), [
-      { text: t("common.cancel"), style: "cancel" },
-      {
-        text: t("timetables.deleteConfirm"),
-        style: "destructive",
-        onPress: () => {
-          setBusy(true);
-          void deleteArchive(archiveId).then((result) => {
-            setBusy(false);
-            if (!result.ok) {
-              Alert.alert(t("timetables.deleteAction"), t(result.error.key, result.error.params));
-              return;
-            }
-            router.back();
-          });
-        },
-      },
-    ]);
+  async function runDelete() {
+    setConfirming(null);
+    setActionError(undefined);
+    setBusy(true);
+    const result = await deleteArchive(archiveId);
+    setBusy(false);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
+    }
+    router.back();
   }
 
   return (
-    <ScreenContainer header={header}>
-      {/* When it was archived, as a line rather than a row: it is context for
-          everything below, not one of the things this screen can change. */}
-      <Text style={[typography.caption, { color: colors.textMuted }]}>
-        {t("timetables.archivedOn", { date: format.dateLong(entry.archivedAt.slice(0, 10)) })}
-      </Text>
+    <View style={{ flex: 1 }}>
+      <ScreenContainer header={header}>
+        {/* When it was archived, as a line rather than a row: it is context for
+            everything below, not one of the things this screen can change. */}
+        <Text style={[typography.caption, { color: colors.textMuted }]}>
+          {t("timetables.archivedOn", { date: format.dateLong(entry.archivedAt.slice(0, 10)) })}
+        </Text>
 
-      <FormSection>
-        <TextField
-          label={t("timetables.name")}
-          value={name ?? ""}
-          onChangeText={(next) => {
-            setName(next);
-            setNameError(undefined);
-          }}
-          placeholder={t("timetables.renamePrompt")}
-          error={nameError ? t(nameError.key, nameError.params) : undefined}
-          maxLength={MAX_TIMETABLE_NAME_LENGTH}
-        />
-        {contents ? (
-          <>
-            {/* Read-only here: an archive is a record of the timetable as it
-                was put away. Restore it to change when it starts. */}
-            <FieldRow label={t("timetables.startsOn")}>
-              <FieldValue muted>{format.dateLong(contents.startDate)}</FieldValue>
-            </FieldRow>
-            <FieldRow label={t("timetables.days")}>
-              <FieldValue muted>{daysLabel(t, format, contents.weekendMode)}</FieldValue>
-            </FieldRow>
-            {hours ? (
-              <FieldRow label={t("timetables.academicDay")} last>
-                <FieldValue muted>{hours}</FieldValue>
+        <FormSection>
+          <TextField
+            label={t("timetables.name")}
+            value={name ?? ""}
+            onChangeText={(next) => {
+              setName(next);
+              setNameError(undefined);
+            }}
+            placeholder={t("timetables.renamePrompt")}
+            error={nameError ? t(nameError.key, nameError.params) : undefined}
+            maxLength={MAX_TIMETABLE_NAME_LENGTH}
+          />
+          {contents ? (
+            <>
+              {/* Read-only here: an archive is a record of the timetable as it
+                  was put away. Restore it to change when it starts. */}
+              <FieldRow label={t("timetables.startsOn")}>
+                <FieldValue muted>{format.dateLong(contents.startDate)}</FieldValue>
               </FieldRow>
-            ) : null}
-          </>
-        ) : null}
-      </FormSection>
+              <FieldRow label={t("timetables.days")}>
+                <FieldValue muted>{daysLabel(t, format, contents.weekendMode)}</FieldValue>
+              </FieldRow>
+              {hours ? (
+                <FieldRow label={t("timetables.academicDay")} last>
+                  <FieldValue muted>{hours}</FieldValue>
+                </FieldRow>
+              ) : null}
+            </>
+          ) : null}
+        </FormSection>
 
-      {/* A damaged snapshot is still a row the user can name and remove; it is
-          only restoring that is impossible, and the button says so by not
-          being there rather than by failing when pressed. */}
-      {contents ? (
-        <View style={{ marginTop: spacing.lg }}>
+        {/* A damaged snapshot is still a row the user can name and remove; it is
+            only restoring that is impossible, and the button says so by not
+            being there rather than by failing when pressed. */}
+        {contents ? (
+          <View style={{ marginTop: spacing.lg }}>
+            <Button
+              label={t("timetables.restoreAction")}
+              variant="primary"
+              onPress={handleRestore}
+              disabled={busy}
+            />
+          </View>
+        ) : (
+          <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.lg }]}>
+            {t("timetables.damaged")}
+          </Text>
+        )}
+
+        <View
+          style={{
+            marginTop: spacing.xl,
+            borderTopWidth: borderWidth.thin,
+            borderColor: colors.divider,
+            paddingTop: spacing.lg,
+          }}
+        >
           <Button
-            label={t("timetables.restoreAction")}
-            variant="primary"
-            onPress={handleRestore}
+            label={t("timetables.deleteAction")}
+            variant="destructive"
+            onPress={() => setConfirming("delete")}
             disabled={busy}
           />
         </View>
-      ) : (
-        <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.lg }]}>
-          {t("timetables.damaged")}
-        </Text>
-      )}
 
-      <View
-        style={{
-          marginTop: spacing.xl,
-          borderTopWidth: borderWidth.thin,
-          borderColor: colors.divider,
-          paddingTop: spacing.lg,
-        }}
-      >
-        <Button
-          label={t("timetables.deleteAction")}
-          variant="destructive"
-          onPress={handleDelete}
-          disabled={busy}
+        {actionError ? (
+          <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.md }]}>
+            {t(actionError.key, actionError.params)}
+          </Text>
+        ) : null}
+
+        <View style={{ height: spacing.xl }} />
+      </ScreenContainer>
+
+      {confirming === "restore" && current ? (
+        <ConfirmDialog
+          title={t("timetables.restoreTitle", { name: entry.name })}
+          message={t("timetables.restoreMessage", { current: current.name })}
+          confirmLabel={t("timetables.restoreConfirm")}
+          onConfirm={() => void runRestore()}
+          onCancel={() => setConfirming(null)}
         />
-      </View>
-
-      <View style={{ height: spacing.xl }} />
-    </ScreenContainer>
+      ) : null}
+      {confirming === "delete" ? (
+        <ConfirmDialog
+          destructive
+          title={t("timetables.deleteTitle", { name: entry.name })}
+          message={t("timetables.deleteMessage")}
+          confirmLabel={t("timetables.deleteConfirm")}
+          onConfirm={() => void runDelete()}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
+    </View>
   );
 }

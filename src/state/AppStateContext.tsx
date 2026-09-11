@@ -115,7 +115,13 @@ export interface AcademicDayConfigInput {
  * it stops.
  */
 export interface CreateTimetableInput {
+  /** May be blank: a name is then chosen when the timetable is created. */
   name: string;
+  /**
+   * The word a blank name is built from, in the user's language — "Timetable",
+   * "Расписание", "Stundenplan". Passed in because storage has no languages.
+   */
+  defaultName: string;
   /** ISO date; anything that is not a real date falls back to this week's Monday. */
   startDate: string;
   weekendMode: WeekendMode;
@@ -137,6 +143,11 @@ export interface UpsertPlacementInput {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  /**
+   * Whether the series reaches back to the timetable's start — true unless the
+   * user chose its start date. Ignored for a one-off.
+   */
+  startsWithTimetable: boolean;
   /** Lead time before the class starts, or null for no reminder. */
   reminderMinutes: ReminderMinutes;
 }
@@ -214,9 +225,10 @@ interface AppStateContextValue {
    * Moves the active timetable's start date.
    *
    * An ordinary state change like the rename, and deliberately nothing more:
-   * no placement, exception or series anchor is touched. Occurrences before the
-   * new date stop being drawn and reminded because the bound moved, and come
-   * back unchanged if it moves back.
+   * no placement, exception or series anchor is touched. Later hides what is
+   * before it; earlier extends every series that starts with the timetable
+   * into the newly included weeks, on its own parity. Nothing is deleted, so
+   * moving it back and forth always comes back to the same timetable.
    */
   setTimetableStartDate: (input: { startDate: string }) => ActionResult;
   /**
@@ -740,8 +752,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
 
     const createNewTimetable: AppStateContextValue["createNewTimetable"] = (input) => {
-      const name = normalizeTimetableName(input.name);
-      if (!name) return Promise.resolve({ ok: false, error: domainError("errors.timetableNameRequired") });
+      // A blank name is not refused: storage picks "Timetable 2" or whatever is
+      // free, inside the same transaction that creates it.
+      const name = normalizeTimetableName(input.name) ?? "";
 
       const slots = generateTimeSlots({
         dayStart: input.academicDay.academicDayStart,
@@ -753,6 +766,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       const payload: NewTimetableInput = {
         name,
+        defaultName: input.defaultName,
         settings: {
           weekendMode: input.weekendMode,
           academicDayStart: input.academicDay.academicDayStart,
@@ -839,6 +853,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (input.recurrenceType === "once" && isBeforeTimetableStart(state, input.startsOn)) return beforeStartError();
 
       const slotSpan = Math.max(1, input.slotSpan ?? 1);
+      // A one-off is only ever its own date; the flag says nothing about it.
+      const startsWithTimetable = input.recurrenceType !== "once" && input.startsWithTimetable;
       const conflict = findConflict(state, {
         placementId: input.placementId,
         weekday: input.weekday,
@@ -847,6 +863,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         recurrenceType: input.recurrenceType,
         startsOn: input.startsOn,
         endsOn: input.endsOn,
+        startsWithTimetable,
       });
       if (conflict) return conflictError(conflict);
 
@@ -880,6 +897,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                   recurrenceType: input.recurrenceType,
                   startsOn: input.startsOn,
                   endsOn: input.endsOn,
+                  startsWithTimetable,
                   reminderMinutes: input.reminderMinutes,
                   updatedAt: now,
                 }
@@ -912,6 +930,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         recurrenceType: input.recurrenceType,
         startsOn: input.startsOn,
         endsOn: input.endsOn,
+        startsWithTimetable,
         reminderMinutes: input.reminderMinutes,
         createdAt: now,
         updatedAt: now,
@@ -944,6 +963,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       timeSlotId: input.timeSlotId,
       slotSpan: Math.max(1, input.slotSpan),
       recurrenceType: existing.recurrenceType,
+      startsWithTimetable: existing.startsWithTimetable,
       ...seriesRangeMovedTo(existing, input.occurrenceDate, input.date),
     });
 
