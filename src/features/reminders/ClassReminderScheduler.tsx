@@ -65,6 +65,7 @@ export function ClassReminderScheduler() {
       courses: state.courses,
       exceptions: state.exceptions,
       timeSlots: state.timeSlots,
+      timetableStart: state.timetable?.anchorDate ?? null,
       fromDate: windowStart,
       text,
       channelText,

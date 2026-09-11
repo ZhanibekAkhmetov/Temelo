@@ -104,6 +104,13 @@ when persistence is actually implemented.
   so the anchor is per-series and travels with the series whenever it moves.
   Nothing global anchors it, which is what let the semester start date be
   removed without any existing class changing which weeks it falls on.
+- **The timetable's start date is a bound, not an anchor.** `Timetable.anchorDate`
+  (the "Starts on" field) is applied in `resolveOccurrences` as a lower bound
+  on *dates*: every caller — the grid, the clash check, the reminder plan —
+  drops dates before it before resolving anything. It never touches a
+  series' `startsOn`, so moving it cannot shift an alternating class's parity,
+  and moving it back brings earlier occurrences back unchanged. It has no end
+  counterpart.
 - **Clash checking stays finite** by enumerating only as far as
   `clashHorizon` — the last date the timetable itself names, plus a
   fortnight. Past that point the answer cannot change, because base recurrence

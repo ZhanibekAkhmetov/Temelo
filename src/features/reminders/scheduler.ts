@@ -71,6 +71,11 @@ export interface ReminderSyncInput {
   courses: Course[];
   exceptions: OccurrenceException[];
   timeSlots: TimeSlot[];
+  /**
+   * The active timetable's start date. Nothing before it is planned, so a
+   * timetable that starts next month schedules no reminders until it does.
+   */
+  timetableStart: string | null;
   /** First day of the rolling window — today, as the app reads it. */
   fromDate: string;
   /**

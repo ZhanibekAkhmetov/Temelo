@@ -49,9 +49,13 @@ development build, not Expo Go.
 - Adding a class = tap empty slot → name → save. Defaults to open-ended
   weekly recurrence; room/teacher/notes/recurrence/appearance are optional and
   editable later.
-- Setup order: timetable (name, days shown) → academic day (start time,
-  lesson/break duration, slot count), then the timetable is created.
+- Setup order: timetable (name, starts on, days shown) → academic day (start
+  time, lesson/break duration, slot count), then the timetable is created.
   Generated slots must stay individually editable.
+- A timetable has one start date ("Starts on", stored as v6's `anchor_date`)
+  and no end date. It is a lower bound on occurrences — nothing is drawn,
+  clash-checked or reminded before it — never a re-anchor: changing it
+  rewrites no placement. The calendar stays navigable before it.
 - There is no user-facing "term", "semester start" or "semester end". Do not
   reintroduce one. A user who thinks in semesters names a timetable and
   archives it.

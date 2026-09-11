@@ -11,6 +11,7 @@ import {
   type PendingClassEdit,
 } from "@/domain/classEdit";
 import { addDaysIso } from "@/domain/date";
+import { isOnOrAfterTimetableStart } from "@/domain/occurrence";
 import { getOrderedWeekdays } from "@/domain/week";
 import { ClassEditorModal } from "@/features/timetable/ClassEditorModal";
 import { EditScopeSheet } from "@/features/timetable/EditScopeSheet";
@@ -135,6 +136,27 @@ export default function TimetableScreen() {
   );
 
   /*
+   * A new class can only be started on a date the timetable reaches. The weeks
+   * before its start are still there to look at, but a class added to one
+   * would be saved and then never drawn — so the tap says why, and where the
+   * start date is changed, instead of opening an editor that cannot succeed.
+   */
+  const handleOpenEditor = useCallback(
+    (selection: SelectedCell) => {
+      const timetable = state.timetable;
+      if (!selection.existing && timetable && !isOnOrAfterTimetableStart(selection.date, timetable.anchorDate)) {
+        Alert.alert(
+          t("timetable.beforeStartTitle"),
+          t("timetable.beforeStartMessage", { name: timetable.name, date: format.dateLong(timetable.anchorDate) }),
+        );
+        return;
+      }
+      setSelected(selection);
+    },
+    [format, state.timetable, t],
+  );
+
+  /*
    * No active timetable: there is nothing to page through, so the week
    * navigation and the grid are both wrong. The empty state replaces the whole
    * screen rather than filling the grid area, because a month title and a
@@ -249,10 +271,11 @@ export default function TimetableScreen() {
             courses={state.courses}
             exceptions={state.exceptions}
             preview={pendingEdit?.preview ?? null}
+            timetableStart={state.timetable.anchorDate}
             today={today}
             now={now.time}
             onVisibleWeekChange={setVisibleWeekStart}
-            onOpenEditor={setSelected}
+            onOpenEditor={handleOpenEditor}
             onMoveClass={handleMoveClass}
             canPlaceClass={handleCanPlaceClass}
             canPlaceOccurrence={handleCanPlaceOccurrence}
@@ -266,11 +289,12 @@ export default function TimetableScreen() {
             courses={state.courses}
             exceptions={state.exceptions}
             preview={pendingEdit?.preview ?? null}
+            timetableStart={state.timetable.anchorDate}
             today={today}
             now={now.time}
             width={gridSize.width}
             height={gridSize.height}
-            onCellPress={setSelected}
+            onCellPress={handleOpenEditor}
           />
         )}
       </View>

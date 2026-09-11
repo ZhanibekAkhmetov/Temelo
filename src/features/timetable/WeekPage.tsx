@@ -18,10 +18,13 @@ import { GridBlock, SelectionOutline } from "@/features/timetable/GridBlock";
 import type { PageOverlay } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
 import { getClassColors } from "@/theme/classColors";
+import { radii } from "@/theme/tokens";
 import { useTheme } from "@/theme/useTheme";
 import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 const DATE_BADGE_SIZE = 28;
+/** The today disc's corner — `radii.lg`, fixed here so nothing at runtime can re-derive it. */
+const DATE_BADGE_RADIUS = radii.lg;
 
 /** Line box of `typography.gridText`, and the block's vertical padding. */
 const NAME_LINE_HEIGHT = 16;
@@ -60,6 +63,8 @@ interface WeekPageProps {
   exceptions: OccurrenceException[];
   /** An edit awaiting a scope choice, drawn where it would land. */
   preview: OccurrencePreview | null;
+  /** The timetable's start date; nothing is drawn before it. */
+  timetableStart: string;
   today: string;
   now: string;
   width: number;
@@ -113,6 +118,7 @@ function WeekPageComponent({
   courses,
   exceptions,
   preview,
+  timetableStart,
   today,
   now,
   width,
@@ -127,13 +133,13 @@ function WeekPageComponent({
   hiddenOccurrenceId,
   overlay,
 }: WeekPageProps) {
-  const { colors, typography, borderWidth, radii } = useTheme();
+  const { colors, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
 
   const dates = useMemo(() => weekDatesFrom(weekStart), [weekStart]);
   const blocks = useMemo(
-    () => resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
-    [weekdays, dates, placements, courses, exceptions, timeSlots, preview],
+    () => resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview, timetableStart }),
+    [weekdays, dates, placements, courses, exceptions, timeSlots, preview, timetableStart],
   );
 
   // A selected class is ringed in its own colour, one step brighter than the
@@ -220,7 +226,27 @@ function WeekPageComponent({
                 <Text style={[typography.gridSecondary, styles.weekdayLabel, { color: dayColor }]} numberOfLines={1}>
                   {format.weekdayShort(day).toUpperCase()}
                 </Text>
-                <View style={[styles.dateBadge, { borderRadius: radii.lg, backgroundColor: isToday ? colors.accent : "transparent" }]}>
+                {/*
+                 * The today disc is always mounted, always a real native view,
+                 * and always the same shape — only its opacity follows `isToday`.
+                 *
+                 * It used to be the badge's own background, toggled between the
+                 * accent and transparent. A transparent badge has nothing that
+                 * forms a native view, so Fabric flattened it away, and every
+                 * time a recycled page slot's "today" moved the badge was
+                 * destroyed or re-created — on Android, out of a view pool whose
+                 * recycling resets background and border state. Stressed paging
+                 * is exactly what drives that churn, and the rounded corner is
+                 * the state it lost. Now nothing about the shape is ever
+                 * re-applied: the corner radius is a constant set once, when the
+                 * disc is created with its page, and paging changes one opacity.
+                 */}
+                <View style={styles.dateBadge} collapsable={false}>
+                  <View
+                    pointerEvents="none"
+                    collapsable={false}
+                    style={[styles.todayDisc, { backgroundColor: colors.accent, opacity: isToday ? 1 : 0 }]}
+                  />
                   <Text
                     style={[
                       styles.dateText,
@@ -510,6 +536,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginTop: 2,
+  },
+  todayDisc: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: DATE_BADGE_RADIUS,
   },
   dateText: {
     fontSize: 15,

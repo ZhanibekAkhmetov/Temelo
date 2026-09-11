@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
-import { InlineDateField } from "@/components/InlineDateField";
-import { RevealingScrollView } from "@/components/RevealingScrollView";
+import { DateField } from "@/components/DateField";
+import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { ReminderField } from "@/components/ReminderField";
 import { SwitchRow } from "@/components/SwitchRow";
 import { TextField } from "@/components/TextField";
@@ -50,8 +50,14 @@ interface ClassEditorModalProps {
   onRequestScope: (edit: PendingClassEdit) => void;
 }
 
-/** Which inline picker is unfolded — at most one at a time. */
+/**
+ * Which picker is open — at most one at a time. The colour unfolds in place;
+ * the two dates open a sheet over the form.
+ */
 type OpenPicker = "date" | "startsOn" | "color" | null;
+
+/** Answers Android's Back before the editor does; true when it handled it. */
+type BackInterceptor = (() => boolean) | null;
 
 export function ClassEditorModal({
   visible,
@@ -65,16 +71,31 @@ export function ClassEditorModal({
   existing,
   onRequestScope,
 }: ClassEditorModalProps) {
+  /*
+   * Back inside a native Modal arrives as `onRequestClose` and never as a
+   * BackHandler event, so an open date sheet cannot hear it for itself. The
+   * form registers what Back should close first, and only when nothing is
+   * registered does Back close the editor.
+   */
+  const backInterceptor = useRef<BackInterceptor>(null);
+  const setBackInterceptor = useCallback((handler: BackInterceptor) => {
+    backInterceptor.current = handler;
+  }, []);
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        if (backInterceptor.current?.()) return;
+        onClose();
+      }}
       presentationStyle={Platform.OS === "ios" ? "fullScreen" : undefined}
     >
       {visible ? (
         <ClassEditorForm
           key={`${weekday}-${date}-${timeSlot.id}-${existing?.occurrenceId ?? "new"}`}
+          onBackInterceptorChange={setBackInterceptor}
           onClose={onClose}
           weekday={weekday}
           date={date}
@@ -91,6 +112,7 @@ export function ClassEditorModal({
 }
 
 function ClassEditorForm({
+  onBackInterceptorChange,
   onClose,
   weekday,
   date,
@@ -100,7 +122,7 @@ function ClassEditorForm({
   timetable,
   existing,
   onRequestScope,
-}: Omit<ClassEditorModalProps, "visible">) {
+}: Omit<ClassEditorModalProps, "visible"> & { onBackInterceptorChange: (handler: BackInterceptor) => void }) {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
   const { state, upsertPlacement, deletePlacement, setDefaultReminder } = useAppState();
@@ -219,6 +241,24 @@ function ClassEditorForm({
 
   function togglePicker(picker: Exclude<OpenPicker, null>) {
     setOpenPicker((current) => (current === picker ? null : picker));
+  }
+
+  const dateSheet = openPicker === "date" || openPicker === "startsOn" ? openPicker : null;
+
+  // While a date sheet is open, Back closes the sheet and leaves the editor.
+  useEffect(() => {
+    if (!dateSheet) return;
+    onBackInterceptorChange(() => {
+      setOpenPicker(null);
+      return true;
+    });
+    return () => onBackInterceptorChange(null);
+  }, [dateSheet, onBackInterceptorChange]);
+
+  function handleDateConfirm(value: string) {
+    if (dateSheet === "date") setOnceDate(value);
+    else handleStartDateChange(value);
+    setOpenPicker(null);
   }
 
   /**
@@ -389,11 +429,7 @@ function ClassEditorForm({
       </View>
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        {/* Not a plain ScrollView: a date row unfolds a month grid nearly three
-            hundred points tall, and below the fold that looked like the tap had
-            done nothing at all. This scrolls the panel into view as it opens.
-            See `RevealingScrollView`. */}
-        <RevealingScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg }}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg }}>
           {/* When and how long, as a subtitle: it is what this form is about,
               not one of the things it asks for. */}
           <Text style={[typography.body, { color: colors.textSecondary }]}>{slotText}</Text>
@@ -491,25 +527,17 @@ function ClassEditorForm({
                 sheetTitle={t("recurrence.label")}
               />
 
+              {/* Each opens the date sheet over the form rather than unfolding
+                  a month below the fold. */}
               {isOneOff ? (
-                <InlineDateField
-                  label={t("classEditor.date")}
-                  value={onceDate}
-                  onChange={setOnceDate}
-                  expanded={openPicker === "date"}
-                  onToggle={() => togglePicker("date")}
-                />
+                <DateField label={t("classEditor.date")} value={onceDate} onPress={() => setOpenPicker("date")} />
               ) : (
-                <>
-                  <InlineDateField
-                    label={t("classEditor.startDate")}
-                    value={startsOn}
-                    onChange={handleStartDateChange}
-                    expanded={openPicker === "startsOn"}
-                    onToggle={() => togglePicker("startsOn")}
-                    helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
-                  />
-                </>
+                <DateField
+                  label={t("classEditor.startDate")}
+                  value={startsOn}
+                  onPress={() => setOpenPicker("startsOn")}
+                  helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
+                />
               )}
             </FormSection>
           ) : null}
@@ -525,9 +553,20 @@ function ClassEditorForm({
               <Button label={t("classEditor.deleteClass")} variant="destructive" onPress={handleDelete} />
             </View>
           ) : null}
-        </RevealingScrollView>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+
+      {/* Over the whole editor and still inside its gesture root, which is
+          what keeps the month pager's swipe working in here. */}
+      {dateSheet ? (
+        <DatePickerSheet
+          title={dateSheet === "date" ? t("classEditor.date") : t("classEditor.startDate")}
+          value={dateSheet === "date" ? onceDate : startsOn}
+          onCancel={() => setOpenPicker(null)}
+          onConfirm={handleDateConfirm}
+        />
+      ) : null}
     </GestureHandlerRootView>
   );
 }

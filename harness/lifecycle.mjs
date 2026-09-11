@@ -45,6 +45,7 @@ import {
   restoreArchivedTimetable,
 } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
+import { defaultTimetableAnchorDate, timetableStartDateFrom } from "@/state/defaults";
 import { check, equal, section } from "./report.mjs";
 import { useDatabaseFile } from "./sqlite-stub.mjs";
 
@@ -1571,6 +1572,120 @@ function testNames() {
   check("names need not be unique", normalizeTimetableName("Spring") === normalizeTimetableName("Spring"), "they differ");
 }
 
+/* ------------------------------------------ O: the timetable's start date */
+
+/**
+ * "Starts on" is v6's `anchor_date`, formalised — no migration, no new field.
+ *
+ * So the things that have to hold are all about *keeping* it: a device that
+ * has already run v6 reads the date it stored; changing it is one field saved
+ * by the ordinary diff and rewrites no class; an archive carries it inside the
+ * snapshot byte-for-byte; and switching between timetables gives each one back
+ * its own.
+ */
+async function testTimetableStartDate() {
+  section("O. The timetable's start date: v6's anchor, kept exactly");
+
+  const path = await buildV5Database();
+  let { db, schemaVersion } = await open(path);
+  equal("no new migration was needed: the schema is still v6", schemaVersion, 6);
+  equal("...which is still the latest", LATEST_SCHEMA_VERSION, 6);
+  let state = await loadTimetable(db);
+  equal("a migrated timetable starts on the term start v6 stored", state.timetable?.anchorDate, TERM.start);
+  db.closeSync();
+
+  // What the Samsung is now: a database that has already run v6, opened again.
+  ({ db, schemaVersion } = await open(path));
+  equal("an already-migrated database runs no migration", schemaVersion, LATEST_SCHEMA_VERSION);
+  state = await loadTimetable(db);
+  equal("...and still starts on its stored date, not on today", state.timetable?.anchorDate, TERM.start);
+
+  // Moving the start forward: one field of one record, through the ordinary save.
+  const placementsBefore = JSON.stringify(state.placements);
+  const exceptionsBefore = JSON.stringify(state.exceptions);
+  const later = "2026-10-05";
+  await saveTimetable(db, { ...state, timetable: { ...state.timetable, anchorDate: later, updatedAt: NOW } }, state);
+  db.closeSync();
+
+  let relaunched = await reopen(path);
+  equal("a changed start date survives a cold reopen", relaunched.state.timetable?.anchorDate, later);
+  equal("...with not one placement rewritten", JSON.stringify(relaunched.state.placements), placementsBefore);
+  equal("...and not one exception", JSON.stringify(relaunched.state.exceptions), exceptionsBefore);
+  equal(
+    "...so the alternating class keeps its own anchor",
+    placementById(relaunched.state, "p-history").startsOn,
+    "2026-09-15",
+  );
+  db = relaunched.db;
+  state = relaunched.state;
+
+  // Archiving carries the date inside the snapshot.
+  const created = await createTimetable(db, state, newTimetableInput("Spring 2027"));
+  check("creating another timetable succeeded", created.ok, JSON.stringify(created.reason ?? null));
+  equal("the new timetable has its own start date", created.state.timetable?.anchorDate, "2027-01-04");
+  const [autumn] = await listArchivedTimetables(db);
+  equal("the archive list shows the archived timetable's start date", autumn.contents?.startDate, later);
+  const row = await db.getFirstAsync("SELECT snapshot FROM archived_timetables WHERE id = ?", autumn.id);
+  const parsed = parseTimetableSnapshot(row.snapshot);
+  equal("...which is exactly what its snapshot holds", parsed.ok ? parsed.snapshot.timetable.anchorDate : null, later);
+
+  // Switching gives each timetable back its own date.
+  const restored = await restoreArchivedTimetable(db, created.state, autumn.id, NOW);
+  check("restoring succeeded", restored.ok, JSON.stringify(restored.reason ?? null));
+  equal("restoring brings back that timetable's own start date", restored.state.timetable?.anchorDate, later);
+  const [spring] = await listArchivedTimetables(db);
+  equal("...and the one it replaced keeps its own in the archive", spring.contents?.startDate, "2027-01-04");
+
+  const back = await restoreArchivedTimetable(db, restored.state, spring.id, NOW);
+  check("switching back succeeded", back.ok, JSON.stringify(back.reason ?? null));
+  equal("switching back restores the other timetable's date", back.state.timetable?.anchorDate, "2027-01-04");
+  db.closeSync();
+
+  relaunched = await reopen(path);
+  equal("...which is what a cold reopen finds", relaunched.state.timetable?.anchorDate, "2027-01-04");
+  const [autumnAgain] = await listArchivedTimetables(relaunched.db);
+  equal("...with the other date still exact in the archive", autumnAgain.contents?.startDate, later);
+  relaunched.db.closeSync();
+
+  // The creation flow: the date the sheet chose is the date stored.
+  equal("a chosen start date passes through the route intact", timetableStartDateFrom("2026-09-09"), "2026-09-09");
+  equal("an impossible date falls back to this week's Monday", timetableStartDateFrom("2026-02-30"), defaultTimetableAnchorDate());
+  equal("so does a missing one", timetableStartDateFrom(undefined), defaultTimetableAnchorDate());
+  equal("...and that default is a Monday", weekdayOfIsoDate(defaultTimetableAnchorDate()), "monday");
+
+  const freshPath = nextPath();
+  const fresh = await open(freshPath);
+  const empty = {
+    settings: {
+      weekendMode: "saturdaySunday",
+      gridOrientation: "vertical",
+      academicDayStart: "07:30",
+      defaultLessonDurationMinutes: 90,
+      defaultBreakDurationMinutes: 20,
+      slotCount: 8,
+      defaultReminderMinutes: 30,
+      appearancePreference: "system",
+      languagePreference: "system",
+      onboardingCompleted: false,
+    },
+    timetable: null,
+    timeSlots: [],
+    courses: [],
+    placements: [],
+    exceptions: [],
+  };
+  const midweek = await createTimetable(fresh.db, empty, {
+    ...newTimetableInput("Midweek"),
+    anchorDate: timetableStartDateFrom("2026-09-09"),
+  });
+  check("creating a mid-week timetable succeeded", midweek.ok, JSON.stringify(midweek.reason ?? null));
+  equal("it starts on exactly the day chosen", midweek.state.timetable?.anchorDate, "2026-09-09");
+  fresh.db.closeSync();
+  const freshAgain = await reopen(freshPath);
+  equal("...after a cold reopen too", freshAgain.state.timetable?.anchorDate, "2026-09-09");
+  freshAgain.db.closeSync();
+}
+
 /* -------------------------------------------------------------------- entry */
 
 export async function runLifecycleHarness() {
@@ -1586,6 +1701,7 @@ export async function runLifecycleHarness() {
     await testReminderReconciliation();
     await testNoActiveTimetable();
     await testNavigationGate();
+    await testTimetableStartDate();
     testNames();
   } finally {
     try {

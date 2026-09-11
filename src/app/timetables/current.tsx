@@ -4,6 +4,8 @@ import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
 import { ChoiceRowField } from "@/components/ChoiceRowField";
+import { DateField } from "@/components/DateField";
+import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { FormSection, NavigationRow } from "@/components/FormSection";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
@@ -20,9 +22,13 @@ import { useTheme } from "@/theme/useTheme";
 /**
  * The current timetable.
  *
- * Four things: its name, what it looks like, a way into the academic day, and
- * Archive. Nothing else — no id, no created date, no class count. Those are
- * facts about a database row, and this screen is about a timetable.
+ * Its name, when it starts, which days it shows, a way into the academic day,
+ * and Archive. Nothing else — no id, no created date, no class count. Those
+ * are facts about a database row, and this screen is about a timetable.
+ *
+ * The start date commits on Done, the way the days-shown choice commits on
+ * tap. Moving it later hides the classes before it and deletes nothing — the
+ * sheet says so in those words — so there is nothing to confirm twice.
  *
  * The name is editable in place and saved with the header's Save, because a
  * rename is a one-field form and a row that opened a second screen to change
@@ -35,12 +41,13 @@ import { useTheme } from "@/theme/useTheme";
 export default function CurrentTimetableScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t } = useI18n();
-  const { state, renameActiveTimetable, archiveCurrentTimetable, setWeekendMode } = useAppState();
+  const { state, renameActiveTimetable, setTimetableStartDate, archiveCurrentTimetable, setWeekendMode } = useAppState();
 
   const { timetable } = state;
   const [name, setName] = useState(timetable?.name ?? "");
   const [nameError, setNameError] = useState<DomainError | undefined>();
   const [busy, setBusy] = useState(false);
+  const [startSheetOpen, setStartSheetOpen] = useState(false);
 
   /*
    * Archiving from this very screen is what removes the active timetable, and
@@ -113,6 +120,7 @@ export default function CurrentTimetableScreen() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <ScreenContainer
       header={
         <ScreenHeader
@@ -134,6 +142,11 @@ export default function CurrentTimetableScreen() {
           placeholder={t("onboarding.timetableNamePlaceholder")}
           error={nameError ? t(nameError.key, nameError.params) : undefined}
           maxLength={MAX_TIMETABLE_NAME_LENGTH}
+        />
+        <DateField
+          label={t("timetables.startsOn")}
+          value={timetable.anchorDate}
+          onPress={() => setStartSheetOpen(true)}
         />
         {/* Which days this timetable has classes on is edited here and only
             here. It is a single choice, so it commits on tap, the way every
@@ -172,5 +185,19 @@ export default function CurrentTimetableScreen() {
 
       <View style={{ height: spacing.xl }} />
     </ScreenContainer>
+
+      {startSheetOpen ? (
+        <DatePickerSheet
+          title={t("timetables.startDateTitle")}
+          value={timetable.anchorDate}
+          note={t("timetables.startDateNote")}
+          onCancel={() => setStartSheetOpen(false)}
+          onConfirm={(startDate) => {
+            setStartSheetOpen(false);
+            setTimetableStartDate({ startDate });
+          }}
+        />
+      ) : null}
+    </View>
   );
 }

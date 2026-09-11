@@ -100,6 +100,8 @@ export interface ArchivedTimetableSummary {
   archivedAt: string;
   createdAt: string;
   contents: {
+    /** The timetable's start date, exactly as it was when archived. */
+    startDate: string;
     weekendMode: TimetableSettings["weekendMode"];
     slotCount: number;
     /** First period's start and last period's end, or null with no periods. */
@@ -122,6 +124,7 @@ function summaryOf(row: ArchivedTimetableRow): ArchivedTimetableSummary {
 function contentsSummaryOf(snapshot: TimetableSnapshot): NonNullable<ArchivedTimetableSummary["contents"]> {
   const ordered = [...snapshot.timeSlots].sort((a, b) => a.position - b.position);
   return {
+    startDate: snapshot.timetable.anchorDate,
     weekendMode: snapshot.settings.weekendMode,
     slotCount: snapshot.settings.slotCount,
     dayStart: ordered[0]?.startTime ?? null,
@@ -359,8 +362,8 @@ export interface NewTimetableInput {
   /** Generated from those settings; ids already assigned. */
   timeSlots: TimeSlot[];
   /**
-   * The week new weekly classes will start from. Today's week, normally —
-   * passed in rather than read here so the domain owns what "this week" means.
+   * The timetable's start date, as the creation flow collected it — this
+   * week's Monday unless the user chose another.
    */
   anchorDate: string;
   /** The moment, as an ISO timestamp. */

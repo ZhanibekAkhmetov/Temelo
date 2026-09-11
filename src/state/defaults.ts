@@ -1,5 +1,5 @@
 import { startOfWeekIso } from "@/domain/calendar";
-import { todayIsoDate } from "@/domain/date";
+import { isValidIsoDate, todayIsoDate } from "@/domain/date";
 import { generateTimeSlots } from "@/domain/time";
 import { createId } from "@/domain/id";
 import { DEFAULT_REMINDER_MINUTES } from "@/domain/reminder";
@@ -24,16 +24,25 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 /**
- * Where a new timetable's weekly classes start from.
+ * The start date a new timetable is offered.
  *
- * The Monday of the week it is created in, and nothing more. It is not a
- * semester start — nothing ends because of it and it is never shown — it is
- * simply the earliest week a class added to this timetable is visible in, so
- * that paging back through the weeks of a timetable shows the timetable rather
- * than a grid that empties out. See `defaultSeriesStartDate`.
+ * The Monday of the week it is created in, so a timetable made on a Wednesday
+ * still covers the Monday and Tuesday the user can see on the grid. The user
+ * can change it in the creation flow and later. It is a start and nothing
+ * more: there is no end date, and nothing stops because of it. See
+ * `Timetable.anchorDate`.
  */
 export function defaultTimetableAnchorDate(): string {
   return startOfWeekIso(todayIsoDate());
+}
+
+/**
+ * A timetable start date that arrived as untyped input — a route parameter —
+ * or the default when it is not a real date. The creation flow carries the
+ * date between its two steps this way, so this is where it is checked.
+ */
+export function timetableStartDateFrom(value: unknown): string {
+  return typeof value === "string" && isValidIsoDate(value) ? value : defaultTimetableAnchorDate();
 }
 
 export function createDefaultTimeSlots(): TimeSlot[] {

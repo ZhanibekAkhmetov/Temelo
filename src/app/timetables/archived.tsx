@@ -22,9 +22,9 @@ import { useTheme } from "@/theme/useTheme";
  * deleting are below it, in that order, with Delete last because it is the one
  * that cannot be taken back.
  *
- * What it shows about the timetable is the same one-line shape the list shows
- * — the days it covers and the hours its day runs — and the day it was
- * archived. Not its id, not the snapshot format, not how many classes are in
+ * What it shows about the timetable is when it starts, the same one-line shape
+ * the list shows — the days it covers and the hours its day runs — and the day
+ * it was archived. Not its id, not the snapshot format, not how many classes are in
  * it. The user archived it; they know what is in it, and a row reading
  * "34 records" would be the app talking about itself.
  */
@@ -196,6 +196,11 @@ export default function ArchivedTimetableScreen() {
         />
         {contents ? (
           <>
+            {/* Read-only here: an archive is a record of the timetable as it
+                was put away. Restore it to change when it starts. */}
+            <FieldRow label={t("timetables.startsOn")}>
+              <FieldValue muted>{format.dateLong(contents.startDate)}</FieldValue>
+            </FieldRow>
             <FieldRow label={t("timetables.days")}>
               <FieldValue muted>{daysLabel(t, format, contents.weekendMode)}</FieldValue>
             </FieldRow>

@@ -26,9 +26,13 @@ import { findPeriodProgress, generateTimeSlots } from "@/domain/time";
 import { clashHorizon, occursOn, OPEN_ENDED_DATE } from "@/domain/recurrence";
 import { resolveWeekBlocks } from "@/domain/timetable";
 import { findPlacementConflict } from "@/domain/conflict";
+import { planReminders } from "@/domain/reminderSchedule";
 import { getOrderedWeekdays } from "@/domain/week";
 import {
+  directJump,
   pagerStep,
+  pagesInView,
+  weekOffsetOfPage,
   weekPageWindow,
   PAGE_WINDOW_RADIUS,
   PAGE_WINDOW_SIZE,
@@ -525,6 +529,222 @@ function testMonthPagerSwipeSemantics() {
   );
 }
 
+/* ------------------------- I: Today from far away lands on screen at once */
+
+/** Where paging leaves the pager: one committed page per week swiped, the shift untouched. */
+function swipedFrom(address, weeks) {
+  return { baseIndex: address.baseIndex + weeks, weekShift: address.weekShift };
+}
+
+/**
+ * What pressing Today does, exactly as `TimetableSurface` does it: the step is
+ * measured from where the pager is, the target is whichever page draws week 0
+ * under the current shift, and a jump re-addresses the page the pager is
+ * pinned to — `Math.round(pos)`, which during a settle is not the committed one.
+ */
+function pressToday(address, pos = address.baseIndex) {
+  const resting = Math.round(pos);
+  const step = pagerStep(resting, -address.weekShift);
+  if (step.kind !== "jump") return { step, address };
+  return { step, address: directJump(resting, weekOffsetOfPage(step.to, address.weekShift)) };
+}
+
+function checkLandedOnToday(label, address, pos) {
+  const centred = pagesInView(address, pos).filter((page) => page.offset === 0);
+  equal(`${label}: one page is fully on screen`, centred.length, 1);
+  equal(`${label}: ...and it draws the current week`, centred[0]?.weekOffset, 0);
+  equal(
+    `${label}: its neighbours are last week and next week`,
+    weekPageWindow(address.baseIndex)
+      .map((slot) => weekOffsetOfPage(slot.pageIndex, address.weekShift))
+      .sort((a, b) => a - b)
+      .join(","),
+    "-1,0,1",
+  );
+  equal(
+    `${label}: still exactly three page identities`,
+    new Set(weekPageWindow(address.baseIndex).map((slot) => slot.key)).size,
+    PAGE_WINDOW_SIZE,
+  );
+}
+
+function testDirectJumpLandsOnScreen() {
+  section("I. Today after distant paging: three valid pages, on screen, at once");
+
+  /*
+   * The device report, reproduced as the arithmetic that caused it. The old
+   * jump moved the pager's position to 0 but — having read the position back
+   * before that write had landed — left the window centred on week 100. Every
+   * page then sat a hundred page-widths away from the viewport.
+   */
+  equal(
+    "the old jump (position moved, window left behind) put nothing on screen",
+    pagesInView({ baseIndex: 100, weekShift: 0 }, 0).length,
+    0,
+  );
+
+  const start = { baseIndex: 0, weekShift: 0 };
+  for (const distance of [2, 20, 100, -20, -100]) {
+    const away = swipedFrom(start, distance);
+    const { step, address: home } = pressToday(away);
+    equal(`Today from ${distance}: a direct jump, not a slide`, step.kind, "jump");
+    equal(`Today from ${distance}: the pager itself does not move`, home.baseIndex, away.baseIndex);
+    checkLandedOnToday(`Today from ${distance}`, home, home.baseIndex);
+    // Constant time: the same three slots at the same page indices, so no
+    // transform changes and nothing mounts — only which week each one draws.
+    equal(
+      `Today from ${distance}: the same slots at the same positions, re-addressed`,
+      weekPageWindow(home.baseIndex).map((slot) => `${slot.key}@${slot.pageIndex}`).join(","),
+      weekPageWindow(away.baseIndex).map((slot) => `${slot.key}@${slot.pageIndex}`).join(","),
+    );
+  }
+
+  const home = pressToday(swipedFrom(start, 100)).address;
+  equal("pressing Today again does nothing", pressToday(home).step.kind, "none");
+  equal("...and again", pressToday(pressToday(home).address).step.kind, "none");
+
+  // Ordinary paging carries on from today, in both directions.
+  const next = swipedFrom(home, 1);
+  equal(
+    "a swipe after the jump reaches next week",
+    pagesInView(next, next.baseIndex).find((page) => page.offset === 0)?.weekOffset,
+    1,
+  );
+  const previous = swipedFrom(home, -1);
+  equal(
+    "...and back reaches last week",
+    pagesInView(previous, previous.baseIndex).find((page) => page.offset === 0)?.weekOffset,
+    -1,
+  );
+
+  // Repeated jumps compose: the shift is re-derived each time, never accumulated.
+  let address = start;
+  for (const distance of [100, -60, 37, -250]) {
+    address = pressToday(swipedFrom(address, distance)).address;
+    checkLandedOnToday(`paging ${distance} more, then Today`, address, address.baseIndex);
+  }
+
+  /*
+   * A jump while a settle is still running. The committed page lags the
+   * spring, so the pager is pinned to the page it is nearest and *that* page is
+   * re-addressed — whichever side of the midpoint the spring had reached.
+   */
+  for (const pos of [100.4, 99.6, 100.49, -99.7]) {
+    const settling = { baseIndex: Math.trunc(pos), weekShift: 0 };
+    const { step, address: landed } = pressToday(settling, pos);
+    equal(`Today during a settle at ${pos}: still a jump`, step.kind, "jump");
+    checkLandedOnToday(`Today during a settle at ${pos}`, landed, Math.round(pos));
+  }
+}
+
+/* ------------------------------ J: the timetable's start date, as a bound */
+
+function testTimetableStartBound() {
+  section("J. The timetable's start date is a lower bound on occurrences, and nothing more");
+
+  const base = fixture();
+  // A Monday four weeks after the fixture's own first week.
+  const START = addDaysIso(ANCHOR_WEEK, 28);
+  const bounded = (start) => ({ ...base, timetableStart: start });
+  const blocksIn = (source, weekStart) =>
+    resolveWeekBlocks({
+      weekdays: WEEKDAYS,
+      dates: weekDatesFrom(weekStart),
+      placements: source.placements,
+      courses: source.courses,
+      exceptions: source.exceptions,
+      timeSlots: source.timeSlots,
+      preview: null,
+      timetableStart: source.timetableStart,
+    });
+  const count = (blocks, name) => blocks.filter((block) => block.course.name === name).length;
+  const maths = base.placements.find((placement) => placement.id === "p-maths");
+
+  // The calendar is still free before the start; the timetable is not in it.
+  const weekBefore = addDaysIso(START, -7);
+  equal("a week before the start is a week the pager can still show", weekPageWindow(-4).length, PAGE_WINDOW_SIZE);
+  check("the weekly class meets that week by its own rule", occursOn(maths, weekBefore), "the fixture is wrong");
+  equal("...but the timetable has not started, so the grid is empty", blocksIn(bounded(START), weekBefore).length, 0);
+  equal("the week it starts draws the weekly class", count(blocksIn(bounded(START), START), "Mathematics"), 1);
+  equal("...and so does a week long after", count(blocksIn(bounded(START), addDaysIso(START, 7 * 30)), "Mathematics"), 1);
+  equal(
+    "a start on a Wednesday hides that week's Monday — the bound is a date, not a week",
+    count(blocksIn(bounded(addDaysIso(START, 2)), START), "Mathematics"),
+    0,
+  );
+
+  /*
+   * Parity. The alternating class must meet on exactly the dates it always
+   * did, minus the ones before the start — for any start at all, including
+   * ones that fall mid-week or on the "other" half of its fortnight. If the
+   * bound re-anchored anything, one of these would shift by a week.
+   */
+  const history = base.placements.find((placement) => placement.id === "p-hist");
+  const historyDates = (source) => {
+    const dates = [];
+    for (let week = 0; week < 24; week++) {
+      for (const block of blocksIn(source, addDaysIso(ANCHOR_WEEK, week * 7))) {
+        if (block.course.name === "History") dates.push(block.date);
+      }
+    }
+    return dates;
+  };
+  const unbounded = historyDates(base);
+  check("the alternating class meets at all in the window", unbounded.length >= 8, `met ${unbounded.length} times`);
+  for (const start of [START, addDaysIso(START, 7), addDaysIso(START, 3), addDaysIso(START, 49)]) {
+    equal(
+      `start ${start}: the alternating class keeps exactly its own weeks`,
+      historyDates(bounded(start)).join(","),
+      unbounded.filter((date) => date >= start).join(","),
+    );
+  }
+  equal("...because the series' own anchor was never touched", history.startsOn, addDaysIso(ANCHOR_WEEK, 8));
+
+  // One-time classes.
+  const trip = base.placements.find((placement) => placement.id === "p-trip");
+  const tripWeek = startOfWeekIso(trip.startsOn);
+  equal("a one-off on or after the start is drawn", count(blocksIn(bounded(START), tripWeek), "Museum trip"), 1);
+  equal(
+    "a one-off before the start is not",
+    count(blocksIn(bounded(addDaysIso(trip.startsOn, 1)), tripWeek), "Museum trip"),
+    0,
+  );
+
+  // Reminders come from the same resolver, so the same bound.
+  const text = { startsIn: (lead) => `in ${lead}`, room: (room) => `Room ${room}` };
+  const fromDate = weekBefore;
+  const plan = (start) =>
+    planReminders({ ...base, timetableStart: start, fromDate, now: Date.parse(`${fromDate}T00:00:00`), text });
+  const open = plan(null);
+  check("unbounded, the window holds reminders before the start", open.some((r) => r.date < START), "the test is vacuous");
+  const startedPlan = plan(START);
+  equal("no reminder is planned before the timetable starts", startedPlan.filter((r) => r.date < START).length, 0);
+  check("reminders on and after the start are still planned", startedPlan.length > 0, "none were planned");
+  equal(
+    "...exactly the ones an unbounded plan has from that date on",
+    startedPlan.map((r) => r.key).join("|"),
+    open.filter((r) => r.date >= START).map((r) => r.key).join("|"),
+  );
+
+  // Conflicts: an occurrence the timetable does not have cannot be in the way.
+  const oneOff = (date) => ({
+    placementId: undefined,
+    weekday: "monday",
+    timeSlotId: maths.timeSlotId,
+    slotSpan: 1,
+    recurrenceType: "once",
+    startsOn: date,
+    endsOn: date,
+  });
+  check("unbounded, a one-off in the weekly class's slot clashes", findPlacementConflict(base, oneOff(weekBefore)) !== undefined, "no clash");
+  equal("before the start there is nothing there to clash with", findPlacementConflict(bounded(START), oneOff(weekBefore)), undefined);
+  check(
+    "from the start date the weekly class defends its slot again",
+    findPlacementConflict(bounded(START), oneOff(START)) !== undefined,
+    "no clash",
+  );
+}
+
 export function runNavigationHarness() {
   testBoundedPageWindow();
   testResolutionIsLocal();
@@ -533,4 +753,6 @@ export function runNavigationHarness() {
   testClashCheckStaysBounded();
   testHorizontalNowIndicator();
   testMonthPagerSwipeSemantics();
+  testDirectJumpLandsOnScreen();
+  testTimetableStartBound();
 }

@@ -8,7 +8,7 @@ import type { DomainError } from "@/domain/errors";
 import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
 import { AcademicDayFields, isUsableAcademicDay } from "@/features/timetables/AcademicDayFields";
 import { useI18n } from "@/i18n/I18nProvider";
-import { DEFAULT_SETTINGS } from "@/state/defaults";
+import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
 import { useAppState, type AcademicDayConfigInput } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 
@@ -26,7 +26,7 @@ function weekendModeFrom(value: unknown): WeekendMode {
  * current timetable has not been touched, so backing out of here, or out of
  * step one, costs them nothing.
  *
- * The two answers from step one arrive as route parameters rather than through
+ * The answers from step one arrive as route parameters rather than through
  * a draft held in app state. A draft would be a fifth thing the store had to
  * own, would survive being abandoned, and would need clearing on every exit
  * path; parameters are gone the moment the screen is.
@@ -35,9 +35,12 @@ export default function NewAcademicDayScreen() {
   const { colors, spacing, typography } = useTheme();
   const { t } = useI18n();
   const { createNewTimetable } = useAppState();
-  const params = useLocalSearchParams<{ name?: string; weekendMode?: string }>();
+  const params = useLocalSearchParams<{ name?: string; startDate?: string; weekendMode?: string }>();
 
   const name = typeof params.name === "string" ? params.name : "";
+  // Checked, because a route parameter is input: anything that is not a real
+  // date becomes this week's Monday rather than a timetable that never starts.
+  const startDate = timetableStartDateFrom(params.startDate);
   const weekendMode = weekendModeFrom(params.weekendMode);
 
   const [academicDay, setAcademicDay] = useState<AcademicDayConfigInput>({
@@ -52,7 +55,7 @@ export default function NewAcademicDayScreen() {
   function handleCreate() {
     setFormError(undefined);
     setBusy(true);
-    void createNewTimetable({ name, weekendMode, academicDay }).then((result) => {
+    void createNewTimetable({ name, startDate, weekendMode, academicDay }).then((result) => {
       setBusy(false);
       if (!result.ok) {
         setFormError(result.error);

@@ -21,6 +21,7 @@ export const en = {
   "common.save": "Save",
   "common.delete": "Delete",
   "common.close": "Close",
+  "common.done": "Done",
   "common.back": "Back",
   "common.continue": "Continue",
   "common.finish": "Finish",
@@ -50,6 +51,9 @@ export const en = {
   "timetable.classAt": "{name}, {weekday}, period {period}",
   "timetable.classAtTime": "{name}, {weekday}, period {period}, {start} to {end}",
   "timetable.emptySlotAtTime": "Empty slot, {weekday}, period {period}, {start} to {end}",
+  "timetable.beforeStartTitle": "Before this timetable starts",
+  "timetable.beforeStartMessage":
+    "{name} starts on {date}. To add classes earlier, change its start date in Timetables.",
 
   // ----------------------------------------------------------- classEditor
   "classEditor.newTitle": "New class",
@@ -220,6 +224,10 @@ export const en = {
   "timetables.name": "Name",
   "timetables.academicDay": "Academic day",
   "timetables.days": "Days shown",
+  "timetables.startsOn": "Starts on",
+  "timetables.startDateTitle": "Timetable start",
+  "timetables.startDateNote": "Classes before this date won't appear. Nothing will be deleted.",
+  "timetables.currentBadge": "Current",
   "timetables.archivedOn": "Archived {date}",
   "timetables.summary": "{days} · {hours}",
   "timetables.daysRange": "{first}–{last}",
@@ -242,7 +250,7 @@ export const en = {
   "timetables.deleteConfirm": "Delete",
   "timetables.damaged": "This archived timetable cannot be read and cannot be restored.",
   "timetables.createTitle": "New timetable",
-  "timetables.createSubtitle": "Name it and choose which days have classes.",
+  "timetables.createSubtitle": "Name it, choose when it starts and which days have classes.",
   "timetables.createReplaceNotice":
     "{name} will be archived when this timetable is created — not before. Nothing is deleted.",
   "timetables.createFinish": "Create timetable",
@@ -255,6 +263,7 @@ export const en = {
   "errors.archiveGone": "This archived timetable no longer exists.",
   "errors.archiveUnreadable": "This archived timetable is damaged and cannot be restored.",
   "errors.classGone": "This class no longer exists.",
+  "errors.beforeTimetableStart": "This date is before the timetable starts.",
   "errors.startDateInvalid": "Start date must be a valid date (DD.MM.YYYY).",
   "errors.endDateInvalid": "End date must be a valid date (DD.MM.YYYY).",
   "errors.dateInvalid": "Enter a valid date as DD.MM.YYYY.",

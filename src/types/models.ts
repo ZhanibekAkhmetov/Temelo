@@ -85,9 +85,9 @@ export type TimetableSettings = Pick<Settings, TimetableSettingKey>;
  *
  * This replaces the old `AcademicTerm`, and the difference is not only the
  * name. A term was a *date range* — a required start, an estimated end — and
- * that range was what stopped recurring classes. A timetable has no dates the
- * user can see at all: it is a name over a set of periods and classes, and a
- * weekly class in it repeats until the user says otherwise.
+ * that range was what stopped recurring classes. A timetable has a start and
+ * no end: it is a name over a set of periods and classes, and a weekly class
+ * in it repeats until the user says otherwise.
  *
  * There is at most one active timetable at a time. `null` where a
  * `Timetable` is expected is a real state — the user archived their only one
@@ -97,17 +97,25 @@ export interface Timetable {
   id: string;
   name: string;
   /**
-   * Where a new weekly series starts, when the user has not said.
+   * The timetable's start date — "Starts on" in the UI.
    *
-   * Internal, and deliberately never shown: it is not a semester start and
-   * nothing stops because of it. A weekly class is anchored *somewhere* or it
-   * could not be stored at all, and anchoring each one at the week it was
-   * created in would make a class added in November invisible in October —
-   * which is not what a timetable is. So the timetable carries one anchor,
-   * set to the week it was created in, and a new weekly class starts there.
+   * Stored as `anchor_date` since migration v6, and the name is kept because
+   * renaming a column is a migration with nothing to show for it. It does two
+   * things, and both follow from "this is when the timetable begins":
    *
-   * An upgrading user's timetable inherits the old term's start date, so not
-   * one existing class re-anchors and no alternating class changes weeks.
+   *  - it is a lower bound on every occurrence. Nothing in the timetable is
+   *    drawn, clash-checked or reminded before it (see `OccurrenceSource`). The
+   *    calendar itself stays navigable before it; those weeks are simply empty.
+   *  - it is where a new weekly class starts when the user has not said, so a
+   *    class added in November is still there when they page back to October.
+   *
+   * It is not a semester: there is no end date, and changing it rewrites
+   * nothing. Every series keeps its own `startsOn`, which is what keeps an
+   * alternating class on its own weeks whatever the timetable's start does.
+   *
+   * An upgrading user's timetable inherited the old term's start date in v6,
+   * so not one existing class re-anchored and no alternating class changed
+   * weeks. New timetables default to the Monday of the week they are made in.
    */
   anchorDate: string;
   createdAt: string;

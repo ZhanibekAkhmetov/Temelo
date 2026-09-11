@@ -67,6 +67,22 @@ export interface OccurrenceSource {
   courses: Course[];
   exceptions: OccurrenceException[];
   preview?: OccurrencePreview | null;
+  /**
+   * The timetable's start date: nothing in the timetable occurs before it.
+   *
+   * A lower bound on *dates*, applied on top of every series' own rule rather
+   * than instead of it. It does not touch a placement's `startsOn`, so an
+   * alternating class keeps its parity however often the timetable's start is
+   * moved, and moving it back brings the earlier occurrences back unchanged.
+   * Absent or null means no bound — which is what recurrence-level reasoning
+   * such as splitting a series wants.
+   */
+  timetableStart?: string | null;
+}
+
+/** Whether a date is inside the timetable at all — on or after its start. */
+export function isOnOrAfterTimetableStart(date: string, timetableStart: string | null | undefined): boolean {
+  return !timetableStart || date >= timetableStart;
 }
 
 /** The placement as an exception schedules it; the weekday follows the date. */
@@ -130,11 +146,16 @@ function exceptionsByPlacement(exceptions: OccurrenceException[]): Map<string, O
  * base occurrence it replaced, which is what keeps an edited occurrence from
  * being drawn twice — including when it was moved into another week, where
  * the suppression and the drawing happen on different dates entirely.
+ *
+ * Dates before the timetable's start are dropped before anything is resolved,
+ * so the bound holds for all three routes at once — a series' own occurrence,
+ * an exception moved onto that date, and an uncommitted preview — and for
+ * every caller: the grid, the clash check and the reminder plan.
  */
 export function resolveOccurrences(source: OccurrenceSource, dates: string[]): Occurrence[] {
-  const { placements, courses, exceptions, preview } = source;
+  const { placements, courses, exceptions, preview, timetableStart } = source;
   const byPlacement = exceptionsByPlacement(exceptions);
-  const wanted = new Set(dates);
+  const wanted = new Set(dates.filter((date) => isOnOrAfterTimetableStart(date, timetableStart)));
   const found: Occurrence[] = [];
 
   for (const placement of placements) {

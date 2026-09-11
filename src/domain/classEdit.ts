@@ -228,6 +228,12 @@ export interface EditableTimetable {
   courses: Course[];
   placements: Placement[];
   exceptions: OccurrenceException[];
+  /**
+   * The timetable's start date, so a clash is only judged on dates the
+   * timetable actually has. Read by the conflict check and nothing else here:
+   * splitting and rebasing reason about series, which the bound never changes.
+   */
+  timetableStart?: string | null;
 }
 
 export type EditResult = { ok: true; next: EditableTimetable } | { ok: false; error: DomainError };

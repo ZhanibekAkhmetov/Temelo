@@ -106,3 +106,71 @@ export function pagerStep(from: number, target: number): PagerStep {
   if (Math.abs(distance) > PAGE_WINDOW_RADIUS) return { kind: "jump", to: target };
   return { kind: "slide", to: from + Math.sign(distance) };
 }
+
+/**
+ * Which pages are mounted, and which week each of them draws.
+ *
+ * Two numbers, because a direct jump and a slide move different things. A
+ * slide moves the pager: `pos` springs to the neighbouring page and the window
+ * re-centres on it afterwards. A jump must not move the pager at all — see
+ * `directJump` — so it moves the *addressing* instead: `weekShift` is added to
+ * every page index to name the week that page draws.
+ */
+export interface PagerAddress {
+  /** Centre of the mounted window, in the pager's own page coordinates. */
+  baseIndex: number;
+  /** Weeks from the anchor week to the week drawn by page index 0. */
+  weekShift: number;
+}
+
+/** The week a page draws, in weeks from the anchor week. */
+export function weekOffsetOfPage(pageIndex: number, weekShift: number): number {
+  return pageIndex + weekShift;
+}
+
+/**
+ * Where a direct jump leaves the pager: on the page it was already resting on,
+ * with that page re-addressed to draw the target week.
+ *
+ * This is the fix for Today blanking the grid. The jump used to move `pos` —
+ * a shared value that lives on the UI thread — from the JS thread, and then
+ * read it straight back to decide which week was now committed. A write from
+ * the JS thread is only *queued* for the UI thread, so the read returned the
+ * page the pager had just left, the commit decided nothing had changed, and the
+ * window stayed centred a hundred weeks away. When the queued write landed,
+ * `pos` was 0 and every mounted page sat about a hundred page-widths off
+ * screen until a swipe happened to re-commit the window.
+ *
+ * Leaving `pos` where it is removes the whole class of problem rather than
+ * re-ordering it. The page on screen stays on screen, its two neighbours stay
+ * mounted either side of it, and all that changes is which weeks the three of
+ * them draw — props on three existing slots, in one React commit. There is no
+ * frame in which the pager is somewhere the pages are not.
+ */
+export function directJump(restingPage: number, targetWeek: number): PagerAddress {
+  return { baseIndex: restingPage, weekShift: targetWeek - restingPage };
+}
+
+export interface PageInView {
+  key: string;
+  pageIndex: number;
+  /** The week this page draws, in weeks from the anchor week. */
+  weekOffset: number;
+  /** Where the page sits, in page widths from the viewport: 0 is fully on screen. */
+  offset: number;
+}
+
+/**
+ * The mounted pages that overlap the viewport with the pager at `pos` — what
+ * the user actually sees. Empty is the blank grid.
+ */
+export function pagesInView(address: PagerAddress, pos: number): PageInView[] {
+  return weekPageWindow(address.baseIndex)
+    .map((slot) => ({
+      key: slot.key,
+      pageIndex: slot.pageIndex,
+      weekOffset: weekOffsetOfPage(slot.pageIndex, address.weekShift),
+      offset: slot.pageIndex - pos,
+    }))
+    .filter((page) => Math.abs(page.offset) < 1);
+}

@@ -81,10 +81,43 @@ interface ListRowProps {
   title: string;
   /** One quiet line about it: "Mon–Fri · 07:30–15:10", "Archived 11 Sep". */
   subtitle?: string;
+  /** A short status under the subtitle, in the accent — "Current". */
+  meta?: string;
   onPress: () => void;
   accessibilityLabel?: string;
   /** The last row of a group, where the group's own edge is the separator. */
   last?: boolean;
+  /** Drawn inside a `ListGroup`, so inset from the group's edges. */
+  grouped?: boolean;
+}
+
+/**
+ * Several `ListRow`s on one quiet surface — the timetables list.
+ *
+ * A group rather than a card per row, and only for lists of *things*: a
+ * timetable is an object you open, and a page of them drawn as bare text on
+ * the background read as loose lines rather than as a list. One restrained
+ * surface — the elevated background, a hairline edge, the app's usual corner —
+ * is enough to say "these belong together"; the rows inside keep their own
+ * hairlines between them. Forms stay ungrouped: see `FormSection`.
+ */
+export function ListGroup({ children }: { children: ReactNode }) {
+  const { colors, spacing, radii, borderWidth } = useTheme();
+
+  return (
+    <View
+      style={{
+        marginTop: spacing.xs,
+        backgroundColor: colors.surfaceElevated,
+        borderColor: colors.divider,
+        borderWidth: borderWidth.thin,
+        borderRadius: radii.lg,
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </View>
+  );
 }
 
 /**
@@ -101,17 +134,27 @@ interface ListRowProps {
  * height band, same full-row target as every other row in the app — the list
  * language is unchanged; only which half of the row carries the meaning is.
  *
- * Deliberately not a card. A card would say "this is a different kind of
- * object"; it is a list item, and there may be several.
+ * Not a card of its own. Several of them can share one `ListGroup` surface,
+ * which is how the timetables list reads as a list; on its own, in Settings,
+ * it is a plain row like its neighbours.
  */
-export function ListRow({ title, subtitle, onPress, accessibilityLabel, last = false }: ListRowProps) {
+export function ListRow({
+  title,
+  subtitle,
+  meta,
+  onPress,
+  accessibilityLabel,
+  last = false,
+  grouped = false,
+}: ListRowProps) {
   const { colors, spacing, typography, borderWidth } = useTheme();
+  const spoken = [title, subtitle, meta].filter(Boolean).join(", ");
 
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? (subtitle ? `${title}, ${subtitle}` : title)}
+      accessibilityLabel={accessibilityLabel ?? spoken}
       // The same tolerance every row in the app has: a finger that drifts a few
       // points while pressing has not changed its mind, and the neighbours are
       // other rows rather than empty space.
@@ -119,7 +162,8 @@ export function ListRow({ title, subtitle, onPress, accessibilityLabel, last = f
       style={({ pressed }) => [
         styles.listRow,
         {
-          paddingVertical: spacing.sm,
+          paddingVertical: grouped ? spacing.md : spacing.sm,
+          paddingHorizontal: grouped ? spacing.lg : 0,
           gap: spacing.md,
           borderBottomWidth: last ? 0 : borderWidth.thin,
           borderColor: colors.divider,
@@ -128,12 +172,20 @@ export function ListRow({ title, subtitle, onPress, accessibilityLabel, last = f
       ]}
     >
       <View style={styles.listRowText}>
-        <Text style={[typography.body, { color: colors.textPrimary }]} numberOfLines={2}>
+        <Text
+          style={[typography.body, grouped ? styles.groupedTitle : null, { color: colors.textPrimary }]}
+          numberOfLines={2}
+        >
           {title}
         </Text>
         {subtitle ? (
           <Text style={[typography.caption, { color: colors.textMuted, marginTop: 2 }]} numberOfLines={1}>
             {subtitle}
+          </Text>
+        ) : null}
+        {meta ? (
+          <Text style={[typography.caption, styles.meta, { color: colors.accentStrong, marginTop: spacing.xs }]}>
+            {meta}
           </Text>
         ) : null}
       </View>
@@ -163,5 +215,11 @@ const styles = StyleSheet.create({
   listRowText: {
     flexShrink: 1,
     flexGrow: 1,
+  },
+  groupedTitle: {
+    fontWeight: "600",
+  },
+  meta: {
+    fontWeight: "600",
   },
 });

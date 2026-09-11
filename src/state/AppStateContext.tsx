@@ -7,14 +7,14 @@ import { findOccurrenceConflict, findPlacementConflict, type PlacementCandidate 
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { domainError, type DomainError } from "@/domain/errors";
 import { createId } from "@/domain/id";
-import type { Occurrence } from "@/domain/occurrence";
+import { isOnOrAfterTimetableStart, type Occurrence } from "@/domain/occurrence";
 import { seriesRangeMovedTo } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import type { LanguagePreference } from "@/i18n/language";
 import type { AppearancePreference } from "@/theme/appearance";
-import { DEFAULT_SETTINGS, defaultTimetableAnchorDate } from "@/state/defaults";
+import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
 import { createSampleTimetable } from "@/state/sampleTimetable";
 import { bootstrapStorage } from "@/storage/bootstrap";
 import { readStorageReport as readStorageReport_, type StorageReport } from "@/storage/diagnostics";
@@ -111,11 +111,13 @@ export interface AcademicDayConfigInput {
 /**
  * Everything the creation flow collects, in the order it collects it.
  *
- * No start date and no end date, which is the whole point of the new model:
- * there is nothing to ask, because nothing stops.
+ * A start date and no end date: a timetable begins somewhere, and nothing in
+ * it stops.
  */
 export interface CreateTimetableInput {
   name: string;
+  /** ISO date; anything that is not a real date falls back to this week's Monday. */
+  startDate: string;
   weekendMode: WeekendMode;
   academicDay: AcademicDayConfigInput;
 }
@@ -209,6 +211,15 @@ interface AppStateContextValue {
    */
   renameActiveTimetable: (input: { name: string }) => ActionResult;
   /**
+   * Moves the active timetable's start date.
+   *
+   * An ordinary state change like the rename, and deliberately nothing more:
+   * no placement, exception or series anchor is touched. Occurrences before the
+   * new date stop being drawn and reminded because the bound moved, and come
+   * back unchanged if it moves back.
+   */
+  setTimetableStartDate: (input: { startDate: string }) => ActionResult;
+  /**
    * Creates a timetable, makes it active, and archives whatever was active
    * before — in one storage transaction.
    *
@@ -289,7 +300,28 @@ function buildInitialState(): AppState {
  * one that has been moved into a slot does.
  */
 function findConflict(state: AppState, candidate: PlacementCandidate): Occurrence | undefined {
-  return findPlacementConflict(state, candidate);
+  return findPlacementConflict(occurrenceSourceOf(state), candidate);
+}
+
+/**
+ * The stored timetable as the occurrence rules read it: bounded below by its
+ * start date, so a clash is only ever judged on a date the timetable has.
+ */
+function occurrenceSourceOf(state: AppState) {
+  return { ...state, timetableStart: state.timetable?.anchorDate ?? null };
+}
+
+/** Whether a date falls before the active timetable starts. */
+function isBeforeTimetableStart(state: AppState, date: string): boolean {
+  return !isOnOrAfterTimetableStart(date, state.timetable?.anchorDate);
+}
+
+/**
+ * Refuses to put an occurrence where the timetable does not reach. It would be
+ * saved and then never drawn, which reads as the save not having happened.
+ */
+function beforeStartError(): ActionResult {
+  return { ok: false, error: domainError("errors.beforeTimetableStart") };
 }
 
 function conflictError(conflict: Occurrence): ActionResult {
@@ -611,6 +643,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: true };
     };
 
+    const setTimetableStartDate: AppStateContextValue["setTimetableStartDate"] = (input) => {
+      if (!state.timetable) return { ok: false, error: domainError("errors.noActiveTimetable") };
+      if (!isValidIsoDate(input.startDate)) return { ok: false, error: domainError("errors.dateInvalid") };
+      if (input.startDate === state.timetable.anchorDate) return { ok: true };
+
+      const now = new Date().toISOString();
+      setState((prev) =>
+        prev.timetable
+          ? { ...prev, timetable: { ...prev.timetable, anchorDate: input.startDate, updatedAt: now } }
+          : prev,
+      );
+      return { ok: true };
+    };
+
     /*
      * The four operations that replace one whole timetable with another.
      *
@@ -720,7 +766,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           startTime: slot.startTime,
           endTime: slot.endTime,
         })),
-        anchorDate: defaultTimetableAnchorDate(),
+        anchorDate: timetableStartDateFrom(input.startDate),
         now: new Date().toISOString(),
       };
 
@@ -787,6 +833,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!isIsoDateBeforeOrEqual(input.startsOn, input.endsOn)) {
         return { ok: false, error: domainError("errors.endBeforeStart") };
       }
+      // A one-off *is* its date. A series may begin earlier than the timetable
+      // — it is simply not drawn until the timetable starts — but a one-off
+      // placed before it would never be drawn at all.
+      if (input.recurrenceType === "once" && isBeforeTimetableStart(state, input.startsOn)) return beforeStartError();
 
       const slotSpan = Math.max(1, input.slotSpan ?? 1);
       const conflict = findConflict(state, {
@@ -905,6 +955,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const checkPlacement: AppStateContextValue["checkPlacement"] = (input) => {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
       if (!existing || existing.deletedAt) return { ok: false, error: domainError("errors.classGone") };
+      if (isBeforeTimetableStart(state, input.date)) return beforeStartError();
 
       const conflict = findConflict(state, movedCandidate(existing, input));
       return conflict ? conflictError(conflict) : { ok: true };
@@ -917,7 +968,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      * its series answers only for its own date.
      */
     const checkOccurrence: AppStateContextValue["checkOccurrence"] = (input) => {
-      const conflict = findOccurrenceConflict(state, {
+      if (isBeforeTimetableStart(state, input.date)) return beforeStartError();
+      const conflict = findOccurrenceConflict(occurrenceSourceOf(state), {
         occurrenceId: input.occurrenceId,
         date: input.date,
         timeSlotId: input.timeSlotId,
@@ -934,6 +986,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const movePlacement: AppStateContextValue["movePlacement"] = (input) => {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
       if (!existing || existing.deletedAt) return { ok: false, error: domainError("errors.classGone") };
+      if (isBeforeTimetableStart(state, input.date)) return beforeStartError();
 
       const candidate = movedCandidate(existing, input);
       const dates = { startsOn: candidate.startsOn, endsOn: candidate.endsOn };
@@ -972,12 +1025,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      * result becomes state.
      */
     const applyClassEdit: AppStateContextValue["applyClassEdit"] = (draft, scope) => {
+      if (isBeforeTimetableStart(state, draft.effectiveDate)) return beforeStartError();
       const result = applyClassEditScope(
         {
           timeSlots: state.timeSlots,
           courses: state.courses,
           placements: state.placements,
           exceptions: state.exceptions,
+          timetableStart: state.timetable?.anchorDate ?? null,
         },
         draft,
         scope,
@@ -1061,6 +1116,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setDefaultReminder,
       setAcademicDayConfig,
       renameActiveTimetable,
+      setTimetableStartDate,
       createNewTimetable,
       archiveCurrentTimetable,
       restoreTimetable,
