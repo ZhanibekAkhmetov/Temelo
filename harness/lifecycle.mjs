@@ -1483,6 +1483,76 @@ async function testNoActiveTimetable() {
   relaunched.db.closeSync();
 }
 
+/* ------------------------------- the gate the screens navigate on */
+
+/**
+ * What the management screens are allowed to act on.
+ *
+ * A successful restore now takes the user out of the management screens and on
+ * to the grid, and a successful creation does the same. That navigation is only
+ * safe if "success" means the transaction has committed — so this asserts the
+ * two halves of the contract the screens rely on:
+ *
+ *  - a failure reports itself as one, and leaves the active timetable exactly as
+ *    it was, so the screen can stay put and show the reason;
+ *  - a success carries the state *read back from the database*, so the grid the
+ *    screen navigates to is already the restored timetable rather than something
+ *    the caller assumed.
+ */
+async function testNavigationGate() {
+  section("Navigation gate: success means committed, failure means nothing moved");
+
+  const path = await buildV5Database();
+  const { db } = await open(path);
+  const autumn = await loadTimetable(db);
+  const autumnPrint = fingerprint(autumn);
+
+  const created = await createTimetable(db, autumn, newTimetableInput("Spring 2027"));
+  check("creating reports success", created.ok, JSON.stringify(created.reason ?? null));
+  equal("...and hands back the timetable now on disk", created.state.timetable?.name, "Spring 2027");
+  equal(
+    "...which is what a cold reopen finds, so navigating to the grid is safe",
+    fingerprint((await reopen(path)).state),
+    fingerprint(created.state),
+  );
+
+  const springPrint = fingerprint(await loadTimetable(db));
+  const archives = await listArchivedTimetables(db);
+
+  // A restore that cannot read its archive: refused, with nothing moved.
+  await db.runAsync(
+    `INSERT INTO archived_timetables (id, name, archived_at, created_at, format_version, snapshot)
+     VALUES ('broken-gate', 'Broken', ?, ?, 1, 'not json at all')`,
+    NOW,
+    NOW,
+  );
+  const refused = await restoreArchivedTimetable(db, await loadTimetable(db), "broken-gate", NOW);
+  equal("a restore that cannot proceed reports failure", refused.ok, false);
+  equal("...so the screen has nothing to navigate to", "state" in refused, false);
+  equal("...and the current timetable is untouched", fingerprint(await loadTimetable(db)), springPrint);
+
+  // A restore that fails mid-transaction: same contract, via the throw the
+  // provider turns into a failed result.
+  db.failPattern = "INSERT INTO courses";
+  let threw = false;
+  try {
+    await restoreArchivedTimetable(db, await loadTimetable(db), archives[0].id, NOW);
+  } catch {
+    threw = true;
+  }
+  check("a restore that fails mid-transaction does not report success", threw, "it returned ok");
+  db.closeSync();
+
+  const after = await reopen(path);
+  equal("...and the timetable the user had is still the active one", fingerprint(after.state), springPrint);
+  check(
+    "...while the archive it would have restored is still intact",
+    autumnPrint.length > 0 && (await countArchivedTimetables(after.db)) === 2,
+    "the archive was disturbed",
+  );
+  after.db.closeSync();
+}
+
 /* -------------------------------------------------------------------- names */
 
 function testNames() {
@@ -1515,6 +1585,7 @@ export async function runLifecycleHarness() {
     await testRecurrenceWithoutTermDates();
     await testReminderReconciliation();
     await testNoActiveTimetable();
+    await testNavigationGate();
     testNames();
   } finally {
     try {

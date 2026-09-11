@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
 import { InlineDateField } from "@/components/InlineDateField";
+import { RevealingScrollView } from "@/components/RevealingScrollView";
 import { ReminderField } from "@/components/ReminderField";
 import { SwitchRow } from "@/components/SwitchRow";
 import { TextField } from "@/components/TextField";
@@ -328,6 +330,19 @@ function ClassEditorForm({
   }
 
   return (
+    /*
+     * A gesture root of its own, and this is not optional.
+     *
+     * A React Native `Modal` is a separate native window — a Dialog on Android,
+     * its own view controller on iOS — so nothing inside it is a descendant of
+     * the `GestureHandlerRootView` in the root layout. Gesture Handler
+     * recognisers mounted in here are simply never handed the touches, which is
+     * why the month pager's horizontal swipe stopped working the moment the date
+     * fields moved into this editor: the pager was unchanged and correct, and it
+     * was not receiving anything. It worked on the old term screen because that
+     * was an ordinary pushed screen, inside the root.
+     */
+    <GestureHandlerRootView style={styles.flex}>
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={["top", "left", "right", "bottom"]}>
       <View
         style={[
@@ -374,7 +389,11 @@ function ClassEditorForm({
       </View>
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg }}>
+        {/* Not a plain ScrollView: a date row unfolds a month grid nearly three
+            hundred points tall, and below the fold that looked like the tap had
+            done nothing at all. This scrolls the panel into view as it opens.
+            See `RevealingScrollView`. */}
+        <RevealingScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: spacing.lg }}>
           {/* When and how long, as a subtitle: it is what this form is about,
               not one of the things it asks for. */}
           <Text style={[typography.body, { color: colors.textSecondary }]}>{slotText}</Text>
@@ -506,9 +525,10 @@ function ClassEditorForm({
               <Button label={t("classEditor.deleteClass")} variant="destructive" onPress={handleDelete} />
             </View>
           ) : null}
-        </ScrollView>
+        </RevealingScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 

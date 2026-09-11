@@ -21,6 +21,7 @@ import {
   TIME_GUTTER_WIDTH,
   topInsetFor,
 } from "@/features/timetable/geometry";
+import { pagerStep, weekPageWindow } from "@/features/timetable/pageWindow";
 import { HANDLE_TOUCH_RADIUS } from "@/features/timetable/GridBlock";
 import {
   IDLE,
@@ -153,7 +154,10 @@ function reportZoomHandoff(sample: ZoomHandoff): void {
   );
 }
 
-const PAGE_OFFSETS = [-1, 0, 1];
+/*
+ * The mounted window lives in `pageWindow` — see the note there for why a
+ * page's key is its slot rather than its week.
+ */
 
 export interface TimetableSurfaceHandle {
   goToRelativeWeek: (offset: number) => void;
@@ -573,15 +577,18 @@ export function TimetableSurface({
     (target: number) => {
       // Measured from where the pager is, not from the last committed week:
       // during a settle those differ, and the committed one is the stale half.
-      const from = Math.round(pos.get());
-      const distance = target - from;
-      if (distance === 0) return;
+      const step = pagerStep(Math.round(pos.get()), target);
+      if (step.kind === "none") return;
 
-      // Only the neighbouring weeks are mounted, so anything further away
-      // is a jump rather than a slide: position and week change together
-      // and the destination is rendered directly.
-      if (Math.abs(distance) > 1) {
-        pos.set(target);
+      /*
+       * Not mounted, so there is nothing to slide along: position and week
+       * change together and the destination is rendered directly. This is what
+       * makes Today constant-time from any distance — no spring crosses the
+       * weeks in between, and `weekPageWindow` re-addresses its three existing
+       * slots rather than building a page per week travelled.
+       */
+      if (step.kind === "jump") {
+        pos.set(step.to);
         offsetX.set(0);
         reconcilePage();
         return;
@@ -591,7 +598,7 @@ export function TimetableSurface({
       // swipe takes: spring first, reconcile the logical week on arrival.
       pageSettling.set(1);
       pos.set(
-        withSpring(from + Math.sign(distance), PAGE_SPRING, () => {
+        withSpring(step.to, PAGE_SPRING, () => {
           pageSettling.set(0);
           runOnJS(reconcilePage)();
         }),
@@ -1892,16 +1899,17 @@ export function TimetableSurface({
       {size.width === 0 || slotCount === 0 ? null : (
         <GestureDetector gesture={gesture}>
           <View style={styles.flex} collapsable={false}>
-            {/* Previous, current and next stay mounted throughout a drag and
-                its settle. Each one places itself from its own page index,
-                so the set can change at commit without moving the pages
-                that survive — there is no shared wrapper to re-offset. */}
-            {PAGE_OFFSETS.map((offset) => {
-              const pageIndex = baseIndex + offset;
+            {/* Previous, current and next, in three slots that are created
+                once and never torn down. Each one places itself from its own
+                page index, so recycling a slot cannot move the pages that
+                survive — there is no shared wrapper to re-offset. Paging a
+                week re-renders one slot; jumping any distance re-renders
+                three. Neither mounts anything. See `pageWindow`. */}
+            {weekPageWindow(baseIndex).map(({ key, pageIndex }) => {
               const weekStart = addWeeksIso(anchorWeekStart, pageIndex);
               return (
                 <WeekPage
-                  key={weekStart}
+                  key={key}
                   weekStart={weekStart}
                   pageIndex={pageIndex}
                   pos={pos}

@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 
 import { Button } from "@/components/Button";
-import { FormSection, NavigationRow } from "@/components/FormSection";
+import { FormSection, ListRow } from "@/components/FormSection";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { timetableSummary, shapeOfActive } from "@/features/timetables/summary";
@@ -69,12 +69,21 @@ export default function TimetablesScreen() {
         />
       }
     >
+      {/*
+        The heading says what the row below it *is*, not what section of
+        settings this is. With one timetable and no archives the screen has to
+        answer three questions on its own — which timetable is active, that
+        tapping it manages it, and that another can be made — and a heading
+        reading "Current" over a row that looked like a settings value answered
+        none of them.
+      */}
       <FormSection title={t("timetables.sectionCurrent")}>
         {current ? (
-          <NavigationRow
-            label={current.name}
-            value={currentSummary ?? undefined}
+          <ListRow
+            title={current.name}
+            subtitle={currentSummary ?? undefined}
             onPress={() => router.push("/timetables/current")}
+            last
           />
         ) : (
           <View style={{ paddingVertical: spacing.md }}>
@@ -86,8 +95,15 @@ export default function TimetablesScreen() {
         )}
       </FormSection>
 
+      {/* The one primary action on the screen, directly under the timetable it
+          would replace — which is also where the explanation of what happens to
+          that timetable lives, on the next screen. */}
       <View style={{ marginTop: spacing.lg }}>
-        <Button label={t("timetables.createNew")} onPress={() => router.push("/timetables/new-timetable")} />
+        <Button
+          label={t("timetables.createNew")}
+          variant="primary"
+          onPress={() => router.push("/timetables/new-timetable")}
+        />
       </View>
 
       <FormSection
@@ -105,12 +121,15 @@ export default function TimetablesScreen() {
             {t("timetables.archivedEmpty")}
           </Text>
         ) : (
-          archived.map((entry) => (
-            <NavigationRow
+          // The same row as the current timetable's, so the list reads as one
+          // list of timetables rather than two kinds of thing.
+          archived.map((entry, index) => (
+            <ListRow
               key={entry.id}
-              label={entry.name}
-              value={t("timetables.archivedOn", { date: format.dateLong(entry.archivedAt.slice(0, 10)) })}
+              title={entry.name}
+              subtitle={t("timetables.archivedOn", { date: format.dateLong(entry.archivedAt.slice(0, 10)) })}
               onPress={() => router.push({ pathname: "/timetables/archived", params: { id: entry.id } })}
+              last={index === archived.length - 1}
             />
           ))
         )}

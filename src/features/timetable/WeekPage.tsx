@@ -44,7 +44,10 @@ function nameLinesFor(span: number, settledSlotHeight: number): number {
 }
 
 interface WeekPageProps {
-  /** Immutable for the lifetime of this page — everything below derives from it. */
+  /**
+   * The week this page is currently drawing; everything below derives from it.
+   * It changes when the slot is recycled onto another week — see `pageWindow`.
+   */
   weekStart: string;
   /** Page number in the pager's own coordinates; the page positions itself from it. */
   pageIndex: number;
@@ -84,15 +87,21 @@ interface WeekPageProps {
  * One week, and nothing but that week.
  *
  * Its dates, its classes, its alternating-week occurrences and its "today"
- * marking are all derived from its own `weekStart`, never from whichever
- * page the pager currently calls the current one — so a page's content is
- * fixed for as long as it is mounted, however far mid-swipe the pager is.
+ * marking are all derived from its own `weekStart` prop, never from whichever
+ * page the pager currently calls the current one — so whatever a page is
+ * drawing is internally consistent, however far mid-swipe the pager is.
  *
- * It also places itself: the horizontal offset is `(pageIndex - pos)`
- * pages, which means mounting or unmounting a neighbour can never shift the
- * pages that stay. Zoom is a second, independent horizontal offset applied
- * *inside* the page, so a week that is wider than the viewport still slides
- * as one page.
+ * It is *recycled* rather than replaced. There are three of these for the life
+ * of the surface and paging hands them different weeks; a page's React key is
+ * its slot in the window, not its week. Nothing about this component depends on
+ * that — everything below reads from props — and `memo` means a slot whose week
+ * did not change does not re-render at all. See `pageWindow` for why the
+ * alternative, a key per week, was what made paging slow.
+ *
+ * It also places itself: the horizontal offset is `(pageIndex - pos)` pages, so
+ * recycling one slot can never shift the two that kept their week. Zoom is a
+ * second, independent horizontal offset applied *inside* the page, so a week
+ * that is wider than the viewport still slides as one page.
  */
 function WeekPageComponent({
   weekStart,
@@ -370,7 +379,14 @@ function DayHeaderCell({
   return <Animated.View style={[styles.headerCell, style]}>{children}</Animated.View>;
 }
 
-function PeriodLine({
+/**
+ * Memoized, and for one specific reason: a page is recycled onto another week
+ * rather than rebuilt, and none of these lines care which week that is. Their
+ * props — an index, a shared value, a colour — are identical across a page
+ * change, so this is the difference between re-rendering fourteen grid lines per
+ * swipe and re-rendering none.
+ */
+const PeriodLine = memo(function PeriodLine({
   index,
   slotHeight,
   color,
@@ -383,7 +399,7 @@ function PeriodLine({
 }) {
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: index * slotHeight.get() }] }));
   return <Animated.View pointerEvents="none" style={[styles.periodLine, { borderTopWidth: thickness, borderColor: color }, style]} />;
-}
+})
 
 /**
  * The line between two day columns.
@@ -395,7 +411,8 @@ function PeriodLine({
  * while the grid was taller than the screen and obvious the moment it was not:
  * bare vertical lines continuing below the last period, down to nothing.
  */
-function ColumnRule({
+/** Memoized for the same reason as `PeriodLine`. */
+const ColumnRule = memo(function ColumnRule({
   index,
   slotCount,
   columnWidth,
@@ -420,7 +437,7 @@ function ColumnRule({
       style={[styles.columnRule, { borderLeftWidth: thickness, borderColor: color }, style]}
     />
   );
-}
+})
 
 /**
  * The current time, drawn only inside today's column so it reads as "now,

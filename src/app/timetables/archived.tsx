@@ -128,13 +128,29 @@ export default function ArchivedTimetableScreen() {
     setBusy(true);
     const result = await restoreTimetable(archiveId);
     setBusy(false);
+
+    /*
+     * A failure leaves the user exactly where they are, with the reason. The
+     * previous timetable is still active and still intact — that is what the
+     * atomic swap guarantees — so there is nothing to navigate away from.
+     */
     if (!result.ok) {
       Alert.alert(t("timetables.restoreAction"), t(result.error.key, result.error.params));
       return;
     }
-    // It is the active timetable now, so this screen is about something that
-    // no longer exists here. Back to the list, where it has moved to Current.
-    router.back();
+
+    /*
+     * Success: out of the management screens altogether and onto the grid.
+     *
+     * This screen is now about a timetable that is no longer archived, and the
+     * two screens behind it are a list and a settings page. What the user
+     * actually asked for was to use this timetable, and leaving them three
+     * Backs away from seeing it made a successful restore feel like it had not
+     * happened. The navigation runs only here, after the transaction has
+     * committed and the state has been read back from the database.
+     */
+    router.dismissAll();
+    router.replace("/timetable");
   }
 
   function handleDelete() {

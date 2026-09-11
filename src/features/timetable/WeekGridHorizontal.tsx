@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { dayOfMonth, weekDatesFrom } from "@/domain/calendar";
-import { findCurrentPeriodIndex } from "@/domain/time";
+import { findCurrentPeriodIndex, findPeriodProgress } from "@/domain/time";
 import { cellKey, resolveWeekClasses, type ScheduledClass } from "@/domain/timetable";
 import { isWeekendDay, type Weekday } from "@/domain/week";
 import { GridCell } from "@/features/timetable/GridCell";
@@ -12,6 +12,9 @@ import { useTheme } from "@/theme/useTheme";
 import type { TimeSlot } from "@/types/models";
 
 const HEADER_HEIGHT = 36;
+/** Width of the current-time rule, matching the vertical layout's 1.5pt line. */
+const NOW_RULE_WIDTH = 1.5;
+const NOW_DOT_SIZE = 6;
 const MIN_ROW_HEIGHT = 56;
 const MAX_ROW_HEIGHT = 84;
 const WEEKDAY_COL_MIN = 64;
@@ -51,6 +54,20 @@ export function WeekGridHorizontal({
     () => resolveWeekClasses({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
     [weekdays, dates, placements, courses, exceptions, timeSlots, preview],
   );
+
+  /*
+   * Where "now" falls along the period axis.
+   *
+   * The same `findPeriodProgress` the vertical layout's marker uses, so both
+   * layouts agree to the minute about where the current moment is and neither
+   * has a rule of its own. Null outside the academic day — before the first
+   * period or after the last — which is when a marker would be pointing at
+   * nothing.
+   *
+   * Recomputed only when `now` changes, which `useNow` throttles to the
+   * minute. Nothing here animates and nothing updates per frame.
+   */
+  const nowProgress = findPeriodProgress(timeSlots, now);
 
   const weekdayColWidth = clamp(width * 0.2, WEEKDAY_COL_MIN, WEEKDAY_COL_MAX);
   const availableWidthForPeriods = width - weekdayColWidth;
@@ -136,6 +153,38 @@ export function WeekGridHorizontal({
     <View>
       {weekdays.map((day) => (
         <View key={day} style={styles.row}>
+          {/*
+           * The current time, in today's row only.
+           *
+           * Here the time axis runs across rather than down, so the marker is a
+           * vertical rule at `(period + fraction) × columnWidth` instead of a
+           * horizontal one at `(period + fraction) × rowHeight`. Everything
+           * else about it is the vertical layout's marker: the same
+           * `currentTime` colour, the same dot-and-rule, and the same rule that
+           * it belongs to the actual current date rather than to whichever week
+           * is on screen — page to another week and it is simply not drawn.
+           *
+           * Absolutely positioned and `pointerEvents="none"`, so it sits over
+           * the cells without taking a tap away from the class underneath it.
+           */}
+          {nowProgress && dates[day] === today ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.nowMarker,
+                {
+                  height: rowHeight,
+                  // The box is as wide as the dot, not as the rule, so nothing
+                  // inside it can overflow its own parent — then offset by half
+                  // of that so the rule lands exactly on the minute.
+                  left: (nowProgress.index + nowProgress.fraction) * periodColWidth - NOW_DOT_SIZE / 2,
+                },
+              ]}
+            >
+              <View style={[styles.nowDot, { backgroundColor: colors.currentTime }]} />
+              <View style={[styles.nowRule, { backgroundColor: colors.currentTime }]} />
+            </View>
+          ) : null}
           {timeSlots.map((slot) => {
             const existing = classesByCell.get(cellKey(day, slot.id));
             const date = dates[day];
@@ -273,5 +322,21 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  nowMarker: {
+    position: "absolute",
+    top: 0,
+    width: NOW_DOT_SIZE,
+    alignItems: "center",
+    zIndex: 2,
+  },
+  nowDot: {
+    width: NOW_DOT_SIZE,
+    height: NOW_DOT_SIZE,
+    borderRadius: NOW_DOT_SIZE / 2,
+  },
+  nowRule: {
+    flex: 1,
+    width: NOW_RULE_WIDTH,
   },
 });

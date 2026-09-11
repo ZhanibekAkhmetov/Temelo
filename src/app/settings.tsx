@@ -3,13 +3,14 @@ import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
 import { ChoiceRowField } from "@/components/ChoiceRowField";
-import { FormSection, NavigationRow } from "@/components/FormSection";
+import { FormSection, ListRow } from "@/components/FormSection";
 import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
 import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
+import { shapeOfActive, timetableSummary } from "@/features/timetables/summary";
 import { useI18n } from "@/i18n/I18nProvider";
 import { LANGUAGE_PREFERENCES, type LanguagePreference } from "@/i18n/language";
 import type { TranslationKey } from "@/i18n/translate";
@@ -70,7 +71,7 @@ const LANGUAGE_ENDONYM: Record<Exclude<LanguagePreference, "system">, string> = 
  */
 export default function SettingsScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
-  const { t } = useI18n();
+  const { t, format } = useI18n();
   const {
     state,
     persistence,
@@ -97,6 +98,16 @@ export default function SettingsScreen() {
     value: orientation,
     label: t(LAYOUT_LABEL_KEY[orientation]),
   }));
+
+  /*
+   * The one line under the timetable's name: the days it covers and the hours
+   * its day runs. The same summary the Timetables screen shows, so the row the
+   * user taps and the screen it opens agree about what they are describing.
+   */
+  const timetableRowTitle = state.timetable?.name ?? t("timetables.noCurrent");
+  const timetableRowSubtitle = state.timetable
+    ? timetableSummary(t, format, shapeOfActive(state.settings.weekendMode, state.timeSlots))
+    : t("timetables.noCurrentHint");
 
   function handleLoadSample() {
     Alert.alert(t("settings.loadSampleTitle"), t("settings.loadSampleMessage"), [
@@ -168,6 +179,39 @@ export default function SettingsScreen() {
         </Text>
       ) : null}
 
+      {/*
+        Timetable first, and the timetable itself first inside it.
+        It was below the layout preference, in the value column of a row whose
+        label said "Current timetable" — which put the single most important
+        thing on this screen in the place the eye uses for "what is this set
+        to". Switching, archiving and restoring a timetable is a Beta feature;
+        a layout preference is not.
+      */}
+      <FormSection title={t("settings.sectionTimetable")}>
+        {/* One door to everything about timetables — the current one's name,
+            days and academic day, the archived ones, and creating another. The
+            three rows that used to be here were all reachable through it, and
+            keeping them here as well would have made this page the second
+            place to change a timetable's shape. */}
+        {/* The row shows the timetable's name, which is what makes it findable
+            by eye. A screen reader gets the relationship as well, because
+            "My timetable" on its own does not say what it is the name of. */}
+        <ListRow
+          title={timetableRowTitle}
+          subtitle={timetableRowSubtitle}
+          accessibilityLabel={`${t("settings.currentTimetable")}, ${timetableRowTitle}`}
+          onPress={() => router.push("/timetables")}
+        />
+        <ChoiceRowField
+          label={t("settings.layout")}
+          value={state.settings.gridOrientation}
+          options={layoutOptions}
+          onChange={(gridOrientation) => setGridOrientation({ gridOrientation })}
+          sheetTitle={t("settings.layout")}
+          helperText={t("settings.layoutHint")}
+        />
+      </FormSection>
+
       <FormSection title={t("settings.sectionGeneral")}>
         <ChoiceRowField
           label={t("settings.appearance")}
@@ -184,26 +228,6 @@ export default function SettingsScreen() {
           options={languageOptions}
           onChange={(languagePreference) => setLanguagePreference({ languagePreference })}
           sheetTitle={t("settings.chooseLanguage")}
-        />
-      </FormSection>
-
-      <FormSection title={t("settings.sectionTimetable")}>
-        <ChoiceRowField
-          label={t("settings.layout")}
-          value={state.settings.gridOrientation}
-          options={layoutOptions}
-          onChange={(gridOrientation) => setGridOrientation({ gridOrientation })}
-          sheetTitle={t("settings.layout")}
-        />
-        {/* One door to everything about timetables — the current one's name,
-            days and academic day, the archived ones, and creating another. The
-            three rows that used to be here were all reachable through it, and
-            keeping them here as well would have made this page the second
-            place to change a timetable's shape. */}
-        <NavigationRow
-          label={t("settings.currentTimetable")}
-          value={state.timetable?.name ?? t("settings.noTimetable")}
-          onPress={() => router.push("/timetables")}
         />
       </FormSection>
 

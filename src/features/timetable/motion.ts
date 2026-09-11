@@ -8,7 +8,10 @@
  * 1.5× that, so 200 lands in the 220–320 ms band asked for.
  */
 
-import { type WithSpringConfig } from "react-native-reanimated";
+// A type-only import, written as one: `import { type X }` leaves an empty
+// runtime import behind, which drags the whole native module in for anything
+// that only wants these constants — the harness among them.
+import type { WithSpringConfig } from "react-native-reanimated";
 
 /** Movement, in points, before a pan is allowed to claim an axis. */
 export const TOUCH_SLOP = 10;
