@@ -40,16 +40,16 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
 
 **Setup**
 
-- Onboarding in three steps: week configuration (which days are shown),
-  academic-day configuration (day start, lesson duration, break duration,
-  number of periods), and the academic term (start date plus an estimated,
-  editable end date).
+- Setup in two steps: the timetable's name and which days it has classes on,
+  then the academic day (day start, lesson duration, break duration, number of
+  periods). No start date, no end date, and no term to name — nothing in the
+  app stops because of a date the user was asked to guess.
 - Periods are generated from the academic-day configuration, with a live
   preview of the resulting day while the values are being chosen.
-- Week, academic-day and term settings can all be changed later from Settings.
-  Changing the academic day regenerates the periods and clears the timetable,
-  which the app asks about first; editing an individual period's time is not
-  implemented yet.
+- The name, the days shown and the academic day can all be changed later from
+  the timetable's own screen. Changing the academic day regenerates the periods
+  and clears the timetable, which the app asks about first; editing an
+  individual period's time is not implemented yet.
 
 **Timetable**
 
@@ -68,8 +68,10 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
 
 - Quick creation: tap an empty slot, enter a name, save. Room, teacher, notes,
   colour, reminder and recurrence are optional and editable later.
-- Weekly, every-two-weeks, and one-time recurrence, defaulting to weekly until
-  the end of the term.
+- Weekly, every-two-weeks, and one-time recurrence. A repeating class is
+  open-ended: it runs until it is changed or deleted, rather than until a date.
+  Recurrence is still resolved lazily over the visible or reminder range, so
+  "indefinitely" costs no stored records.
 - Conflict checking resolves recurrence onto concrete dates, so two alternating
   biweekly classes can share the same weekday and period without being treated
   as a clash.
@@ -138,13 +140,21 @@ Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the short version:
   exceptions, recurrence resolution onto real dates, conflict checking,
   edit-scope drafting, and reminder planning all live there.
 - **Local time, not UTC.** Recurring lesson times are a local weekday plus
-  `HH:mm`; term dates are modelled separately, as a date range.
+  `HH:mm`, never a UTC timestamp.
+- **One active timetable, any number of archived ones.** The active timetable
+  lives in the normalised working tables, so no read or write anywhere in the
+  app had to learn about multiple timetables; an archived one is a single
+  validated, versioned JSON snapshot, and archiving or restoring is one atomic
+  swap between the two.
 - **Sync-ready records.** Device-generated string IDs plus
   `createdAt`/`updatedAt`/`deletedAt`, so a future sync layer has what it needs
   without a data migration.
 - **Reminders are derived, not tracked.** The next fortnight's notifications
   are recomputed from the stored timetable and reconciled with the OS, so no
-  bookkeeping can drift out of step with a move, a split series, or a deletion.
+  bookkeeping can drift out of step with a move, a split series, a deletion, or
+  a whole timetable being archived — only the active timetable is ever the
+  input, so an archived one stops reminding without any code that knows what
+  archiving is.
 
 ## Getting started
 

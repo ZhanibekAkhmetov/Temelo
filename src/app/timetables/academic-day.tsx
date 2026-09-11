@@ -1,0 +1,84 @@
+import { useState } from "react";
+import { Alert, Text } from "react-native";
+import { router } from "expo-router";
+
+import { OnboardingNav } from "@/components/OnboardingNav";
+import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
+import { AcademicDayFields, isUsableAcademicDay } from "@/features/timetables/AcademicDayFields";
+import { useI18n } from "@/i18n/I18nProvider";
+import { useAppState, type AcademicDayConfigInput } from "@/state/AppStateContext";
+import { useTheme } from "@/theme/useTheme";
+
+/**
+ * The academic day of the timetable that already exists.
+ *
+ * The same fields and the same live preview as the second step of creating a
+ * timetable — they share `AcademicDayFields` — and exactly one difference,
+ * which is what pressing the button means. Here it regenerates every period,
+ * and because placements are addressed by period id, that removes the classes
+ * standing on the old ones. So it asks first, and only when there is something
+ * to lose.
+ *
+ * Reached from the current timetable's own screen, which is the single place
+ * that owns the timetable's shape. It is deliberately no longer a row in
+ * Settings: the academic day was the one thing in there that was a property of
+ * the timetable rather than of the app, and having both doors meant two
+ * answers to "where do I change this".
+ */
+export default function AcademicDayScreen() {
+  const { colors, spacing, typography } = useTheme();
+  const { t } = useI18n();
+  const { state, setAcademicDayConfig } = useAppState();
+
+  const [academicDay, setAcademicDay] = useState<AcademicDayConfigInput>({
+    academicDayStart: state.settings.academicDayStart,
+    defaultLessonDurationMinutes: state.settings.defaultLessonDurationMinutes,
+    defaultBreakDurationMinutes: state.settings.defaultBreakDurationMinutes,
+    slotCount: state.settings.slotCount,
+  });
+
+  const hasActivePlacements = state.placements.some((placement) => !placement.deletedAt);
+
+  function save() {
+    const result = setAcademicDayConfig(academicDay);
+    if (!result.ok) return;
+    router.back();
+  }
+
+  function handleSave() {
+    if (!isUsableAcademicDay(academicDay)) return;
+    if (hasActivePlacements) {
+      Alert.alert(t("onboarding.regenerateTitle"), t("onboarding.regenerateMessage"), [
+        { text: t("common.cancel"), style: "cancel" },
+        { text: t("common.continue"), style: "destructive", onPress: save },
+      ]);
+      return;
+    }
+    save();
+  }
+
+  return (
+    <ScreenContainer
+      header={
+        <ScreenHeader
+          title={t("timetables.academicDay")}
+          onBack={() => router.back()}
+          accessibilityBackLabel={t("common.back")}
+        />
+      }
+    >
+      <Text style={[typography.body, { color: colors.textSecondary, marginTop: spacing.xs }]}>
+        {t("onboarding.academicDaySubtitle")}
+      </Text>
+
+      <AcademicDayFields value={academicDay} onChange={setAcademicDay} />
+
+      <OnboardingNav
+        onContinue={handleSave}
+        continueLabel={t("common.save")}
+        continueDisabled={!isUsableAcademicDay(academicDay)}
+      />
+    </ScreenContainer>
+  );
+}

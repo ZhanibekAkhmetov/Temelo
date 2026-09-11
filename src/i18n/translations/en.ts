@@ -72,15 +72,13 @@ export const en = {
   "classEditor.recurrence": "Recurrence",
   "classEditor.date": "Date",
   "classEditor.startDate": "Start date",
-  "classEditor.endDate": "End date",
   "classEditor.biweeklyStartHint": "Sets which alternating week this class falls on",
-  "classEditor.endDateHint": "Estimated — can be changed later",
   "classEditor.deleteClass": "Delete class",
   "classEditor.deleteTitle": "Delete class?",
   "classEditor.deleteMessage": "Remove {name} from the timetable. This cannot be undone.",
   "classEditor.summaryOnce": "One time on {date}",
-  "classEditor.summaryWeekly": "Every week until {date}",
-  "classEditor.summaryBiweekly": "Every two weeks until {date}",
+  "classEditor.summaryWeekly": "Repeats every week",
+  "classEditor.summaryBiweekly": "Repeats every two weeks",
 
   // ------------------------------------------------------------ classColor
   "classColor.label": "Color",
@@ -149,9 +147,9 @@ export const en = {
   "settings.layoutVertical": "Days across the top",
   "settings.layoutHorizontal": "Days down the side",
   "settings.daysWithoutClasses": "Days without classes",
-  "settings.term": "Term",
-  "settings.termName": "Term name",
-  "settings.estimatedEndDate": "Estimated end date",
+  "settings.timetables": "Timetables",
+  "settings.currentTimetable": "Current timetable",
+  "settings.noTimetable": "None",
   "settings.academicDay": "Academic day",
   /**
    * The academic day as one line: the hours it actually covers.
@@ -165,13 +163,13 @@ export const en = {
   "settings.reset": "Delete all data",
   "settings.resetTitle": "Delete all data?",
   "settings.resetMessage":
-    "This removes every class, the term and all settings, then starts setup again. This cannot be undone.",
+    "This removes every class, every timetable including archived ones, and all settings, then starts setup again. This cannot be undone.",
   "settings.resetConfirm": "Delete",
   "settings.developer": "Developer",
   "settings.loadSample": "Load sample timetable",
   "settings.loadSampleTitle": "Load sample timetable?",
   "settings.loadSampleMessage":
-    "Development only. This replaces the current term, periods and classes with placeholder classes for testing gestures.",
+    "Development only. This replaces the current timetable's periods and classes with placeholder classes for testing gestures.",
   "settings.loadSampleConfirm": "Load",
 
   // ------------------------------------------------------------------ week
@@ -194,11 +192,8 @@ export const en = {
   "onboarding.regenerateTitle": "Regenerate time slots?",
   "onboarding.regenerateMessage":
     "Changing these settings will regenerate time slots and remove existing classes from the timetable. This cannot be undone.",
-  "onboarding.termTitle": "Academic term",
-  "onboarding.termSubtitle":
-    "Set the term your timetable runs through — the end date is just an estimate you can change later.",
-  "onboarding.termNamePlaceholder": "Current term",
-  "onboarding.termEndDateHint": "An estimate — easy to change later",
+  "onboarding.timetableName": "Timetable name",
+  "onboarding.timetableNamePlaceholder": "My timetable",
 
   // ------------------------------------------------------------ datePicker
   "datePicker.previousMonth": "Previous month",
@@ -211,18 +206,58 @@ export const en = {
   "durationPicker.minute": "Minute",
   "durationPicker.minimum": "Must be at least {value}.",
 
+  // -------------------------------------------------------------- timetables
+  "timetables.title": "Timetables",
+  "timetables.sectionCurrent": "Current",
+  "timetables.sectionArchived": "Archived",
+  "timetables.sectionArchivedCount": "Archived ({count})",
+  "timetables.archivedEmpty": "Timetables you archive will be kept here.",
+  "timetables.createNew": "Create new timetable",
+  "timetables.noCurrent": "No timetable yet",
+  "timetables.noCurrentHint": "Create one to start adding classes.",
+  "timetables.detailsTitle": "Timetable",
+  "timetables.name": "Name",
+  "timetables.academicDay": "Academic day",
+  "timetables.days": "Days shown",
+  "timetables.archivedOn": "Archived {date}",
+  "timetables.summary": "{days} · {hours}",
+  "timetables.daysRange": "{first}–{last}",
+  "timetables.rename": "Rename timetable",
+  "timetables.renamePrompt": "Timetable name",
+  "timetables.archiveAction": "Archive timetable",
+  "timetables.archiveTitle": "Archive this timetable?",
+  "timetables.archiveMessage":
+    "Your classes are kept. {name} moves to Archived and can be restored later. Its reminders stop while it is archived.",
+  "timetables.archiveConfirm": "Archive",
+  "timetables.restoreAction": "Restore timetable",
+  "timetables.restoreTitle": "Restore {name}?",
+  "timetables.restoreMessage":
+    "Your current timetable {current} will be archived first. Nothing will be deleted.",
+  "timetables.restoreConfirm": "Restore",
+  "timetables.deleteAction": "Delete permanently",
+  "timetables.deleteTitle": "Delete {name} permanently?",
+  "timetables.deleteMessage":
+    "This timetable and its classes will be removed from this device. This cannot be undone.",
+  "timetables.deleteConfirm": "Delete",
+  "timetables.damaged": "This archived timetable cannot be read and cannot be restored.",
+  "timetables.createTitle": "New timetable",
+  "timetables.createSubtitle": "Name it and choose which days have classes.",
+  "timetables.createReplaceNotice":
+    "{name} will be archived when this timetable is created — not before. Nothing is deleted.",
+  "timetables.createFinish": "Create timetable",
+
   // ---------------------------------------------------------------- errors
   "errors.slotInUse": "This slot is already used by {name}.",
   "errors.classNameRequired": "Class name is required.",
-  "errors.termNameRequired": "Term name is required.",
+  "errors.timetableNameRequired": "Timetable name is required.",
+  "errors.noActiveTimetable": "There is no active timetable.",
+  "errors.archiveGone": "This archived timetable no longer exists.",
+  "errors.archiveUnreadable": "This archived timetable is damaged and cannot be restored.",
   "errors.classGone": "This class no longer exists.",
   "errors.startDateInvalid": "Start date must be a valid date (DD.MM.YYYY).",
   "errors.endDateInvalid": "End date must be a valid date (DD.MM.YYYY).",
-  "errors.estimatedEndDateInvalid": "Estimated end date must be a valid date (DD.MM.YYYY).",
   "errors.dateInvalid": "Enter a valid date as DD.MM.YYYY.",
   "errors.endBeforeStart": "End date cannot be before the start date.",
-  "errors.estimatedEndBeforeStart": "Estimated end date cannot be before the start date.",
-  "errors.estimatedEndBeforeTermStart": "Estimated end date cannot be before the term start date.",
   "errors.endBeforeOccurrence": "End date cannot be before this occurrence.",
   "errors.recurrenceWholeSeries": "Recurrence changes apply to the whole series.",
   "errors.storageWriteFailed": "Could not save to this device. Your changes are only in memory and will be lost when the app closes.",

@@ -14,13 +14,26 @@ import { generateTimeSlots } from "@/domain/time";
 import type { Weekday, WeekendMode } from "@/domain/week";
 import type { LanguagePreference } from "@/i18n/language";
 import type { AppearancePreference } from "@/theme/appearance";
-import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
+import { DEFAULT_SETTINGS, defaultTimetableAnchorDate } from "@/state/defaults";
 import { createSampleTimetable } from "@/state/sampleTimetable";
 import { bootstrapStorage } from "@/storage/bootstrap";
 import { readStorageReport as readStorageReport_, type StorageReport } from "@/storage/diagnostics";
+import {
+  archiveActiveTimetable,
+  countArchivedTimetables,
+  createTimetable,
+  deleteAllTimetableData,
+  deleteArchivedTimetable,
+  listArchivedTimetables,
+  normalizeTimetableName,
+  renameArchivedTimetable,
+  restoreArchivedTimetable,
+  type ArchivedTimetableSummary,
+  type LifecycleFailure,
+  type NewTimetableInput,
+} from "@/storage/timetableLifecycle";
 import { saveTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
 import type {
-  AcademicTerm,
   Course,
   GridOrientation,
   OccurrenceException,
@@ -28,11 +41,19 @@ import type {
   RecurrenceType,
   Settings,
   TimeSlot,
+  Timetable,
 } from "@/types/models";
 
 export interface AppState {
   settings: Settings;
-  term: AcademicTerm;
+  /**
+   * The active timetable, or null when there is none.
+   *
+   * Null is a real, reachable state — the user archived their only timetable —
+   * and every screen that draws timetable data has to answer for it. It is not
+   * a loading state: `hydrated` is what says whether storage has answered.
+   */
+  timetable: Timetable | null;
   timeSlots: TimeSlot[];
   courses: Course[];
   placements: Placement[];
@@ -41,6 +62,17 @@ export interface AppState {
 }
 
 export type ActionResult = { ok: true } | { ok: false; error: DomainError };
+
+/**
+ * The result of a lifecycle operation — create, archive, restore, delete.
+ *
+ * The same shape as `ActionResult` so callers do not have to learn a second
+ * one, with the storage failures translated into the app's own error keys on
+ * the way out. That translation is here rather than in storage because a
+ * `DomainError` carries a translation key, and storage has no business knowing
+ * the app has languages.
+ */
+export type LifecycleActionResult = ActionResult;
 
 /**
  * Whether what the user is looking at has actually reached the disk.
@@ -76,15 +108,16 @@ export interface AcademicDayConfigInput {
   slotCount: number;
 }
 
-export interface TermConfigInput {
+/**
+ * Everything the creation flow collects, in the order it collects it.
+ *
+ * No start date and no end date, which is the whole point of the new model:
+ * there is nothing to ask, because nothing stops.
+ */
+export interface CreateTimetableInput {
   name: string;
-  startDate: string;
-  estimatedEndDate: string;
-}
-
-export interface TermInfoInput {
-  name: string;
-  estimatedEndDate: string;
+  weekendMode: WeekendMode;
+  academicDay: AcademicDayConfigInput;
 }
 
 export interface UpsertPlacementInput {
@@ -168,8 +201,39 @@ interface AppStateContextValue {
    */
   setDefaultReminder: (input: { reminderMinutes: ReminderMinutes }) => void;
   setAcademicDayConfig: (input: AcademicDayConfigInput) => ActionResult;
-  setTermConfig: (input: TermConfigInput) => ActionResult;
-  updateTermInfo: (input: TermInfoInput) => ActionResult;
+  /**
+   * Renames the active timetable.
+   *
+   * An ordinary state change, not a lifecycle operation: one field of one
+   * record, saved by the same diff as everything else.
+   */
+  renameActiveTimetable: (input: { name: string }) => ActionResult;
+  /**
+   * Creates a timetable, makes it active, and archives whatever was active
+   * before — in one storage transaction.
+   *
+   * Nothing happens to the current timetable until this succeeds, which is
+   * exactly what the flow promises the user: abandoning the setup leaves them
+   * where they were, because abandoning it means never calling this.
+   */
+  createNewTimetable: (input: CreateTimetableInput) => Promise<LifecycleActionResult>;
+  /** Archives the active timetable, leaving none active. */
+  archiveCurrentTimetable: () => Promise<LifecycleActionResult>;
+  /** Makes an archived timetable active, archiving the current one first. */
+  restoreTimetable: (archiveId: string) => Promise<LifecycleActionResult>;
+  renameArchive: (archiveId: string, name: string) => Promise<LifecycleActionResult>;
+  /** Permanently removes one archived timetable. Never the active one. */
+  deleteArchive: (archiveId: string) => Promise<LifecycleActionResult>;
+  /** The archived timetables, freshly read. Not held in state — see below. */
+  readArchivedTimetables: () => Promise<ArchivedTimetableSummary[]>;
+  /**
+   * How many archived timetables there are, as of hydration.
+   *
+   * The count rather than the list, because the only thing outside the
+   * Timetables screen that needs to know is the empty state — which has to
+   * decide whether to offer "restore a timetable" at all.
+   */
+  archivedCount: number;
   upsertPlacement: (input: UpsertPlacementInput) => ActionResult;
   movePlacement: (input: MovePlacementInput) => ActionResult;
   /** Read-only: whether a proposed position is free for a whole series. */
@@ -187,11 +251,19 @@ interface AppStateContextValue {
   resetPrototype: () => void;
 }
 
+/**
+ * An empty app: no active timetable, no classes, nothing but defaults.
+ *
+ * This is both the pre-hydration value and what "delete all data" produces.
+ * Note that it has no timetable rather than a default one: a timetable is
+ * something the user names, and inventing one to fill a field would put a
+ * timetable called nothing in front of somebody who had not made one.
+ */
 function buildEmptyState(): AppState {
   return {
     settings: { ...DEFAULT_SETTINGS },
-    term: createDefaultTerm(),
-    timeSlots: createDefaultTimeSlots(),
+    timetable: null,
+    timeSlots: [],
     courses: [],
     placements: [],
     exceptions: [],
@@ -224,6 +296,24 @@ function conflictError(conflict: Occurrence): ActionResult {
   return { ok: false, error: domainError("errors.slotInUse", { name: conflict.course.name }) };
 }
 
+/** A storage lifecycle failure, in words the UI can show. */
+function lifecycleError(failure: LifecycleFailure): ActionResult {
+  switch (failure.kind) {
+    case "nameRequired":
+      return { ok: false, error: domainError("errors.timetableNameRequired") };
+    case "noActiveTimetable":
+      return { ok: false, error: domainError("errors.noActiveTimetable") };
+    case "archiveNotFound":
+      return { ok: false, error: domainError("errors.archiveGone") };
+    case "archiveUnreadable":
+      // The detail names a field in a JSON document. It goes to the log, where
+      // it is the only thing that would ever explain this, and never to the
+      // user, who is told that the archive is damaged.
+      console.warn("[temelo/storage] an archived timetable could not be read:", failure.detail);
+      return { ok: false, error: domainError("errors.archiveUnreadable") };
+  }
+}
+
 const AppStateContext = createContext<AppStateContextValue | null>(null);
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
@@ -231,6 +321,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [persistence, setPersistence] = useState<PersistenceStatus>(INITIAL_PERSISTENCE);
+  /**
+   * How many archived timetables exist.
+   *
+   * A count, not the list. The archived timetables are read on demand by the
+   * one screen that shows them — putting them in app state would mean the
+   * whole diff-and-save machinery had to reason about a collection that is
+   * never edited through it, and every archive row carries a whole serialized
+   * timetable that nothing else ever needs in memory. The count is the only
+   * thing the rest of the app asks, and only to decide whether the empty state
+   * should offer to restore something.
+   */
+  const [archivedCount, setArchivedCount] = useState(0);
 
   const databaseRef = useRef<SQLiteDatabase | null>(null);
   /** What `openTemeloDatabase` reported, kept for the diagnostics panel. */
@@ -272,10 +374,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     bootstrapStorage()
-      .then(({ db, timetable, schemaVersion, repairedColumns }) => {
+      .then(({ db, timetable, archivedCount: archived, schemaVersion, repairedColumns }) => {
         if (cancelled) return;
         databaseRef.current = db;
         bootstrapRef.current = { schemaVersion, repairedColumns };
+        setArchivedCount(archived);
 
         if (timetable) {
           // The very same object becomes both the state and the diff
@@ -458,6 +561,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
 
     const setAcademicDayConfig: AppStateContextValue["setAcademicDayConfig"] = (input) => {
+      if (!state.timetable) return { ok: false, error: domainError("errors.noActiveTimetable") };
       const result = generateTimeSlots({
         dayStart: input.academicDayStart,
         lessonDurationMinutes: input.defaultLessonDurationMinutes,
@@ -494,45 +598,184 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: true };
     };
 
-    const setTermConfig: AppStateContextValue["setTermConfig"] = (input) => {
-      const name = input.name.trim();
-      if (!name) return { ok: false, error: domainError("errors.termNameRequired") };
-      if (!isValidIsoDate(input.startDate)) {
-        return { ok: false, error: domainError("errors.startDateInvalid") };
-      }
-      if (!isValidIsoDate(input.estimatedEndDate)) {
-        return { ok: false, error: domainError("errors.estimatedEndDateInvalid") };
-      }
-      if (!isIsoDateBeforeOrEqual(input.startDate, input.estimatedEndDate)) {
-        return { ok: false, error: domainError("errors.estimatedEndBeforeStart") };
-      }
+    const renameActiveTimetable: AppStateContextValue["renameActiveTimetable"] = (input) => {
+      if (!state.timetable) return { ok: false, error: domainError("errors.noActiveTimetable") };
+      const name = normalizeTimetableName(input.name);
+      if (!name) return { ok: false, error: domainError("errors.timetableNameRequired") };
+      if (name === state.timetable.name) return { ok: true };
 
-      setState((prev) => ({
-        ...prev,
-        term: { ...prev.term, name, startDate: input.startDate, estimatedEndDate: input.estimatedEndDate },
-        settings: { ...prev.settings, onboardingCompleted: true },
-      }));
+      const now = new Date().toISOString();
+      setState((prev) =>
+        prev.timetable ? { ...prev, timetable: { ...prev.timetable, name, updatedAt: now } } : prev,
+      );
       return { ok: true };
     };
 
-    const updateTermInfo: AppStateContextValue["updateTermInfo"] = (input) => {
-      const name = input.name.trim();
-      if (!name) return { ok: false, error: domainError("errors.termNameRequired") };
-      if (!isValidIsoDate(input.estimatedEndDate)) {
-        return { ok: false, error: domainError("errors.estimatedEndDateInvalid") };
-      }
-      if (!isIsoDateBeforeOrEqual(state.term.startDate, input.estimatedEndDate)) {
-        return { ok: false, error: domainError("errors.estimatedEndBeforeTermStart") };
-      }
-
-      setState((prev) => ({
-        ...prev,
-        term: { ...prev.term, name, estimatedEndDate: input.estimatedEndDate },
+    /*
+     * The four operations that replace one whole timetable with another.
+     *
+     * All of them go around the persistence effect rather than through it, and
+     * that is deliberate: what they do is not expressible as a diff against
+     * what the app is currently showing. So each one writes in its own storage
+     * transaction and hands back the state that is now on disk, which becomes
+     * both the new app state *and* the new diff baseline — the same pair
+     * hydration establishes. Without setting the baseline too, the next
+     * ordinary edit would be diffed against a timetable that no longer exists
+     * and would try to write its records back.
+     *
+     * `settleLifecycle` is that bookkeeping, in one place, so no operation can
+     * do four fifths of it.
+     */
+    const settleLifecycle = (next: PersistedTimetable): void => {
+      persistedRef.current = next;
+      lastKnownGoodRef.current = next;
+      latestStateRef.current = next;
+      setState(next);
+      setPersistence((current) => ({
+        lastWriteOk: true,
+        lastWriteAt: Date.now(),
+        lastError: null,
+        failureCount: current.failureCount,
+        writeCount: current.writeCount + 1,
       }));
-      return { ok: true };
+    };
+
+    /**
+     * A lifecycle operation, run behind the same write queue as everything
+     * else.
+     *
+     * Queued rather than fired straight at the database, because an ordinary
+     * save may still be in flight — an academic-day change, say — and a swap
+     * that interleaved with it would archive half of one timetable. The queue
+     * is what makes "one transaction" mean something at the app's level and
+     * not only at SQLite's.
+     */
+    const runLifecycle = (
+      operation: (db: SQLiteDatabase, current: PersistedTimetable) => Promise<LifecycleActionResult>,
+    ): Promise<LifecycleActionResult> => {
+      const db = databaseRef.current;
+      if (!db) return Promise.resolve({ ok: false, error: domainError("errors.storageWriteFailed") });
+
+      const run = writeQueueRef.current.then(async () => {
+        try {
+          // The state as the queue reaches it, not as it was when the button
+          // was pressed: anything queued ahead of this may have changed it.
+          return await operation(db, latestStateRef.current);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[temelo/storage] a timetable lifecycle change was NOT saved:", message, error);
+          setPersistence((current) => ({
+            lastWriteOk: false,
+            lastWriteAt: Date.now(),
+            lastError: message,
+            failureCount: current.failureCount + 1,
+            writeCount: current.writeCount + 1,
+          }));
+          // The transaction rolled back, so the database still holds what it
+          // held. The app is already showing that, and nothing here changed
+          // it — but the baseline is cleared so the next ordinary save is a
+          // full write rather than a diff against an assumption.
+          persistedRef.current = null;
+          return { ok: false, error: domainError("errors.storageWriteFailed") } as LifecycleActionResult;
+        }
+      });
+
+      // The queue's tail must not inherit this rejection; it cannot reject
+      // anyway, but the rule is the same one `storage/transaction` follows.
+      writeQueueRef.current = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    };
+
+    const refreshArchivedCount = async (db: SQLiteDatabase): Promise<void> => {
+      setArchivedCount(await countArchivedTimetables(db));
+    };
+
+    const createNewTimetable: AppStateContextValue["createNewTimetable"] = (input) => {
+      const name = normalizeTimetableName(input.name);
+      if (!name) return Promise.resolve({ ok: false, error: domainError("errors.timetableNameRequired") });
+
+      const slots = generateTimeSlots({
+        dayStart: input.academicDay.academicDayStart,
+        lessonDurationMinutes: input.academicDay.defaultLessonDurationMinutes,
+        breakDurationMinutes: input.academicDay.defaultBreakDurationMinutes,
+        slotCount: input.academicDay.slotCount,
+      });
+      if (!slots.ok) return Promise.resolve({ ok: false, error: slots.error });
+
+      const payload: NewTimetableInput = {
+        name,
+        settings: {
+          weekendMode: input.weekendMode,
+          academicDayStart: input.academicDay.academicDayStart,
+          defaultLessonDurationMinutes: input.academicDay.defaultLessonDurationMinutes,
+          defaultBreakDurationMinutes: input.academicDay.defaultBreakDurationMinutes,
+          slotCount: input.academicDay.slotCount,
+        },
+        timeSlots: slots.slots.map((slot) => ({
+          id: createId(),
+          position: slot.position,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+        })),
+        anchorDate: defaultTimetableAnchorDate(),
+        now: new Date().toISOString(),
+      };
+
+      return runLifecycle(async (db, current) => {
+        const result = await createTimetable(db, current, payload);
+        if (!result.ok) return lifecycleError(result.reason);
+        settleLifecycle(result.state);
+        await refreshArchivedCount(db);
+        return { ok: true };
+      });
+    };
+
+    const archiveCurrentTimetable: AppStateContextValue["archiveCurrentTimetable"] = () =>
+      runLifecycle(async (db, current) => {
+        const result = await archiveActiveTimetable(db, current, new Date().toISOString());
+        if (!result.ok) return lifecycleError(result.reason);
+        settleLifecycle(result.state);
+        await refreshArchivedCount(db);
+        return { ok: true };
+      });
+
+    const restoreTimetable: AppStateContextValue["restoreTimetable"] = (archiveId) =>
+      runLifecycle(async (db, current) => {
+        const result = await restoreArchivedTimetable(db, current, archiveId, new Date().toISOString());
+        if (!result.ok) return lifecycleError(result.reason);
+        settleLifecycle(result.state);
+        await refreshArchivedCount(db);
+        return { ok: true };
+      });
+
+    const renameArchive: AppStateContextValue["renameArchive"] = (archiveId, name) =>
+      runLifecycle(async (db) => {
+        const result = await renameArchivedTimetable(db, archiveId, name);
+        return result.ok ? { ok: true } : lifecycleError(result.reason);
+      });
+
+    const deleteArchive: AppStateContextValue["deleteArchive"] = (archiveId) =>
+      runLifecycle(async (db) => {
+        const result = await deleteArchivedTimetable(db, archiveId);
+        if (!result.ok) return lifecycleError(result.reason);
+        await refreshArchivedCount(db);
+        return { ok: true };
+      });
+
+    const readArchivedTimetables: AppStateContextValue["readArchivedTimetables"] = async () => {
+      const db = databaseRef.current;
+      if (!db) return [];
+      return listArchivedTimetables(db);
     };
 
     const upsertPlacement: AppStateContextValue["upsertPlacement"] = (input) => {
+      // A class has to belong to a timetable. Nothing can reach here without
+      // one today — the grid is not drawn without one — but the store is where
+      // that has to be true, not the screen.
+      if (!state.timetable) return { ok: false, error: domainError("errors.noActiveTimetable") };
       const name = input.name.trim();
       if (!name) return { ok: false, error: domainError("errors.classNameRequired") };
       if (!isValidIsoDate(input.startsOn)) {
@@ -778,8 +1021,30 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setState(createSampleTimetable());
     };
 
+    /*
+     * "Delete all data".
+     *
+     * A lifecycle operation, not an empty state handed to the ordinary save
+     * path. That path would empty the working tables and then leave both the
+     * `active_timetable` row — it never deletes one, by design — and every
+     * archived timetable exactly where they were, which is a database claiming
+     * a timetable with no periods in it and a list of archives the user just
+     * asked to be rid of.
+     *
+     * With no database at all the app is running in memory, and clearing the
+     * state is the whole of what "delete everything" can mean.
+     */
     const resetPrototype: AppStateContextValue["resetPrototype"] = () => {
-      setState(buildEmptyState());
+      if (!databaseRef.current) {
+        setState(buildEmptyState());
+        return;
+      }
+      void runLifecycle(async (db) => {
+        const state = await deleteAllTimetableData(db, { ...DEFAULT_SETTINGS });
+        settleLifecycle(state);
+        setArchivedCount(0);
+        return { ok: true };
+      });
     };
 
     return {
@@ -787,6 +1052,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       hydrated,
       storageError,
       persistence,
+      archivedCount,
       readStorageReport,
       setWeekendMode,
       setGridOrientation,
@@ -794,8 +1060,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setLanguagePreference,
       setDefaultReminder,
       setAcademicDayConfig,
-      setTermConfig,
-      updateTermInfo,
+      renameActiveTimetable,
+      createNewTimetable,
+      archiveCurrentTimetable,
+      restoreTimetable,
+      renameArchive,
+      deleteArchive,
+      readArchivedTimetables,
       upsertPlacement,
       movePlacement,
       checkPlacement,
@@ -805,7 +1076,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       loadSampleTimetable,
       resetPrototype,
     };
-  }, [state, hydrated, storageError, persistence]);
+  }, [state, hydrated, storageError, persistence, archivedCount]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

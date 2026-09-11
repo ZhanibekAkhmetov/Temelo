@@ -12,7 +12,6 @@ import type { Weekday, WeekendMode } from "@/domain/week";
 import { normalizeLanguagePreference } from "@/i18n/language";
 import { normalizeAppearancePreference } from "@/theme/appearance";
 import type {
-  AcademicTerm,
   Course,
   GridOrientation,
   OccurrenceException,
@@ -21,6 +20,7 @@ import type {
   RecurrenceType,
   Settings,
   TimeSlot,
+  Timetable,
 } from "@/types/models";
 
 export const SETTINGS_ROW_ID = "app";
@@ -41,11 +41,41 @@ export interface SettingsRow {
   onboarding_completed: number;
 }
 
-export interface TermRow {
+/**
+ * The single row that says which timetable is active.
+ *
+ * `singleton` is a constant, `CHECK`ed by the schema, so "at most one active
+ * timetable" is a property of the table rather than a rule the code has to
+ * keep. No row at all is the legitimate state of a user who archived their
+ * only timetable and has not made another.
+ */
+export const ACTIVE_TIMETABLE_ROW_ID = "active";
+
+export interface ActiveTimetableRow {
+  singleton: string;
   id: string;
   name: string;
-  start_date: string;
-  estimated_end_date: string;
+  anchor_date: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One archived timetable: its identity and list metadata as columns, the
+ * timetable itself as a versioned JSON snapshot.
+ *
+ * The columns are the ones the Timetables list has to render without parsing
+ * anything, and the ones a malformed snapshot must not be able to hide: a
+ * broken archive still shows its name and the day it was archived, and can
+ * still be renamed or deleted. Everything else is inside `snapshot`.
+ */
+export interface ArchivedTimetableRow {
+  id: string;
+  name: string;
+  archived_at: string;
+  created_at: string;
+  format_version: number;
+  snapshot: string;
 }
 
 export interface TimeSlotRow {
@@ -214,21 +244,24 @@ export function settingsFromRow(row: SettingsRow): Settings {
   };
 }
 
-export function termToRow(term: AcademicTerm): TermRow {
+export function activeTimetableToRow(timetable: Timetable): ActiveTimetableRow {
   return {
-    id: term.id,
-    name: term.name,
-    start_date: term.startDate,
-    estimated_end_date: term.estimatedEndDate,
+    singleton: ACTIVE_TIMETABLE_ROW_ID,
+    id: timetable.id,
+    name: timetable.name,
+    anchor_date: timetable.anchorDate,
+    created_at: timetable.createdAt,
+    updated_at: timetable.updatedAt,
   };
 }
 
-export function termFromRow(row: TermRow): AcademicTerm {
+export function activeTimetableFromRow(row: ActiveTimetableRow): Timetable {
   return {
     id: row.id,
     name: row.name,
-    startDate: row.start_date,
-    estimatedEndDate: row.estimated_end_date,
+    anchorDate: row.anchor_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

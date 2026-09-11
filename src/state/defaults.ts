@@ -1,10 +1,11 @@
-import { addDaysIso, todayIsoDate } from "@/domain/date";
+import { startOfWeekIso } from "@/domain/calendar";
+import { todayIsoDate } from "@/domain/date";
 import { generateTimeSlots } from "@/domain/time";
 import { createId } from "@/domain/id";
 import { DEFAULT_REMINDER_MINUTES } from "@/domain/reminder";
 import { DEFAULT_LANGUAGE_PREFERENCE } from "@/i18n/language";
 import { DEFAULT_APPEARANCE_PREFERENCE } from "@/theme/appearance";
-import type { AcademicTerm, Settings, TimeSlot } from "@/types/models";
+import type { Settings, TimeSlot } from "@/types/models";
 
 export const DEFAULT_SETTINGS: Settings = {
   weekendMode: "saturdaySunday",
@@ -22,26 +23,17 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingCompleted: false,
 };
 
-const DEFAULT_TERM_LENGTH_DAYS = 16 * 7;
-
 /**
- * The seed term.
+ * Where a new timetable's weekly classes start from.
  *
- * The name is left empty rather than seeded with "Current term". A term name
- * is the user's own data, and seeding it in English would put an English
- * string into a Russian or German user's database before they had typed
- * anything. Onboarding prefills the field with a translated suggestion
- * instead, which they confirm or replace — so the data is theirs and the
- * suggestion is in their language.
+ * The Monday of the week it is created in, and nothing more. It is not a
+ * semester start — nothing ends because of it and it is never shown — it is
+ * simply the earliest week a class added to this timetable is visible in, so
+ * that paging back through the weeks of a timetable shows the timetable rather
+ * than a grid that empties out. See `defaultSeriesStartDate`.
  */
-export function createDefaultTerm(): AcademicTerm {
-  const startDate = todayIsoDate();
-  return {
-    id: createId(),
-    name: "",
-    startDate,
-    estimatedEndDate: addDaysIso(startDate, DEFAULT_TERM_LENGTH_DAYS),
-  };
+export function defaultTimetableAnchorDate(): string {
+  return startOfWeekIso(todayIsoDate());
 }
 
 export function createDefaultTimeSlots(): TimeSlot[] {

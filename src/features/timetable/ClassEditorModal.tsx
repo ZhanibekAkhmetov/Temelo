@@ -15,7 +15,7 @@ import {
   type PendingClassEdit,
 } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
-import { defaultSeriesStartDate } from "@/domain/recurrence";
+import { defaultSeriesEndDate, defaultSeriesStartDate } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
@@ -26,7 +26,7 @@ import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
-import type { AcademicTerm, RecurrenceType, TimeSlot } from "@/types/models";
+import type { RecurrenceType, TimeSlot, Timetable } from "@/types/models";
 
 interface ClassEditorModalProps {
   visible: boolean;
@@ -39,7 +39,7 @@ interface ClassEditorModalProps {
   slotSpan: number;
   /** End of the last period in the span. */
   endTime: string;
-  term: AcademicTerm;
+  timetable: Timetable;
   existing?: ScheduledClass;
   /**
    * Edits to a repeating class leave here as a draft rather than as a
@@ -49,7 +49,7 @@ interface ClassEditorModalProps {
 }
 
 /** Which inline picker is unfolded — at most one at a time. */
-type OpenPicker = "date" | "startsOn" | "endsOn" | "color" | null;
+type OpenPicker = "date" | "startsOn" | "color" | null;
 
 export function ClassEditorModal({
   visible,
@@ -59,7 +59,7 @@ export function ClassEditorModal({
   timeSlot,
   slotSpan,
   endTime,
-  term,
+  timetable,
   existing,
   onRequestScope,
 }: ClassEditorModalProps) {
@@ -79,7 +79,7 @@ export function ClassEditorModal({
           timeSlot={timeSlot}
           slotSpan={slotSpan}
           endTime={endTime}
-          term={term}
+          timetable={timetable}
           existing={existing}
           onRequestScope={onRequestScope}
         />
@@ -95,7 +95,7 @@ function ClassEditorForm({
   timeSlot,
   slotSpan,
   endTime,
-  term,
+  timetable,
   existing,
   onRequestScope,
 }: Omit<ClassEditorModalProps, "visible">) {
@@ -128,7 +128,7 @@ function ClassEditorForm({
   const [startsOn, setStartsOn] = useState(
     existing && existing.basePlacement.recurrenceType !== "once"
       ? existing.basePlacement.startsOn
-      : defaultSeriesStartDate(existing?.basePlacement.recurrenceType ?? "weekly", date, term.startDate),
+      : defaultSeriesStartDate(existing?.basePlacement.recurrenceType ?? "weekly", date, timetable.anchorDate),
   );
   /**
    * Whether the start date is the user's own choice. An existing series
@@ -136,8 +136,18 @@ function ClassEditorForm({
    * user picks a date, after which it stops moving underneath them.
    */
   const [startDateIsOwn, setStartDateIsOwn] = useState(Boolean(existing));
-  const [endsOn, setEndsOn] = useState(existing?.basePlacement.endsOn ?? term.estimatedEndDate);
-  // A one-off defaults to the day that was tapped, not the start of term.
+  /*
+   * The series' end, which the user is no longer asked for and no longer sees.
+   *
+   * A new series is open-ended, and an existing one keeps whatever it already
+   * has — which is the sentinel for anything created or migrated under this
+   * model, and a real date only for the earlier half of a series that a "this
+   * and future" edit split. Held as state rather than read inline because the
+   * draft carries it to the scope chooser, where splitting still needs to know
+   * where the series ends.
+   */
+  const [endsOn] = useState(existing?.basePlacement.endsOn ?? defaultSeriesEndDate());
+  // A one-off defaults to the day that was tapped.
   const [onceDate, setOnceDate] = useState(
     existing?.basePlacement.recurrenceType === "once" ? existing.basePlacement.startsOn : date,
   );
@@ -174,11 +184,20 @@ function ClassEditorForm({
   const reminderDiffersFromDefault = reminderMinutes !== defaultReminderMinutes;
   const remindersBlocked = reminderStatus.permission === "denied";
 
+  /*
+   * "One time on 3 Nov" / "Repeats every week" / "Repeats every two weeks".
+   *
+   * The two recurring forms no longer name an end date because there is not
+   * one to name: a repeating class runs until the user changes or deletes it.
+   * The sentence used to read "Every week until 22 Dec", where the date was
+   * the estimate onboarding had made them type months earlier — and the single
+   * most surprising thing in the app was discovering it had been enforced.
+   */
   const summaryText = isOneOff
     ? t("classEditor.summaryOnce", { date: format.dateLong(onceDate) })
     : recurrenceType === "biweekly"
-      ? t("classEditor.summaryBiweekly", { date: format.dateLong(effectiveEndsOn) })
-      : t("classEditor.summaryWeekly", { date: format.dateLong(effectiveEndsOn) });
+      ? t("classEditor.summaryBiweekly")
+      : t("classEditor.summaryWeekly");
 
   const slotText =
     slotSpan > 1
@@ -203,13 +222,13 @@ function ClassEditorForm({
   /**
    * Choosing "every 2 weeks" also chooses which half of the fortnight the
    * class falls on, and the start date is where that is recorded — so a new
-   * class re-anchors on the week the user tapped. Left at the start of term
-   * it would land on the same alternating weeks as every other one, and
-   * collide with all of them.
+   * class re-anchors on the week the user tapped. Anchored anywhere fixed it
+   * would land on the same alternating weeks as every other one, and collide
+   * with all of them.
    */
   function handleRecurrenceChange(next: RecurrenceType) {
     setRecurrenceType(next);
-    if (!startDateIsOwn) setStartsOn(defaultSeriesStartDate(next, date, term.startDate));
+    if (!startDateIsOwn) setStartsOn(defaultSeriesStartDate(next, date, timetable.anchorDate));
   }
 
   function handleStartDateChange(value: string) {
@@ -470,14 +489,6 @@ function ClassEditorForm({
                     expanded={openPicker === "startsOn"}
                     onToggle={() => togglePicker("startsOn")}
                     helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
-                  />
-                  <InlineDateField
-                    label={t("classEditor.endDate")}
-                    value={endsOn}
-                    onChange={setEndsOn}
-                    expanded={openPicker === "endsOn"}
-                    onToggle={() => togglePicker("endsOn")}
-                    helperText={t("classEditor.endDateHint")}
                   />
                 </>
               )}

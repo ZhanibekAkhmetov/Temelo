@@ -7,9 +7,15 @@ import { useTheme } from "@/theme/useTheme";
 interface ScreenContainerProps {
   children: ReactNode;
   scroll?: boolean;
+  /**
+   * A top app bar, drawn above the content and outside its padding and its
+   * scroll — so it keeps its own full-width background and stays put while the
+   * page moves under it. See `ScreenHeader`.
+   */
+  header?: ReactNode;
 }
 
-export function ScreenContainer({ children, scroll = true }: ScreenContainerProps) {
+export function ScreenContainer({ children, scroll = true, header }: ScreenContainerProps) {
   const { colors, spacing } = useTheme();
 
   const content = scroll ? (
@@ -25,6 +31,7 @@ export function ScreenContainer({ children, scroll = true }: ScreenContainerProp
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={["top", "left", "right", "bottom"]}>
+      {header}
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         {content}
       </KeyboardAvoidingView>

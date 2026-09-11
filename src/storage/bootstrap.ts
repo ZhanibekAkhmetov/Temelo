@@ -15,15 +15,23 @@ import type { SQLiteDatabase } from "expo-sqlite";
 
 import { openTemeloDatabase } from "@/storage/database";
 import { logDatabaseDiagnostics } from "@/storage/diagnostics";
+import { countArchivedTimetables } from "@/storage/timetableLifecycle";
 import { loadTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
 
 export interface StorageBootstrap {
   db: SQLiteDatabase;
   schemaVersion: number;
-  /** Columns the post-migration guard had to add; empty on a healthy launch. */
+  /** Columns and tables the post-migration guard had to add; empty when healthy. */
   repairedColumns: string[];
-  /** Null when this database has never held a timetable. */
+  /**
+   * Null when this database has never been written to at all — a fresh
+   * install. A database that *has* been written to but currently has no active
+   * timetable comes back with `timetable: null` inside this object instead;
+   * the two are different states and lead to different screens.
+   */
   timetable: PersistedTimetable | null;
+  /** How many archived timetables the database holds. */
+  archivedCount: number;
 }
 
 let bootstrapPromise: Promise<StorageBootstrap> | null = null;
@@ -31,10 +39,11 @@ let bootstrapPromise: Promise<StorageBootstrap> | null = null;
 async function runBootstrap(): Promise<StorageBootstrap> {
   const { db, schemaVersion, repairedColumns } = await openTemeloDatabase();
   const timetable = await loadTimetable(db);
+  const archivedCount = await countArchivedTimetables(db);
 
   await logDatabaseDiagnostics(db);
 
-  return { db, schemaVersion, repairedColumns, timetable };
+  return { db, schemaVersion, repairedColumns, timetable, archivedCount };
 }
 
 export function bootstrapStorage(): Promise<StorageBootstrap> {

@@ -23,6 +23,7 @@ import {
   type TimetableSurfaceHandle,
 } from "@/features/timetable/TimetableSurface";
 import { WeekGridHorizontal } from "@/features/timetable/WeekGridHorizontal";
+import { NoTimetable } from "@/features/timetables/NoTimetable";
 import { useNow } from "@/features/timetable/useNow";
 import type { SelectedCell } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
@@ -132,6 +133,42 @@ export default function TimetableScreen() {
     (input: OccurrencePosition) => checkOccurrence(input).ok,
     [checkOccurrence],
   );
+
+  /*
+   * No active timetable: there is nothing to page through, so the week
+   * navigation and the grid are both wrong. The empty state replaces the whole
+   * screen rather than filling the grid area, because a month title and a
+   * pair of week arrows above "no timetable yet" would be chrome for
+   * something that is not there.
+   *
+   * The menu stays, as the one thing still worth reaching — Settings, and
+   * through it everything about timetables.
+   */
+  if (!state.timetable) {
+    return (
+      <SafeAreaView
+        style={[styles.flex, { backgroundColor: colors.background }]}
+        edges={["top", "left", "right", "bottom"]}
+      >
+        <View style={[styles.header, { paddingTop: 2, backgroundColor: colors.headerBackground }]}>
+          <View style={[styles.headerLeft, { left: spacing.md }]} pointerEvents="box-none">
+            <Pressable
+              onPress={() => router.push("/settings")}
+              accessibilityRole="button"
+              accessibilityLabel={t("timetable.openSettings")}
+              hitSlop={8}
+              pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
+              style={({ pressed }) => [styles.arrowTarget, { opacity: pressed ? 0.5 : 1 }]}
+            >
+              <Text style={[styles.glyph, { color: colors.textSecondary }]}>≡</Text>
+            </Pressable>
+          </View>
+          <View style={styles.arrowTarget} />
+        </View>
+        <NoTimetable />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={["top", "left", "right", "bottom"]}>
@@ -247,7 +284,7 @@ export default function TimetableScreen() {
           timeSlot={selected.timeSlot}
           slotSpan={selected.slotSpan}
           endTime={selected.endTime}
-          term={state.term}
+          timetable={state.timetable}
           existing={selected.existing}
           onRequestScope={setPendingEdit}
         />

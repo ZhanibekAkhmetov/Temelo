@@ -5,7 +5,7 @@ import { useTheme } from "@/theme/useTheme";
 
 interface TextFieldProps extends Pick<
   TextInputProps,
-  "value" | "onChangeText" | "placeholder" | "keyboardType" | "autoFocus" | "multiline" | "autoCapitalize" | "onSubmitEditing" | "returnKeyType"
+  "value" | "onChangeText" | "placeholder" | "keyboardType" | "autoFocus" | "multiline" | "autoCapitalize" | "onSubmitEditing" | "returnKeyType" | "maxLength"
 > {
   label: string;
   error?: string;

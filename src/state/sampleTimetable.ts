@@ -2,7 +2,7 @@
  * A generic sample timetable, for development only.
  *
  * Its only job is to give a developer something to drag, resize and edit
- * without typing a term in by hand. Nothing loads it automatically: the one
+ * without building one by hand. Nothing loads it automatically: the one
  * caller is the "Load sample timetable" action in Settings, which is itself
  * hidden outside `__DEV__`, and it never touches a database that has not
  * been through the ordinary save path afterwards.
@@ -11,22 +11,23 @@
  * numbers that belong to nobody. A real timetable must only ever get into
  * the app the way a user puts it there.
  *
- * It uses the default academic day and anchors the term two weeks before the
- * current week, so paging backwards and forwards both land on real data. The
- * mix of weekly and every-two-week entries is there so recurrence behaviour
- * is exercised, not because it means anything.
+ * It uses the default academic day and anchors the timetable two weeks before
+ * the current week, so paging backwards and forwards both land on real data.
+ * Its recurring classes are open-ended, like every class the app creates now.
+ * The mix of weekly and every-two-week entries is there so recurrence
+ * behaviour is exercised, not because it means anything.
  */
 
 import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
 import { CLASS_COLOR_IDS } from "@/domain/classColor";
 import { addDaysIso, todayIsoDate } from "@/domain/date";
+import { defaultSeriesEndDate } from "@/domain/recurrence";
 import { createId } from "@/domain/id";
 import type { Weekday } from "@/domain/week";
 import { createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
-import type { AcademicTerm, Course, OccurrenceException, Placement, RecurrenceType, Settings, TimeSlot } from "@/types/models";
+import type { Course, OccurrenceException, Placement, RecurrenceType, Settings, TimeSlot, Timetable } from "@/types/models";
 
-const TERM_STARTS_WEEKS_AGO = 2;
-const TERM_LENGTH_WEEKS = 18;
+const ANCHOR_WEEKS_AGO = 2;
 
 interface SampleEntry {
   weekday: Weekday;
@@ -58,7 +59,7 @@ const SAMPLE_ENTRIES: SampleEntry[] = [
  */
 export interface SampleTimetable {
   settings: Settings;
-  term: AcademicTerm;
+  timetable: Timetable;
   timeSlots: TimeSlot[];
   courses: Course[];
   placements: Placement[];
@@ -72,8 +73,7 @@ export interface SampleTimetable {
  */
 export function createSampleTimetable(): SampleTimetable {
   const now = new Date().toISOString();
-  const termStart = addWeeksIso(startOfWeekIso(todayIsoDate()), -TERM_STARTS_WEEKS_AGO);
-  const termEnd = addWeeksIso(termStart, TERM_LENGTH_WEEKS);
+  const anchorDate = addWeeksIso(startOfWeekIso(todayIsoDate()), -ANCHOR_WEEKS_AGO);
   const timeSlots = createDefaultTimeSlots();
 
   const courses: Course[] = [];
@@ -106,7 +106,7 @@ export function createSampleTimetable(): SampleTimetable {
 
     // A biweekly class meets every other week from its own start date, so
     // the two cycles are offset by one week against each other.
-    const startsOn = entry.cycle === "odd" ? addDaysIso(termStart, 7) : termStart;
+    const startsOn = entry.cycle === "odd" ? addDaysIso(anchorDate, 7) : anchorDate;
 
     return [
       {
@@ -117,7 +117,7 @@ export function createSampleTimetable(): SampleTimetable {
         slotSpan: 1,
         recurrenceType: entry.recurrence,
         startsOn,
-        endsOn: termEnd,
+        endsOn: defaultSeriesEndDate(),
         reminderMinutes: DEFAULT_SETTINGS.defaultReminderMinutes,
         createdAt: now,
         updatedAt: now,
@@ -128,7 +128,7 @@ export function createSampleTimetable(): SampleTimetable {
 
   return {
     settings: { ...DEFAULT_SETTINGS, onboardingCompleted: true },
-    term: { id: createId(), name: "Current term", startDate: termStart, estimatedEndDate: termEnd },
+    timetable: { id: createId(), name: "Sample timetable", anchorDate, createdAt: now, updatedAt: now },
     timeSlots,
     courses,
     placements,

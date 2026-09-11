@@ -10,7 +10,7 @@
 import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 
 import { LATEST_SCHEMA_VERSION, migrateToLatest } from "@/storage/migrations";
-import { findMissingColumns, repairSchema } from "@/storage/schema";
+import { findMissingColumns, findMissingTables, repairSchema } from "@/storage/schema";
 import { runSerialized } from "@/storage/transaction";
 
 export const DATABASE_NAME = "temelo.db";
@@ -72,12 +72,17 @@ export async function openTemeloDatabase(): Promise<OpenedDatabase> {
    * that the schema matches what the writes assume; claiming a version for it
    * would be inventing history the database does not have.
    */
-  const missing = await findMissingColumns(db);
-  // Through the connection's queue, not inside a transaction: `ALTER TABLE` is
-  // its own atomic unit, and `repairSchema` is also called from migration v5,
-  // which already holds the queue — taking it again in there would deadlock.
-  const repairedColumns =
-    missing.length > 0 ? (await runSerialized(db, () => repairSchema(db))).addedColumns : [];
+  const missingColumns = await findMissingColumns(db);
+  const missingTables = await findMissingTables(db);
+  // Through the connection's queue, not inside a transaction: `ALTER TABLE` and
+  // `CREATE TABLE` are each their own atomic unit, and `repairSchema` is also
+  // called from migration v5, which already holds the queue — taking it again
+  // in there would deadlock.
+  const repaired =
+    missingColumns.length > 0 || missingTables.length > 0
+      ? await runSerialized(db, () => repairSchema(db))
+      : { addedColumns: [], addedTables: [] };
+  const repairedColumns = [...repaired.addedTables, ...repaired.addedColumns];
 
   if (repairedColumns.length > 0) {
     console.warn(

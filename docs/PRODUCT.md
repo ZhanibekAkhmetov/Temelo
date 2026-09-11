@@ -59,14 +59,20 @@ day. The generated slots are a starting point: each one must later be
 individually editable (time, duration), and generating them does not lock
 the user into that structure.
 
-### 3. Academic term setup
+### 3. Naming the timetable
 
-The user creates an academic term (or semester) with:
+The user gives the timetable a name, and that is the whole of it. There is no
+start date, no end date and no term to configure.
 
-- A start date.
-- An estimated end date.
-- The end date must be easy to change later — end-of-term dates are
-  routinely approximate when the term begins.
+This replaces an earlier onboarding step that asked for a semester start date
+and an estimated end date. The end date was always a guess — end-of-term dates
+are routinely approximate when a term begins — and it was a guess with teeth:
+it silently decided when every recurring class stopped. A user who typed
+"December" in September found their timetable emptying out in December for a
+reason nothing on screen explained.
+
+So the concept is gone from the product, not merely from the form. See
+*Timetable lifecycle* below for what replaced it.
 
 ## Class creation flow
 
@@ -81,7 +87,8 @@ Defaults applied automatically:
 
 - The day and time slot are already known from what was tapped.
 - Recurrence defaults to weekly.
-- Recurrence continues until the academic term's end date.
+- Recurrence is open-ended: the class repeats until the user changes or
+  deletes it.
 
 Everything else is optional at creation time and editable afterward:
 
@@ -89,13 +96,46 @@ Everything else is optional at creation time and editable afterward:
   timetable grid, not buried in a details view).
 - Lecturer or teacher.
 - Notes.
-- Recurrence settings (if weekly-until-term-end is not what's wanted).
-- Start and end dates (if different from the term default).
+- Recurrence settings (if plain weekly is not what's wanted).
+- The start date, which for an every-two-weeks class is also which half of the
+  fortnight it falls on.
 - Visual appearance (e.g. color).
 
 A **course** (e.g. "Mathematics") is a reusable entity, independent of any
 single placement. The same course can be placed into multiple weekly slots
 without re-entering its name, room, or teacher each time.
+
+## Timetable lifecycle
+
+A user has **one active timetable** and **zero or more archived timetables**.
+
+- The active timetable is the one being used. Its name, the days it shows and
+  its academic day are edited on its own screen, reached from a single row in
+  Settings.
+- Archiving it preserves everything in it — classes, recurrence, exceptions,
+  colours, per-class reminders — moves it to the archived list, and stops its
+  reminders while it is there. It can be restored later.
+- Creating a new timetable while one is active archives the current one, but
+  only once the new one has actually been created. Abandoning the setup leaves
+  the current timetable completely unchanged.
+- Restoring an archived timetable archives the current one first, if there is
+  one, and nothing is deleted.
+- Only an archived timetable can be deleted permanently, and only behind an
+  explicit destructive confirmation.
+
+Archive, restore and delete permanently are three distinct actions with three
+distinct consequences, and the product never presents them as variants of each
+other.
+
+There may legitimately be **no active timetable**, immediately after the user
+archives the one they had. The app then shows an empty state offering to create
+a timetable or to look at the archived ones — never an empty grid, which would
+read as a timetable that had lost its classes.
+
+Terms, semesters and their dates are not part of this model. A user who thinks
+in semesters expresses that by naming a timetable "Autumn 2026" and archiving
+it when the autumn ends, which is a decision they make when it is actually true
+rather than a date they guess months in advance.
 
 ## Editing expectations
 
@@ -115,7 +155,7 @@ the first implementation milestone — see [ROADMAP.md](ROADMAP.md)):
 
 The first implementation milestone covers:
 
-- Onboarding (week configuration, academic-day configuration, term setup).
+- Setup (timetable name and days shown, then academic-day configuration).
 - Generated time slots from onboarding defaults, individually editable.
 - A timetable grid view.
 - Creating a class in an empty slot with the minimal flow described above.
@@ -148,15 +188,19 @@ current build:
 - Calendar export to Google Calendar, Apple Calendar, Samsung Calendar, and
   similar applications.
 - Direct integration with the device's native calendar.
-- Timetable backup and restore.
+- Timetable export to and import from a file (archiving and restoring on the
+  same device is implemented; moving a timetable between devices is not).
 
 ## Terminology
 
 - **Timetable** — The complete set of a user's recurring class placements
   across a week, displayed as a grid.
-- **Academic term** — A bounded period (e.g. a semester) with a start date
-  and an estimated, editable end date, against which recurring placements
-  are scheduled.
+- **Active timetable** — The one timetable that is currently being used and
+  edited. There may temporarily be none, immediately after the user archives
+  the one they had.
+- **Archived timetable** — A timetable the user has put away. It is preserved
+  exactly, is not editable while archived, schedules no reminders, and can be
+  restored, renamed or deleted permanently.
 - **Time slot** — A recurring position in the academic-day structure,
   defined by a weekday and a local start/end time, generated from the
   academic-day configuration and individually editable afterward.
@@ -167,7 +211,9 @@ current build:
   time slot, including placement-specific details such as room, teacher,
   notes, recurrence, and date range.
 - **Recurrence** — The rule describing how often a placement repeats
-  (default: weekly, until the academic term's end date).
+  (default: weekly, open-ended). A one-time placement is the only kind that is
+  finite by nature; a repeating one stops only where the user split or deleted
+  it.
 - **Exception** — A deviation from a placement's normal recurrence for a
   single occurrence (e.g. one week's class is cancelled, moved, or
   modified) without altering the recurring placement itself.

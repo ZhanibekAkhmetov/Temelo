@@ -6,7 +6,6 @@ import { ChoiceRowField } from "@/components/ChoiceRowField";
 import { FormSection, NavigationRow } from "@/components/FormSection";
 import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
-import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
 import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
@@ -18,12 +17,6 @@ import { useAppState } from "@/state/AppStateContext";
 import { APPEARANCE_PREFERENCES, type AppearancePreference } from "@/theme/appearance";
 import { useTheme } from "@/theme/useTheme";
 import type { GridOrientation } from "@/types/models";
-
-const WEEKEND_MODE_LABEL_KEY: Record<WeekendMode, TranslationKey> = {
-  saturdaySunday: "week.weekendSaturdaySunday",
-  sundayOnly: "week.weekendSundayOnly",
-  none: "week.weekendNone",
-};
 
 const APPEARANCE_LABEL_KEY: Record<AppearancePreference, TranslationKey> = {
   system: "settings.appearanceSystem",
@@ -61,22 +54,26 @@ const LANGUAGE_ENDONYM: Record<Exclude<LanguagePreference, "system">, string> = 
  *   made. A setting that is several fields at once is a screen of its own.
  *
  * So there is no Save button here at all. Every row on this page commits on
- * tap; the two things that cannot — the academic day and the term — are rows
- * that open their own editors, where a Save belongs because there is a whole
- * form to commit. The previous version had one editor inlined at the bottom
- * with its own Save, which meant the page had a button that governed two of
- * its rows and not the other five, and no way to tell which was which.
+ * tap; the one thing that cannot is a row that leaves for a screen of its own.
  *
- * Three groups, and each row's value is on the right, so the page can be read
- * as "what is Temelo set to" without opening anything.
+ * What this page is *about* narrowed with the timetable lifecycle, and that is
+ * the more important change. It used to hold the term, the academic day and
+ * the days without classes alongside appearance and language — five rows about
+ * the app and three about one particular timetable, in one undifferentiated
+ * list. Now the timetable's own properties live on the timetable's own screen,
+ * and Settings keeps one row pointing at it. What is left here is true of
+ * Temelo however many timetables the user has.
+ *
+ * The layout is the deliberate exception: it is how the user prefers to read a
+ * week grid, not a fact about any particular week in it, so it stays a
+ * preference and stays here.
  */
 export default function SettingsScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
-  const { t, format } = useI18n();
+  const { t } = useI18n();
   const {
     state,
     persistence,
-    setWeekendMode,
     setGridOrientation,
     setAppearancePreference,
     setLanguagePreference,
@@ -100,20 +97,6 @@ export default function SettingsScreen() {
     value: orientation,
     label: t(LAYOUT_LABEL_KEY[orientation]),
   }));
-
-  const weekendOptions = ALL_WEEKEND_MODES.map((mode) => ({
-    value: mode,
-    label: t(WEEKEND_MODE_LABEL_KEY[mode]),
-  }));
-
-  // The hours the configured day actually covers, which is the one thing worth
-  // knowing about it without opening the editor.
-  const firstSlot = state.timeSlots[0];
-  const lastSlot = state.timeSlots[state.timeSlots.length - 1];
-  const academicDaySummary =
-    firstSlot && lastSlot
-      ? t("settings.academicDaySummary", { start: firstSlot.startTime, end: lastSlot.endTime })
-      : undefined;
 
   function handleLoadSample() {
     Alert.alert(t("settings.loadSampleTitle"), t("settings.loadSampleMessage"), [
@@ -140,7 +123,7 @@ export default function SettingsScreen() {
           // timetable first, then replace it, so no stale screen is left
           // underneath the fresh onboarding flow.
           router.dismissAll();
-          router.replace("/onboarding/week");
+          router.replace("/timetables/new-timetable");
         },
       },
     ]);
@@ -212,25 +195,15 @@ export default function SettingsScreen() {
           onChange={(gridOrientation) => setGridOrientation({ gridOrientation })}
           sheetTitle={t("settings.layout")}
         />
-        <ChoiceRowField
-          label={t("settings.daysWithoutClasses")}
-          value={state.settings.weekendMode}
-          options={weekendOptions}
-          onChange={(weekendMode) => setWeekendMode({ weekendMode })}
-          sheetTitle={t("settings.daysWithoutClasses")}
-        />
-        {/* Both of these are whole forms, so both are rows that open one. Each
-            says what it currently holds, so the page still answers the
-            question without being opened. */}
+        {/* One door to everything about timetables — the current one's name,
+            days and academic day, the archived ones, and creating another. The
+            three rows that used to be here were all reachable through it, and
+            keeping them here as well would have made this page the second
+            place to change a timetable's shape. */}
         <NavigationRow
-          label={t("settings.academicDay")}
-          value={academicDaySummary}
-          onPress={() => router.push("/onboarding/academic-day")}
-        />
-        <NavigationRow
-          label={t("settings.term")}
-          value={state.term.name || format.dateLong(state.term.estimatedEndDate)}
-          onPress={() => router.push("/onboarding/term")}
+          label={t("settings.currentTimetable")}
+          value={state.timetable?.name ?? t("settings.noTimetable")}
+          onPress={() => router.push("/timetables")}
         />
       </FormSection>
 

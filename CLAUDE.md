@@ -19,7 +19,9 @@ development build, not Expo Go.
 - `npx expo start --dev-client` — run the app (phone and computer must share
   a local network)
 - `npm run lint` — lint (`expo lint`); run after code changes
-- No test runner is installed yet.
+- `npm run harness` — the geometry, storage and lifecycle harnesses
+  (`harness/`), run against Node's own SQLite. There is no test runner; this
+  is the substitute, and it must stay green.
 
 ## Architecture boundaries
 
@@ -30,19 +32,31 @@ development build, not Expo Go.
   directly from screens.
 - Don't duplicate application data unnecessarily in a global store.
 - Recurring lesson times: local weekday + `HH:mm`, not UTC timestamps.
-- Academic term dates (date ranges) are modeled separately from recurring
-  local lesson times.
+- A series' date range is modeled separately from its recurring local lesson
+  time. A repeating series is open-ended (`OPEN_ENDED_DATE` in
+  `domain/recurrence`); a real end date on one means it genuinely stops
+  there, which in practice means a "this and future" edit split it.
+- `startsOn` is a per-series parity anchor as well as a beginning. Nothing
+  global anchors biweekly recurrence.
+- One active timetable lives in the normalised working tables; archived ones
+  are versioned JSON snapshots in `archived_timetables`. Archive, restore
+  and create-new are atomic swaps in `storage/timetableLifecycle`.
 - Records intended to be future-sync-able use device-generated string IDs
   plus `createdAt`/`updatedAt`/`deletedAt`.
 
 ## Product defaults worth remembering
 
-- Adding a class = tap empty slot → name → save. Defaults to weekly
-  recurrence until term end; room/teacher/notes/recurrence/appearance are
-  optional and editable later.
-- Onboarding order: week config (first day, weekends) → academic-day config
-  (start time, lesson/break duration, slot count) → term (start + estimated,
-  editable end date). Generated slots must stay individually editable.
+- Adding a class = tap empty slot → name → save. Defaults to open-ended
+  weekly recurrence; room/teacher/notes/recurrence/appearance are optional and
+  editable later.
+- Setup order: timetable (name, days shown) → academic day (start time,
+  lesson/break duration, slot count), then the timetable is created.
+  Generated slots must stay individually editable.
+- There is no user-facing "term", "semester start" or "semester end". Do not
+  reintroduce one. A user who thinks in semesters names a timetable and
+  archives it.
+- There may legitimately be no active timetable. Every screen that draws
+  timetable data must answer for `state.timetable === null`.
 - A course is reusable across multiple placements.
 
 ## Coding rules
