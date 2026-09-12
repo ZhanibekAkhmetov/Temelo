@@ -46,6 +46,8 @@ export interface WeekGridProps {
   exceptions: OccurrenceException[];
   /** An edit awaiting a scope choice, drawn where it would land. */
   preview: OccurrencePreview | null;
+  /** The timetable's start date; nothing is drawn before it. */
+  timetableStart: string;
   today: string;
   now: string;
   width: number;

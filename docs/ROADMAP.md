@@ -14,7 +14,8 @@ current implementation status.
 2. **Static onboarding UI**
    Non-functional screens for week configuration, academic-day
    configuration, and term setup, matching the flow in
-   [PRODUCT.md](PRODUCT.md).
+   [PRODUCT.md](PRODUCT.md) as it then stood — the term step was later removed
+   from the product entirely (see milestone 15).
    *Done when:* a user can navigate through all onboarding screens in order
    and back, with no state persisted or validated yet.
    *Status: superseded.* Implemented directly as functional screens (see
@@ -42,7 +43,7 @@ current implementation status.
    is implemented so onboarding results and generated slots survive an app
    restart.
    *Done when:* completing onboarding, then closing and reopening the app,
-   shows the same term, slots, and settings without re-running onboarding.
+   shows the same timetable, periods, and settings without re-running setup.
    *Status: done.* SQLite (`expo-sqlite`) behind `src/storage/`, with
    versioned migrations, WAL and foreign keys on, hydration gated before
    first render, and every successful `AppState` mutation written back as a
@@ -85,8 +86,8 @@ current implementation status.
 
 7. **Quick class creation**
    Tapping an empty slot lets the user create a class with just a name,
-   per the minimal flow in [PRODUCT.md](PRODUCT.md), defaulting to weekly
-   recurrence until term end.
+   per the minimal flow in [PRODUCT.md](PRODUCT.md), defaulting to
+   open-ended weekly recurrence.
    *Done when:* a class created this way appears in its slot, persists
    across restarts, and optional fields (room, teacher, notes) can be added
    during creation.
@@ -113,16 +114,17 @@ current implementation status.
    existing course — each new class still creates its own.
 
 10. **Recurrence**
-    Recurrence settings become editable beyond the "weekly until term end"
-    default, including custom end dates and single-occurrence exceptions.
+    Recurrence settings become editable beyond the plain weekly default,
+    including single-occurrence exceptions.
     *Done when:* a user can change a placement's recurrence and separately
     edit or cancel one occurrence without affecting the recurring rule.
-    *Status: done.* Weekly, every-two-weeks and one-time recurrence with
-    editable start/end dates; every edit to a repeating class asks its
-    scope (only this occurrence / this and future / all), implemented as
-    per-occurrence exceptions and series splitting. Clash checking resolves
-    recurrence onto concrete dates, so alternating classes can share a
-    period.
+    *Status: done.* Weekly, every-two-weeks and one-time recurrence; every
+    edit to a repeating class asks its scope (only this occurrence / this and
+    future / all), implemented as per-occurrence exceptions and series
+    splitting. Clash checking resolves recurrence onto concrete dates, so
+    alternating classes can share a period. A repeating series is now
+    open-ended rather than bounded by a term end (milestone 15); the only end
+    date a series can have is the one a "this and future" split gives it.
 
 11. **Settings**
     A settings screen exposes week configuration and academic-day defaults
@@ -130,17 +132,23 @@ current implementation status.
     *Done when:* changing a setting (e.g. default lesson duration) affects
     future slot generation without silently altering existing placements.
     *Status: mostly done.* Settings covers appearance, language, timetable
-    layout, days without classes, the academic day, the term, the default
-    reminder, and a full reset. Two gaps remain: changing the academic day
-    regenerates the periods and clears the existing classes — announced by a
-    confirmation rather than done silently, but still destructive — and an
-    individual period's time cannot yet be edited on its own, which
-    [PRODUCT.md](PRODUCT.md) requires.
+    layout, the default reminder, a full reset, and one row into timetable
+    management. The timetable's own properties — its name, the days it shows
+    and its academic day — moved to the timetable's own screen in milestone
+    15, so there is a single owner for each. Two gaps remain: changing the
+    academic day regenerates the periods and clears the existing classes —
+    announced by a confirmation rather than done silently, but still
+    destructive — and an individual period's time cannot yet be edited on its
+    own, which [PRODUCT.md](PRODUCT.md) requires.
 
 12. **Backup and restore**
     Users can export their timetable data to a file and re-import it.
     *Done when:* a backup file produced by export fully reconstructs the
     timetable state when imported on the same or another device.
+    *Status: not started, but unblocked.* Milestone 15 introduced the
+    validated, versioned `TimetableSnapshot` that archiving already uses, and
+    it was designed so that a file is simply another place to put one. Nothing
+    in this branch reads or writes a file.
 
 13. **Calendar export**
     Timetable data can be exported in a format consumable by external
@@ -155,6 +163,30 @@ current implementation status.
     *Done when:* scoped in detail at the time this milestone is actually
     started — deliberately not defined further now (see "Intentionally
     deferred decisions" in [ARCHITECTURE.md](ARCHITECTURE.md)).
+
+15. **Timetable lifecycle** *(Beta 1)*
+    The product's organising concept becomes one **active timetable** plus
+    zero or more **archived timetables**, and the academic term — a required
+    start date and an estimated end date — is removed from the model
+    altogether.
+    *Done when:* a user can create, archive, restore, rename and permanently
+    delete timetables; a repeating class no longer stops because of a date
+    they were once asked to guess; and an existing device's timetable survives
+    the upgrade with its classes, biweekly parity, exceptions, colours and
+    reminders intact.
+    *Status: done.* Recurring series are open-ended (`OPEN_ENDED_DATE`) and
+    still resolved lazily over the visible or reminder range; biweekly parity
+    is anchored per series on its own `startsOn`, so removing the global
+    start date changed no existing class. The active timetable stays in the
+    normalised working tables; an archived one is a validated, versioned JSON
+    snapshot, and every archive, restore and create-new is one atomic swap
+    (`storage/timetableLifecycle`). Migration v6 promotes the existing term
+    to the active timetable, keeps its name and uses its start date as the
+    timetable's internal anchor, and opens the end date of every repeating
+    series that ran to the term's estimated end — leaving a split series'
+    deliberate end date alone. The legacy `terms` table is left in place
+    rather than dropped; nothing reads it. Timetable management lives on its
+    own screens behind a single Settings row.
 
 ## Work delivered outside the numbered milestones
 
@@ -172,7 +204,10 @@ implemented and are described in the README:
 
 ## Next milestone
 
+Milestone 12, backup and restore: writing a `TimetableSnapshot` to a Temelo
+file and reading one back. Milestone 15 built and validated that snapshot for
+archiving, so this is the file layer on top of it and nothing more.
+
 Stabilization and a standalone, offline Android build (`preview` profile in
 [eas.json](../eas.json)) that a tester can install without a development
-machine. Nothing above is reordered by this; it is the release step for what
-is already done.
+machine remains the release step for everything above; it reorders nothing.

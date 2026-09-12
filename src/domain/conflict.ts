@@ -17,7 +17,7 @@
  */
 
 import { resolveOccurrences, type Occurrence, type OccurrenceSource } from "@/domain/occurrence";
-import { occurrenceDates } from "@/domain/recurrence";
+import { clashHorizon, occurrenceDates } from "@/domain/recurrence";
 import { occupiedSlotIds } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
 import type { RecurrenceType, TimeSlot } from "@/types/models";
@@ -36,6 +36,8 @@ export interface PlacementCandidate {
   recurrenceType: RecurrenceType;
   startsOn: string;
   endsOn: string;
+  /** Whether the candidate reaches back to the timetable's start; see `seriesLowerBound`. */
+  startsWithTimetable?: boolean;
 }
 
 export interface OccurrenceCandidate {
@@ -81,11 +83,20 @@ function firstClashOn(
 /**
  * Whether a whole series can occupy a slot — checked on every date it meets,
  * because a series has to hold on all of them.
+ *
+ * "Every date it meets" is infinite now that a series can be open-ended, so
+ * the dates are enumerated up to `clashHorizon` — the point past which the
+ * answer cannot change, computed from the timetable's own dates. The check is
+ * still conclusive; it is only the enumeration that is finite. See the
+ * argument in `domain/recurrence`.
  */
 export function findPlacementConflict(source: ConflictSource, candidate: PlacementCandidate): Occurrence | undefined {
   return firstClashOn(
     source,
-    occurrenceDates(candidate),
+    // From the timetable's start, for a candidate that reaches back to it: those
+    // earlier weeks are weeks it will be drawn in, so they are weeks it must
+    // be free in.
+    occurrenceDates(candidate, clashHorizon(source, candidate.startsOn), source.timetableStart),
     candidate.timeSlotId,
     candidate.slotSpan,
     // The series being edited cannot clash with itself, and neither can its

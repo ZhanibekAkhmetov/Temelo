@@ -29,7 +29,10 @@ import type { SQLiteDatabase } from "expo-sqlite";
 export interface RequiredColumn {
   table: string;
   column: string;
-  /** Declared type. Every one is nullable, so adding it never rewrites rows. */
+  /**
+   * Declared type. Every one is nullable or carries a constant default, so
+   * adding it never rebuilds the table and every existing row stays valid.
+   */
   type: string;
 }
 
@@ -47,6 +50,50 @@ export const REQUIRED_COLUMNS: RequiredColumn[] = [
   { table: "settings", column: "appearance_preference", type: "TEXT" },
   { table: "settings", column: "language_preference", type: "TEXT" },
   { table: "occurrence_exceptions", column: "appearance_id", type: "TEXT" },
+  // v7's. Named by both placement writers, so a database reporting a version
+  // ahead of this build without it would refuse every save.
+  { table: "placements", column: "starts_with_timetable", type: "INTEGER NOT NULL DEFAULT 1" },
+];
+
+/**
+ * Whole tables the write path names, with the statement that creates each.
+ *
+ * The same argument as `REQUIRED_COLUMNS`, one level up. v6's two lifecycle
+ * tables are the first tables added after v1, so they are the first that a
+ * database reporting a version *ahead* of this build could be missing
+ * altogether — and a missing table fails every archive, restore and creation,
+ * which is worse than a missing column because it fails the operations whose
+ * whole job is not to lose a timetable.
+ *
+ * `IF NOT EXISTS` rather than a check-then-create: the statement is its own
+ * test, it is idempotent by construction, and unlike a column it cannot be
+ * "there but wrong" in a way this could paper over.
+ */
+export const REQUIRED_TABLES: { table: string; create: string }[] = [
+  {
+    table: "active_timetable",
+    create: `
+      CREATE TABLE IF NOT EXISTS active_timetable (
+        singleton   TEXT PRIMARY KEY NOT NULL CHECK (singleton = 'active'),
+        id          TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        anchor_date TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      )`,
+  },
+  {
+    table: "archived_timetables",
+    create: `
+      CREATE TABLE IF NOT EXISTS archived_timetables (
+        id             TEXT PRIMARY KEY NOT NULL,
+        name           TEXT NOT NULL,
+        archived_at    TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        format_version INTEGER NOT NULL,
+        snapshot       TEXT NOT NULL
+      )`,
+  },
 ];
 
 /** The valid stored values, as literals — see the note in `repairSchema`. */
@@ -65,6 +112,17 @@ export async function tableColumns(db: SQLiteDatabase, table: string): Promise<s
   // never user input; PRAGMA takes no bound parameters.
   const rows = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
   return rows.map((row) => row.name);
+}
+
+/** Which required tables this database does not have. Empty is healthy. */
+export async function findMissingTables(db: SQLiteDatabase): Promise<string[]> {
+  const missing: string[] = [];
+  for (const required of REQUIRED_TABLES) {
+    // A table with no columns is a table that does not exist — `PRAGMA
+    // table_info` returns no rows for one, which is the answer we want.
+    if ((await tableColumns(db, required.table)).length === 0) missing.push(required.table);
+  }
+  return missing;
 }
 
 /** Which required columns this database is missing. Empty is the healthy case. */
@@ -87,6 +145,8 @@ export async function findMissingColumns(db: SQLiteDatabase): Promise<RequiredCo
 export interface SchemaRepairReport {
   /** "table.column" for each column that had to be added. */
   addedColumns: string[];
+  /** Each whole table that had to be created. */
+  addedTables: string[];
 }
 
 /**
@@ -112,7 +172,13 @@ export interface SchemaRepairReport {
  * the day it shipped, even if those modules later learn a new value.
  */
 export async function repairSchema(db: SQLiteDatabase): Promise<SchemaRepairReport> {
+  const missingTables = await findMissingTables(db);
   const missing = await findMissingColumns(db);
+
+  // Tables first: a missing column can only be added to a table that exists.
+  for (const required of REQUIRED_TABLES) {
+    if (missingTables.includes(required.table)) await db.execAsync(required.create);
+  }
 
   for (const required of missing) {
     // Identifiers are literals from `REQUIRED_COLUMNS`; nothing here is bound
@@ -133,5 +199,8 @@ export async function repairSchema(db: SQLiteDatabase): Promise<SchemaRepairRepo
         OR language_preference NOT IN (${VALID_LANGUAGE});
   `);
 
-  return { addedColumns: missing.map((required) => `${required.table}.${required.column}`) };
+  return {
+    addedColumns: missing.map((required) => `${required.table}.${required.column}`),
+    addedTables: missingTables,
+  };
 }

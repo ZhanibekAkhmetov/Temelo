@@ -45,7 +45,13 @@ export interface StorageReport extends DatabaseDiagnostics {
 
 const COUNTED_TABLES = [
   "settings",
+  // `terms` is still counted although nothing reads it any more. Migration v6
+  // deliberately left the table in place rather than dropping it, and a
+  // development panel that showed no trace of it would hide the one fact worth
+  // knowing about an upgraded device: that the old data is still there.
   "terms",
+  "active_timetable",
+  "archived_timetables",
   "time_slots",
   "courses",
   "placements",

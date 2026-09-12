@@ -39,10 +39,11 @@ interface CalendarMonthProps {
  * page actually contains the selected date.
  *
  * Forty-two cells is a lot of views to build, and the pager keeps five months
- * alive at once, so this is written to be cheap in the two ways that matter:
- * the marker behind a day is only rendered for the two days that have one, and
+ * alive at once, so this is written to be cheap in the three ways that matter:
+ * the marker behind a day is only rendered for the two days that have one,
  * every cell is memoised on primitives, so picking a date re-renders the two
- * cells that changed rather than all two hundred on screen.
+ * cells that changed rather than all two hundred on screen, and cells are
+ * keyed by grid position, so drawing a different month updates them in place.
  */
 export const CalendarMonth = memo(function CalendarMonth({
   month,
@@ -67,11 +68,15 @@ export const CalendarMonth = memo(function CalendarMonth({
         ))}
       </View>
 
-      {weeks.map((week) => (
-        <View key={week[0]} style={[styles.week, { height: DAY_ROW_HEIGHT }]}>
-          {week.map((date) => (
+      {/* Keyed by position in the grid, not by date. The pager recycles a
+          month's slot for another month, and date keys would make that tear
+          down and rebuild all forty-two cells; position keys make it forty-two
+          prop updates on views that already exist. */}
+      {weeks.map((week, row) => (
+        <View key={row} style={[styles.week, { height: DAY_ROW_HEIGHT }]}>
+          {week.map((date, column) => (
             <DayCell
-              key={date}
+              key={column}
               date={date}
               selected={date === value}
               today={date === today}

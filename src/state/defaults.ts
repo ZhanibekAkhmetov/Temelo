@@ -1,10 +1,11 @@
-import { addDaysIso, todayIsoDate } from "@/domain/date";
+import { startOfWeekIso } from "@/domain/calendar";
+import { isValidIsoDate, todayIsoDate } from "@/domain/date";
 import { generateTimeSlots } from "@/domain/time";
 import { createId } from "@/domain/id";
 import { DEFAULT_REMINDER_MINUTES } from "@/domain/reminder";
 import { DEFAULT_LANGUAGE_PREFERENCE } from "@/i18n/language";
 import { DEFAULT_APPEARANCE_PREFERENCE } from "@/theme/appearance";
-import type { AcademicTerm, Settings, TimeSlot } from "@/types/models";
+import type { Settings, TimeSlot } from "@/types/models";
 
 export const DEFAULT_SETTINGS: Settings = {
   weekendMode: "saturdaySunday",
@@ -22,26 +23,26 @@ export const DEFAULT_SETTINGS: Settings = {
   onboardingCompleted: false,
 };
 
-const DEFAULT_TERM_LENGTH_DAYS = 16 * 7;
+/**
+ * The start date a new timetable is offered.
+ *
+ * The Monday of the week it is created in, so a timetable made on a Wednesday
+ * still covers the Monday and Tuesday the user can see on the grid. The user
+ * can change it in the creation flow and later. It is a start and nothing
+ * more: there is no end date, and nothing stops because of it. See
+ * `Timetable.anchorDate`.
+ */
+export function defaultTimetableAnchorDate(): string {
+  return startOfWeekIso(todayIsoDate());
+}
 
 /**
- * The seed term.
- *
- * The name is left empty rather than seeded with "Current term". A term name
- * is the user's own data, and seeding it in English would put an English
- * string into a Russian or German user's database before they had typed
- * anything. Onboarding prefills the field with a translated suggestion
- * instead, which they confirm or replace — so the data is theirs and the
- * suggestion is in their language.
+ * A timetable start date that arrived as untyped input — a route parameter —
+ * or the default when it is not a real date. The creation flow carries the
+ * date between its two steps this way, so this is where it is checked.
  */
-export function createDefaultTerm(): AcademicTerm {
-  const startDate = todayIsoDate();
-  return {
-    id: createId(),
-    name: "",
-    startDate,
-    estimatedEndDate: addDaysIso(startDate, DEFAULT_TERM_LENGTH_DAYS),
-  };
+export function timetableStartDateFrom(value: unknown): string {
+  return typeof value === "string" && isValidIsoDate(value) ? value : defaultTimetableAnchorDate();
 }
 
 export function createDefaultTimeSlots(): TimeSlot[] {

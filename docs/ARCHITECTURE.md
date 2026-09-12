@@ -68,8 +68,8 @@ specific layout.
 
 ### Domain logic
 
-Domain logic (timetable generation rules, recurrence calculations, term/date
-math, validation) must not import React or any React Native UI primitive.
+Domain logic (timetable generation rules, recurrence calculations, date math,
+validation) must not import React or any React Native UI primitive.
 Domain code should be plain TypeScript that can be unit tested without
 rendering anything. This makes the rules that matter most (how slots are
 generated, how recurrence resolves) testable independent of the UI.
@@ -89,10 +89,85 @@ when persistence is actually implemented.
   timestamps. A Monday 09:00 class is "Monday, 09:00" in the data model, not
   a UTC instant, because recurrence is a local, weekly concept and should
   not be re-derived from timezone-sensitive arithmetic.
-- **Academic term dates** (term start, estimated end) are represented
-  separately from recurring local lesson times. A term is a date range; a
-  lesson time is a weekday + time-of-day. Mixing the two into one timestamp
-  model would make both harder to reason about and edit independently.
+- **A series' own date range** is represented separately from its recurring
+  local lesson time. The range is dates; the lesson time is a weekday plus a
+  time-of-day. Mixing the two into one timestamp model would make both harder
+  to reason about and edit independently.
+- **A repeating series has no end date.** Its `endsOn` carries the sentinel
+  `9999-12-31` (`OPEN_ENDED_DATE` in `domain/recurrence`), which every
+  existing string comparison already reads correctly; the two places that
+  *enumerate* dates rather than test one are the only code that has to know.
+  A real end date on a repeating series means it genuinely stops there —
+  which, in practice, means a "this and future" edit split it.
+- **`startsOn` is a parity anchor, and only sometimes a beginning.** An
+  every-two-weeks class's fortnight is counted from its own first occurrence,
+  so the anchor is per-series and travels with the series whenever it moves.
+  Nothing global anchors it, which is what let the semester start date be
+  removed without any existing class changing which weeks it falls on.
+  Whether `startsOn` is *also* where the series begins is a separate,
+  stored fact — `Placement.startsWithTimetable` (migration v7). An ordinary
+  class is part of the timetable's pattern and reaches back as far as the
+  timetable does; the later half of a "this and future" split, or a series
+  whose start a user chose in an earlier build, genuinely begins on
+  `startsOn`. The class editor no longer offers a series start date at all —
+  only a one-off's own date — so none of these anchors is a user-facing
+  field (`classEditorSchedule` in `domain/classEdit`). It is stored
+  rather than derived because the record alone cannot tell "weekly, starts
+  5 Oct, added when the timetable began then" from "weekly, starts 5 Oct, the
+  later half of a split" — and only the first may extend backwards.
+  `seriesLowerBound` in `domain/recurrence` is the one rule.
+- **The timetable's start date is a bound, not an anchor.** `Timetable.anchorDate`
+  (the "Starts on" field) is applied in `resolveOccurrences` as a lower bound
+  on *dates*: every caller — the grid, the clash check, the reminder plan —
+  drops dates before it before resolving anything. It is also how far back a
+  series that starts with the timetable reaches, so moving it earlier extends
+  those classes into the new weeks. It never touches a series' `startsOn`, so
+  moving it cannot shift an alternating class's parity, and moving it back and
+  forth deletes nothing. It has no end counterpart.
+- **Clash checking stays finite** by enumerating only as far as
+  `clashHorizon` — the last date the timetable itself names, plus a
+  fortnight. Past that point the answer cannot change, because base recurrence
+  rules repeat with a period of at most two weeks. See the argument in
+  `domain/recurrence`.
+
+## One active timetable, archived snapshots
+
+A user has one active timetable and any number of archived ones, and the two
+are stored in deliberately different ways.
+
+- The **active** timetable lives in the normalised working tables
+  (`settings`, `time_slots`, `courses`, `placements`,
+  `occurrence_exceptions`), plus one `active_timetable` row holding its
+  identity. Those tables mean exactly what they meant before the lifecycle
+  existed — *the* timetable — so no query, write or diff anywhere in the app
+  had to learn about multiple timetables. `active_timetable` has a
+  `singleton` primary key `CHECK`ed to one value, so "at most one active
+  timetable" is a property of the schema rather than a rule the code keeps; no
+  row at all is the legitimate state of a user who archived their only one.
+- An **archived** timetable is one row in `archived_timetables`, holding a
+  versioned JSON snapshot (`storage/snapshot`). It is not queryable, which
+  is the requirement rather than a limitation: archived data is not editable
+  in the background, and being unreachable from every ordinary query is what
+  stops a bug reaching it.
+
+The alternative — a `timetable_id` column on all four working tables and a
+`WHERE` clause on every read — was rejected because it costs four table
+rebuilds, changes every query and every diff, and introduces a new way to be
+wrong (a forgotten filter shows one timetable's classes inside another) in
+order to support editing several timetables at once, which the product does
+not do.
+
+Archive, restore and create-new are therefore **swaps**, and each is a single
+transaction in `storage/timetableLifecycle`: validate and read everything
+first, write in one transaction, and return the state read back from the
+database rather than the state the caller hoped for. A snapshot is validated
+before a restore touches anything, so a damaged archive is declined with the
+active timetable still active.
+
+The snapshot format carries its own `formatVersion`, separate from the
+database's `user_version`, because it is a value that outlives the schema
+that produced it — and because the next feature writes it to a file the user
+keeps. File export and import are not implemented.
 
 ## Local persistence
 

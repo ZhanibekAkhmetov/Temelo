@@ -11,7 +11,7 @@
 
 import type { SQLiteDatabase } from "expo-sqlite";
 
-import { repairSchema } from "@/storage/schema";
+import { repairSchema, tableColumns } from "@/storage/schema";
 import { withTransaction } from "@/storage/transaction";
 
 export interface Migration {
@@ -302,12 +302,223 @@ const convergeSchemaAfterExperimentalBranches: Migration = {
   },
 };
 
+/**
+ * The timetable lifecycle: one active timetable, any number of archived ones,
+ * and no semester dates anywhere.
+ *
+ * This is a product change before it is a schema change, so it is worth being
+ * precise about what it does to a database that already has a user's real
+ * timetable in it. Three things, and nothing else:
+ *
+ * 1. Two new tables. `active_timetable` holds the one timetable the working
+ *    tables belong to — a `singleton` primary key `CHECK`ed to one value, so
+ *    "at most one active timetable" is enforced by SQLite rather than by us,
+ *    and *no* row is the real state of a user who archived their only one.
+ *    `archived_timetables` holds each archived timetable as one versioned JSON
+ *    snapshot; see `storage/snapshot` for why a snapshot rather than a
+ *    `timetable_id` column on all six working tables.
+ *
+ * 2. The existing term becomes the active timetable. Its name carries over
+ *    when it has one, and its `start_date` becomes the timetable's internal
+ *    anchor — so every weekly class keeps starting exactly where it started
+ *    and no alternating class changes which weeks it falls on.
+ *
+ * 3. The global end date stops governing recurrence. Any repeating placement
+ *    whose `ends_on` reached the term's estimated end is opened to
+ *    `9999-12-31`, the open-ended sentinel, because that end date was never
+ *    the user's decision — it was a guess the old onboarding made them type,
+ *    and leaving it in place is precisely the "classes secretly stop in
+ *    December" bug this release exists to remove.
+ *
+ * What it deliberately does *not* do:
+ *
+ * - It does not touch a repeating placement whose `ends_on` is *earlier* than
+ *   the term's end. That is either the earlier half of a series a "this and
+ *   future" edit split, where the end date is load-bearing and rewriting it
+ *   would resurrect occurrences the user deliberately changed, or a date the
+ *   user set themselves. Both are real data.
+ * - It does not touch one-off placements at all. A one-off's `ends_on` is its
+ *   own single day, and opening it would turn one lesson into an infinite one.
+ * - It does not drop the `terms` table, or `settings.onboarding_completed`.
+ *   Nothing reads `terms` any more, and that is the point: the product stops
+ *   depending on it without a rewrite of a table that still holds the only
+ *   copy of the name and anchor this migration derived from. `DROP TABLE` here
+ *   would buy tidiness and risk the one thing that must not go wrong.
+ * - It creates nothing for a database that has never held a timetable. A fresh
+ *   install has no `settings` row, so there is no term to convert, and it goes
+ *   into the creation flow with `active_timetable` legitimately empty.
+ *
+ * Every literal is written out rather than imported, as in every migration
+ * here: `OPEN_ENDED_DATE` and the default name may be retuned later, and two
+ * devices upgrading at different times must still get the same data out of
+ * this one statement.
+ */
+const addTimetableLifecycle: Migration = {
+  version: 6,
+  description: "Active timetable and archived timetable snapshots; recurrence no longer bounded by a term",
+  up: async (db) => {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS active_timetable (
+        singleton   TEXT PRIMARY KEY NOT NULL CHECK (singleton = 'active'),
+        id          TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        anchor_date TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS archived_timetables (
+        id             TEXT PRIMARY KEY NOT NULL,
+        name           TEXT NOT NULL,
+        archived_at    TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        format_version INTEGER NOT NULL,
+        snapshot       TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_archived_timetables_archived_at
+        ON archived_timetables (archived_at);
+    `);
+
+    /*
+     * The term, promoted.
+     *
+     * Read rather than assumed: a database that never completed onboarding has
+     * no term row, and one that never opened at all has no settings row
+     * either. Both are left with no active timetable, which is exactly what
+     * sends them into the creation flow.
+     *
+     * A blank term name becomes "My timetable". The old seed deliberately left
+     * the name empty rather than writing an English string into a Russian
+     * user's database, and onboarding then prefilled a translated suggestion —
+     * so a name is empty here only if the user got past that screen without
+     * one. An English fallback in the database is the lesser evil against a
+     * timetable with no name at all, and it is only ever written when there is
+     * nothing to overwrite.
+     */
+    const term = await db.getFirstAsync<{
+      id: string;
+      name: string;
+      start_date: string;
+      estimated_end_date: string;
+    }>("SELECT id, name, start_date, estimated_end_date FROM terms ORDER BY rowid LIMIT 1");
+
+    const settings = await db.getFirstAsync<{ id: string }>("SELECT id FROM settings WHERE id = 'app'");
+
+    if (!term || !settings) return;
+
+    const name = term.name.trim() === "" ? "My timetable" : term.name;
+    const now = new Date().toISOString();
+
+    await db.runAsync(
+      `INSERT INTO active_timetable (singleton, id, name, anchor_date, created_at, updated_at)
+       VALUES ('active', ?, ?, ?, ?, ?)
+       ON CONFLICT (singleton) DO NOTHING`,
+      term.id,
+      name,
+      term.start_date,
+      now,
+      now,
+    );
+
+    /*
+     * The end date stops governing recurrence.
+     *
+     * Scoped by both conditions on purpose. `recurrence_type <> 'once'` keeps
+     * single lessons finite; `ends_on >= the term's estimated end` opens only
+     * the series that were running to the end of the term — including any the
+     * user pushed past it — and leaves a split series' earlier half exactly as
+     * it is.
+     */
+    await db.runAsync(
+      `UPDATE placements
+          SET ends_on = '9999-12-31', updated_at = ?
+        WHERE recurrence_type <> 'once'
+          AND ends_on >= ?`,
+      now,
+      term.estimated_end_date,
+    );
+  },
+};
+
+/**
+ * Which series start with the timetable, and which genuinely begin on their
+ * own `starts_on`.
+ *
+ * Until now `starts_on` was all three of: how far back a series reaches, which
+ * half of the fortnight an alternating class is on, and where the later half
+ * of a "this and future" split begins. Moving a timetable's start earlier
+ * therefore could not bring an ordinary weekly class into the new weeks: its
+ * own `starts_on` still stopped it. The fix is to let an ordinary series reach
+ * back as far as the timetable does, using `starts_on` only for parity — and
+ * that needs one bit per series, because the record alone cannot tell
+ *
+ *     weekly, starts 5 Oct — added when the timetable began on 5 Oct
+ *     weekly, starts 5 Oct — the later half of a split made on 5 Oct
+ *
+ * apart, and the first must extend while the second must not. Deriving it
+ * afresh on every read from the *other* series would make one series' dates
+ * depend on edits to another, so it is stored.
+ *
+ * `NOT NULL DEFAULT 1`: every existing row lands as an ordinary series with no
+ * table rebuild. Then two corrections, both literals as in every migration:
+ *
+ *  - one-offs get 0. The flag means nothing to them; 0 says so honestly.
+ *  - the later half of a split gets 0, recognised by the trace a split leaves:
+ *    another repeating series with a real end date between fourteen days
+ *    before this one's start and twelve after, created no later than it and
+ *    last updated no earlier than it was created — both halves are written in
+ *    the same instant. The same rule as `inferStartsWithTimetable`, which the
+ *    harness checks this against. It errs towards 0, which is exactly how
+ *    every series behaved before this migration, so a mistake can only ever
+ *    withhold the new behaviour, never draw a class twice.
+ *
+ * `starts_on` itself is not touched, so no alternating class changes weeks.
+ */
+const separateSeriesStartFromTimetableStart: Migration = {
+  version: 7,
+  description: "Placements record whether they start with the timetable or on their own date",
+  up: async (db) => {
+    /*
+     * Asked rather than assumed. v5's convergence adds every column in
+     * `REQUIRED_COLUMNS` that it finds missing — and this one is in that list,
+     * so a fresh install, or any device upgrading through v5 in the same
+     * launch, already has it by now. Re-adding it would fail with "duplicate
+     * column name". The same reason v6 creates its tables `IF NOT EXISTS`.
+     */
+    if (!(await tableColumns(db, "placements")).includes("starts_with_timetable")) {
+      await db.execAsync("ALTER TABLE placements ADD COLUMN starts_with_timetable INTEGER NOT NULL DEFAULT 1");
+    }
+
+    await db.execAsync(`
+      UPDATE placements SET starts_with_timetable = 0 WHERE recurrence_type = 'once';
+
+      UPDATE placements
+         SET starts_with_timetable = 0
+       WHERE recurrence_type <> 'once'
+         AND EXISTS (
+           SELECT 1
+             FROM placements AS earlier
+            WHERE earlier.id <> placements.id
+              AND earlier.recurrence_type <> 'once'
+              AND earlier.ends_on < '9999-12-31'
+              AND earlier.ends_on >= date(placements.starts_on, '-14 days')
+              AND earlier.ends_on <= date(placements.starts_on, '+12 days')
+              AND earlier.created_at <= placements.created_at
+              AND earlier.updated_at >= placements.created_at
+         );
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   createInitialSchema,
   addClassReminders,
   addReminderLedger,
   addAppearanceLanguageAndClassColour,
   convergeSchemaAfterExperimentalBranches,
+  addTimetableLifecycle,
+  separateSeriesStartFromTimetableStart,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

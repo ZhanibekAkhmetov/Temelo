@@ -26,8 +26,12 @@ const load = (file) => import(pathToFileURL(join(here, file)).href);
 const { summarize } = await load("report.mjs");
 const { runGeometryHarness } = await load("geometry.mjs");
 const { runStorageHarness } = await load("storage.mjs");
+const { runLifecycleHarness } = await load("lifecycle.mjs");
+const { runNavigationHarness } = await load("navigation.mjs");
 
 runGeometryHarness();
+runNavigationHarness();
 await runStorageHarness();
+await runLifecycleHarness();
 
 summarize();

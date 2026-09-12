@@ -12,14 +12,16 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import type {
-  AcademicTerm,
   Course,
   OccurrenceException,
   Placement,
   Settings,
   TimeSlot,
+  Timetable,
 } from "@/types/models";
 import {
+  activeTimetableFromRow,
+  activeTimetableToRow,
   courseFromRow,
   courseToRow,
   exceptionFromRow,
@@ -28,16 +30,15 @@ import {
   placementToRow,
   settingsFromRow,
   settingsToRow,
-  termFromRow,
-  termToRow,
   timeSlotFromRow,
   timeSlotToRow,
+  ACTIVE_TIMETABLE_ROW_ID,
   SETTINGS_ROW_ID,
+  type ActiveTimetableRow,
   type CourseRow,
   type OccurrenceExceptionRow,
   type PlacementRow,
   type SettingsRow,
-  type TermRow,
   type TimeSlotRow,
 } from "@/storage/records";
 import { withTransaction } from "@/storage/transaction";
@@ -46,10 +47,15 @@ import { withTransaction } from "@/storage/transaction";
  * The persistable slice of app state. Structurally this is `AppState` minus
  * nothing — every field of it is real user data — but it is declared here
  * rather than imported so that storage does not depend on the React layer.
+ *
+ * `timetable` is null when there is no active timetable — the state a user is
+ * in between archiving their only one and making the next. It is not an error
+ * and not a half-loaded read: the working tables are then genuinely empty, and
+ * the app draws an empty state rather than an empty grid.
  */
 export interface PersistedTimetable {
   settings: Settings;
-  term: AcademicTerm;
+  timetable: Timetable | null;
   timeSlots: TimeSlot[];
   courses: Course[];
   placements: Placement[];
@@ -78,7 +84,25 @@ export async function readMeta(db: SQLiteDatabase, key: string): Promise<string 
   return row?.value ?? null;
 }
 
-/** The stored timetable, or null when nothing has ever been stored. */
+/** Which timetable the working tables belong to, or null when there is none. */
+export async function loadActiveTimetableRecord(db: SQLiteDatabase): Promise<Timetable | null> {
+  const row = await db.getFirstAsync<ActiveTimetableRow>(
+    "SELECT * FROM active_timetable WHERE singleton = ?",
+    ACTIVE_TIMETABLE_ROW_ID,
+  );
+  return row ? activeTimetableFromRow(row) : null;
+}
+
+/**
+ * Everything the app holds, or null when this database has never been written
+ * to at all.
+ *
+ * Null means "fresh install" and nothing else. A database that *has* been
+ * written to but currently has no active timetable returns a
+ * `PersistedTimetable` with `timetable: null` — the difference matters,
+ * because the first sends the user into the creation flow and the second has
+ * to keep their appearance, language and archived timetables.
+ */
 export async function loadTimetable(db: SQLiteDatabase): Promise<PersistedTimetable | null> {
   const settingsRow = await db.getFirstAsync<SettingsRow>(
     "SELECT * FROM settings WHERE id = ?",
@@ -86,10 +110,7 @@ export async function loadTimetable(db: SQLiteDatabase): Promise<PersistedTimeta
   );
   if (!settingsRow) return null;
 
-  // Exactly one term is stored, but the query is ordered so that a stray
-  // second row could never make startup non-deterministic.
-  const termRow = await db.getFirstAsync<TermRow>("SELECT * FROM terms ORDER BY rowid LIMIT 1");
-  if (!termRow) return null;
+  const timetable = await loadActiveTimetableRecord(db);
 
   /*
    * `rowid` order reproduces the order the records were first written in,
@@ -105,7 +126,7 @@ export async function loadTimetable(db: SQLiteDatabase): Promise<PersistedTimeta
 
   return {
     settings: settingsFromRow(settingsRow),
-    term: termFromRow(termRow),
+    timetable,
     timeSlots: timeSlotRows.map(timeSlotFromRow),
     courses: courseRows.map(courseFromRow),
     placements: placementRows.map(placementFromRow),
@@ -203,13 +224,25 @@ const UPSERT_SETTINGS = `
     onboarding_completed = excluded.onboarding_completed
 `;
 
-const UPSERT_TERM = `
-  INSERT INTO terms (id, name, start_date, estimated_end_date)
-  VALUES (?, ?, ?, ?)
-  ON CONFLICT (id) DO UPDATE SET
+/*
+ * The active timetable's own row.
+ *
+ * Keyed on `singleton`, not on `id`, so that replacing the active timetable is
+ * an update of one row rather than an insert plus a delete of whatever used to
+ * be there — the shape the old `terms` table needed, and the thing that made
+ * "exactly one" a rule the code had to remember instead of a fact about the
+ * table. Removing the active timetable is `timetableLifecycle`'s business, not
+ * this diff's: a save never deletes it.
+ */
+const UPSERT_ACTIVE_TIMETABLE = `
+  INSERT INTO active_timetable (singleton, id, name, anchor_date, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?)
+  ON CONFLICT (singleton) DO UPDATE SET
+    id = excluded.id,
     name = excluded.name,
-    start_date = excluded.start_date,
-    estimated_end_date = excluded.estimated_end_date
+    anchor_date = excluded.anchor_date,
+    created_at = excluded.created_at,
+    updated_at = excluded.updated_at
 `;
 
 const UPSERT_TIME_SLOT = `
@@ -238,8 +271,8 @@ const UPSERT_COURSE = `
 const UPSERT_PLACEMENT = `
   INSERT INTO placements (
     id, course_id, weekday, time_slot_id, slot_span, recurrence_type,
-    starts_on, ends_on, reminder_minutes, created_at, updated_at, deleted_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    starts_on, ends_on, starts_with_timetable, reminder_minutes, created_at, updated_at, deleted_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     course_id = excluded.course_id,
     weekday = excluded.weekday,
@@ -248,6 +281,7 @@ const UPSERT_PLACEMENT = `
     recurrence_type = excluded.recurrence_type,
     starts_on = excluded.starts_on,
     ends_on = excluded.ends_on,
+    starts_with_timetable = excluded.starts_with_timetable,
     reminder_minutes = excluded.reminder_minutes,
     updated_at = excluded.updated_at,
     deleted_at = excluded.deleted_at
@@ -276,6 +310,36 @@ const UPSERT_EXCEPTION = `
     deleted_at = excluded.deleted_at
 `;
 
+/**
+ * The settings row, written.
+ *
+ * Exported because `timetableLifecycle` writes it too — a restore replaces the
+ * timetable's half of it — and two copies of an eleven-column upsert is two
+ * places for a column to be forgotten. The caller owns the transaction.
+ */
+export async function upsertSettingsWithin(db: SQLiteDatabase, settings: Settings): Promise<void> {
+  const row = settingsToRow(settings);
+  await db.runAsync(
+    UPSERT_SETTINGS,
+    row.id,
+    row.weekend_mode,
+    row.grid_orientation,
+    row.academic_day_start,
+    row.default_lesson_duration_minutes,
+    row.default_break_duration_minutes,
+    row.slot_count,
+    row.default_reminder_minutes,
+    row.appearance_preference,
+    row.language_preference,
+    row.onboarding_completed,
+  );
+}
+
+/** The "this database holds a timetable" marker. The caller owns the transaction. */
+export async function markInitializedWithin(db: SQLiteDatabase): Promise<void> {
+  await db.runAsync(UPSERT_META, META_KEYS.initialized, "true");
+}
+
 async function deleteByIds(db: SQLiteDatabase, table: string, ids: string[]): Promise<void> {
   for (const id of ids) {
     // The table name is a literal from this module; only the id is bound.
@@ -302,10 +366,27 @@ async function deleteByIds(db: SQLiteDatabase, table: string, ids: string[]): Pr
  * `position` is uniquely indexed, so a duplicate would fail at the index
  * anyway — but it would fail somewhere in the middle of the write, with an
  * SQLite message about an index. Saying it here says what is actually wrong.
+ *
+ * With no active timetable the pair is not merely allowed to disagree, it is
+ * meaningless: `slotCount` is a leftover from the timetable that was archived
+ * and there are no periods for it to count. The invariant that *does* hold is
+ * that nothing else is there either — a class with no timetable to belong to
+ * is the corruption this check exists to catch.
  */
 function assertCoherent(timetable: PersistedTimetable): void {
   const { slotCount } = timetable.settings;
   const slots = timetable.timeSlots;
+
+  if (!timetable.timetable) {
+    const stray =
+      slots.length + timetable.courses.length + timetable.placements.length + timetable.exceptions.length;
+    if (stray > 0) {
+      throw new Error(
+        `[temelo/storage] refusing to save ${stray} timetable records with no active timetable to own them.`,
+      );
+    }
+    return;
+  }
 
   if (slots.length !== slotCount) {
     throw new Error(
@@ -337,6 +418,14 @@ function assertCoherent(timetable: PersistedTimetable): void {
 async function assertStoredCoherently(db: SQLiteDatabase, timetable: PersistedTimetable): Promise<void> {
   const row = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM time_slots");
   const stored = row?.count ?? 0;
+  if (!timetable.timetable) {
+    if (stored !== 0) {
+      throw new Error(
+        `[temelo/storage] no active timetable, but the database still holds ${stored} time slots. Rolling back.`,
+      );
+    }
+    return;
+  }
   if (stored !== timetable.settings.slotCount) {
     throw new Error(
       `[temelo/storage] academic day did not save coherently: settings.slotCount is ${timetable.settings.slotCount} but the database holds ${stored} time slots. Rolling back.`,
@@ -375,12 +464,12 @@ export async function saveTimetable(
     const exceptions = diffRecords(previous.exceptions, next.exceptions);
 
     const settingsChanged = previous.settings !== next.settings;
-    const termChanged = previous.term !== next.term;
+    const timetableChanged = previous.timetable !== next.timetable;
 
     const empty = (diff: RecordDiff<unknown>) => diff.upserts.length === 0 && diff.deletedIds.length === 0;
     if (
       !settingsChanged &&
-      !termChanged &&
+      !timetableChanged &&
       empty(timeSlots) &&
       empty(courses) &&
       empty(placements) &&
@@ -389,16 +478,16 @@ export async function saveTimetable(
       return;
     }
 
-    await writeDiff(db, next, { settingsChanged, termChanged, timeSlots, courses, placements, exceptions });
+    await writeDiff(db, next, { settingsChanged, timetableChanged, timeSlots, courses, placements, exceptions });
     return;
   }
 
   /*
    * No baseline: the database's contents are unknown, so they are read rather
-   * than assumed. Settings and the term are always rewritten here — there is
-   * nothing to compare them against — and every collection is reconciled
-   * against what the database really holds, so this converges on `next`
-   * whatever state a failed write left behind.
+   * than assumed. Settings and the active timetable are always rewritten here
+   * — there is nothing to compare them against — and every collection is
+   * reconciled against what the database really holds, so this converges on
+   * `next` whatever state a failed write left behind.
    *
    * The reads are inside the transaction so nothing can slip in between
    * deciding what to delete and deleting it.
@@ -406,7 +495,7 @@ export async function saveTimetable(
   await withTransaction(db, async () => {
     await writeDiffWithin(db, next, {
       settingsChanged: true,
-      termChanged: true,
+      timetableChanged: true,
       timeSlots: await fullSyncDiff(db, "time_slots", next.timeSlots),
       courses: await fullSyncDiff(db, "courses", next.courses),
       placements: await fullSyncDiff(db, "placements", next.placements),
@@ -418,7 +507,7 @@ export async function saveTimetable(
 
 interface TimetableDiff {
   settingsChanged: boolean;
-  termChanged: boolean;
+  timetableChanged: boolean;
   timeSlots: RecordDiff<TimeSlot>;
   courses: RecordDiff<Course>;
   placements: RecordDiff<Placement>;
@@ -440,31 +529,31 @@ async function writeDiff(db: SQLiteDatabase, next: PersistedTimetable, diff: Tim
 
 /** The statements themselves; the caller owns the transaction. */
 async function writeDiffWithin(db: SQLiteDatabase, next: PersistedTimetable, diff: TimetableDiff): Promise<void> {
-  const { settingsChanged, termChanged, timeSlots, courses, placements, exceptions } = diff;
+  const { settingsChanged, timetableChanged, timeSlots, courses, placements, exceptions } = diff;
 
-  if (settingsChanged) {
-    const row = settingsToRow(next.settings);
+  if (settingsChanged) await upsertSettingsWithin(db, next.settings);
+
+  /*
+   * The active timetable's own row, when it changed — a rename, or the row a
+   * recovery write has to put back because the baseline was cleared.
+   *
+   * Nothing here *removes* it. A null timetable reaching this path means the
+   * app is running with none, which `timetableLifecycle` arranged inside its
+   * own transaction; deleting the row again here would be a second authority
+   * over the same fact, and the one place it could go wrong is the one place
+   * that must not.
+   */
+  if (timetableChanged && next.timetable) {
+    const row = activeTimetableToRow(next.timetable);
     await db.runAsync(
-      UPSERT_SETTINGS,
+      UPSERT_ACTIVE_TIMETABLE,
+      row.singleton,
       row.id,
-      row.weekend_mode,
-      row.grid_orientation,
-      row.academic_day_start,
-      row.default_lesson_duration_minutes,
-      row.default_break_duration_minutes,
-      row.slot_count,
-      row.default_reminder_minutes,
-      row.appearance_preference,
-      row.language_preference,
-      row.onboarding_completed,
+      row.name,
+      row.anchor_date,
+      row.created_at,
+      row.updated_at,
     );
-  }
-
-  if (termChanged) {
-    const row = termToRow(next.term);
-    await db.runAsync(UPSERT_TERM, row.id, row.name, row.start_date, row.estimated_end_date);
-    // Exactly one term exists; the one a reset replaced has to go.
-    await db.runAsync("DELETE FROM terms WHERE id <> ?", row.id);
   }
 
   // Children first on the way out, so a cascade never surprises us.
@@ -508,6 +597,7 @@ async function writeDiffWithin(db: SQLiteDatabase, next: PersistedTimetable, dif
       row.recurrence_type,
       row.starts_on,
       row.ends_on,
+      row.starts_with_timetable,
       row.reminder_minutes,
       row.created_at,
       row.updated_at,
@@ -538,5 +628,5 @@ async function writeDiffWithin(db: SQLiteDatabase, next: PersistedTimetable, dif
     );
   }
 
-  await db.runAsync(UPSERT_META, META_KEYS.initialized, "true");
+  await markInitializedWithin(db);
 }

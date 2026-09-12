@@ -19,14 +19,13 @@ interface MonthPageProps {
 }
 
 /**
- * One month of the picker, placed by its own page index.
+ * One slot of the picker's ring, placed by its own page index.
  *
- * The transform reads nothing that can change while a page is settling:
- * `pageIndex` is fixed for as long as this page exists — the page is keyed
- * on its month, so a different index means a different page — and `width`
- * only moves when the field is re-laid-out. So when the pager commits a
- * month and the mounted set shifts along, the pages that survive the commit
- * do not move a pixel, and there is no frame in which the grid and the
+ * A slot outlives the months it draws: when it falls out of range it is handed
+ * a new `month` and `pageIndex` together, in one render, while it is two pages
+ * off screen on one side and about to be two pages off screen on the other.
+ * The four slots that stay in range keep their props, so they do not move a
+ * pixel or re-render at all, and there is no frame in which the grid and the
  * heading disagree.
  */
 export const MonthPage = memo(function MonthPage({

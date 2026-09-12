@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { BackHandler, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { cancelAnimation, runOnJS, useSharedValue, withDecay, withSpring } from "react-native-reanimated";
+import { cancelAnimation, runOnJS, useDerivedValue, useSharedValue, withDecay, withSpring } from "react-native-reanimated";
+import { runOnUISync } from "react-native-worklets";
 
 import { addWeeksIso, weekDatesFrom } from "@/domain/calendar";
 import type { EditSource } from "@/domain/classEdit";
@@ -21,6 +22,7 @@ import {
   TIME_GUTTER_WIDTH,
   topInsetFor,
 } from "@/features/timetable/geometry";
+import { directJump, pagerStep, weekOffsetOfPage, weekPageWindow } from "@/features/timetable/pageWindow";
 import { HANDLE_TOUCH_RADIUS } from "@/features/timetable/GridBlock";
 import {
   IDLE,
@@ -153,7 +155,10 @@ function reportZoomHandoff(sample: ZoomHandoff): void {
   );
 }
 
-const PAGE_OFFSETS = [-1, 0, 1];
+/*
+ * The mounted window lives in `pageWindow` — see the note there for why a
+ * page's key is its slot rather than its week.
+ */
 
 export interface TimetableSurfaceHandle {
   goToRelativeWeek: (offset: number) => void;
@@ -176,6 +181,8 @@ interface TimetableSurfaceProps {
   exceptions: OccurrenceException[];
   /** An edit awaiting a scope choice, drawn where it would land. */
   preview: OccurrencePreview | null;
+  /** The timetable's start date; nothing is drawn or hit-tested before it. */
+  timetableStart: string;
   today: string;
   now: string;
   onVisibleWeekChange: (weekStartIso: string) => void;
@@ -247,6 +254,7 @@ export function TimetableSurface({
   courses,
   exceptions,
   preview,
+  timetableStart,
   today,
   now,
   onVisibleWeekChange,
@@ -258,6 +266,11 @@ export function TimetableSurface({
 }: TimetableSurfaceProps) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [baseIndex, setBaseIndex] = useState(0);
+  /**
+   * Weeks added to every page index to name the week that page draws. Only a
+   * direct jump moves it — see `directJump` in `pageWindow`.
+   */
+  const [weekShift, setWeekShift] = useState(0);
   /** The single source of truth for what the user is doing. */
   const [interaction, setInteractionState] = useState<Interaction>(IDLE);
   const [subject, setSubject] = useState<ManipulationSubject | null>(null);
@@ -290,7 +303,7 @@ export function TimetableSurface({
   const slotCount = timeSlots.length;
   const bodyHeight = Math.max(0, size.height - DAY_HEADER_HEIGHT);
   const bodyWidth = Math.max(0, size.width - TIME_GUTTER_WIDTH);
-  const visibleWeekStart = addWeeksIso(anchorWeekStart, baseIndex);
+  const visibleWeekStart = addWeeksIso(anchorWeekStart, weekOffsetOfPage(baseIndex, weekShift));
 
   /**
    * How far the pinch has been opened, as a multiple of the fully
@@ -330,7 +343,18 @@ export function TimetableSurface({
   /** Both offsets are in live pixels, so the hand-over never rescales them. */
   const offsetX = useSharedValue(0);
   const zoom = useSharedValue(1);
-  const baseIdx = useSharedValue(0);
+  /**
+   * The page the rest of the component treats as committed, and the UI
+   * thread's copy of `weekShift`.
+   *
+   * Both are written on the UI thread and nowhere else. A shared value written
+   * *from* the JS thread is only queued for the UI thread, so a JS-thread read
+   * straight after it returns the old value — that read-after-write is exactly
+   * how Today used to blank the grid. Written on the UI thread, a JS-thread
+   * read always sees what has actually landed.
+   */
+  const committedPage = useSharedValue(0);
+  const weekShiftSV = useSharedValue(0);
   const axis = useSharedValue<number>(AXIS.none);
 
   const touchStartX = useSharedValue(0);
@@ -403,8 +427,9 @@ export function TimetableSurface({
 
   const visibleDates = useMemo(() => weekDatesFrom(visibleWeekStart), [visibleWeekStart]);
   const visibleBlocks = useMemo(
-    () => resolveWeekBlocks({ weekdays, dates: visibleDates, placements, courses, exceptions, timeSlots, preview }),
-    [weekdays, visibleDates, placements, courses, exceptions, timeSlots, preview],
+    () =>
+      resolveWeekBlocks({ weekdays, dates: visibleDates, placements, courses, exceptions, timeSlots, preview, timetableStart }),
+    [weekdays, visibleDates, placements, courses, exceptions, timeSlots, preview, timetableStart],
   );
 
   // Hit-testing data for the gesture worklets: only the week on screen can
@@ -537,13 +562,24 @@ export function TimetableSurface({
    * while the user looks at the next one. Re-deriving the week from where
    * the pager truly is cannot drift.
    */
+  const commitPage = useCallback(
+    (page: number, weekOffset: number) => {
+      setBaseIndex(page);
+      onVisibleWeekChange(addWeeksIso(anchorWeekStart, weekOffset));
+    },
+    [anchorWeekStart, onVisibleWeekChange],
+  );
+
+  // A worklet, run where every settle ends — on the UI thread — so it compares
+  // against the committed page and the shift as they really are right now,
+  // including a jump that landed while a spring was still running.
   const reconcilePage = useCallback(() => {
+    "worklet";
     const settled = Math.round(pos.get());
-    if (settled === baseIdx.get()) return;
-    baseIdx.set(settled);
-    setBaseIndex(settled);
-    onVisibleWeekChange(addWeeksIso(anchorWeekStart, settled));
-  }, [anchorWeekStart, baseIdx, onVisibleWeekChange, pos]);
+    if (settled === committedPage.get()) return;
+    committedPage.set(settled);
+    runOnJS(commitPage)(settled, settled + weekShiftSV.get());
+  }, [commitPage, committedPage, pos, weekShiftSV]);
 
   /**
    * A week that is being left behind takes its horizontal position with it.
@@ -569,21 +605,59 @@ export function TimetableSurface({
     );
   }, [offsetSettling, offsetX]);
 
+  /**
+   * Straight to a week that is not mounted — Today from far away.
+   *
+   * The pager does not move. It stays on the page it is resting on, and that
+   * page is re-addressed to draw `targetWeek` (see `directJump`), so the page
+   * on screen, its two neighbours and their transforms are all already right
+   * and the only thing that changes is which weeks three existing slots draw:
+   * one React commit, whatever the distance.
+   *
+   * The one piece of UI-thread work — stopping whatever was still moving and
+   * pinning the pager to a whole page — is done synchronously, and its answer
+   * is what the commit is built from. Nothing here writes a shared value from
+   * this thread and then reads it back.
+   */
+  const jumpToWeek = useCallback(
+    (targetWeek: number) => {
+      const restingPage = runOnUISync(() => {
+        "worklet";
+        const page = Math.round(pos.get());
+        // Committed *before* anything is cancelled. A settle still in flight
+        // is abandoned where it is, and its completion callback — which may
+        // run inside `cancelAnimation` itself — then finds this page already
+        // committed under the new shift, and has nothing left to announce.
+        committedPage.set(page);
+        weekShiftSV.set(targetWeek - page);
+        cancelAnimation(pos);
+        cancelAnimation(offsetX);
+        pageSettling.set(0);
+        offsetSettling.set(0);
+        pos.set(page);
+        offsetX.set(0);
+        return page;
+      });
+
+      const next = directJump(restingPage, targetWeek);
+      setBaseIndex(next.baseIndex);
+      setWeekShift(next.weekShift);
+      onVisibleWeekChange(addWeeksIso(anchorWeekStart, targetWeek));
+    },
+    [anchorWeekStart, committedPage, offsetSettling, offsetX, onVisibleWeekChange, pageSettling, pos, weekShiftSV],
+  );
+
+  /** Moves the pager to a page, in the pager's own coordinates. */
   const goToPage = useCallback(
     (target: number) => {
       // Measured from where the pager is, not from the last committed week:
       // during a settle those differ, and the committed one is the stale half.
-      const from = Math.round(pos.get());
-      const distance = target - from;
-      if (distance === 0) return;
+      const step = pagerStep(Math.round(pos.get()), target);
+      if (step.kind === "none") return;
 
-      // Only the neighbouring weeks are mounted, so anything further away
-      // is a jump rather than a slide: position and week change together
-      // and the destination is rendered directly.
-      if (Math.abs(distance) > 1) {
-        pos.set(target);
-        offsetX.set(0);
-        reconcilePage();
+      // Not mounted, so there is nothing to slide along.
+      if (step.kind === "jump") {
+        jumpToWeek(weekOffsetOfPage(step.to, weekShiftSV.get()));
         return;
       }
 
@@ -591,14 +665,14 @@ export function TimetableSurface({
       // swipe takes: spring first, reconcile the logical week on arrival.
       pageSettling.set(1);
       pos.set(
-        withSpring(from + Math.sign(distance), PAGE_SPRING, () => {
+        withSpring(step.to, PAGE_SPRING, () => {
           pageSettling.set(0);
-          runOnJS(reconcilePage)();
+          reconcilePage();
         }),
       );
       returnToWeekStart();
     },
-    [offsetX, pageSettling, pos, reconcilePage, returnToWeekStart],
+    [jumpToWeek, pageSettling, pos, reconcilePage, returnToWeekStart, weekShiftSV],
   );
 
   /**
@@ -615,7 +689,8 @@ export function TimetableSurface({
     ref,
     () => ({
       goToRelativeWeek: (offset: number) => goToPage(Math.round(pos.get()) + offset),
-      goToCurrentWeek: () => goToPage(0),
+      // The current week is week 0; whichever page draws it depends on the shift.
+      goToCurrentWeek: () => goToPage(-weekShiftSV.get()),
       settleDeferredDrag: (revert: boolean) => {
         const deferred = deferredOrigin.get();
         deferredOrigin.set(null);
@@ -629,7 +704,7 @@ export function TimetableSurface({
         setInteraction({ kind: "eventSelected", occurrenceId: deferred.occurrenceId, ...deferred.origin });
       },
     }),
-    [deferredOrigin, goToPage, pos, setInteraction],
+    [deferredOrigin, goToPage, pos, setInteraction, weekShiftSV],
   );
 
   /**
@@ -649,14 +724,14 @@ export function TimetableSurface({
    * re-resolving a single week is not on any hot path.
    */
   const pageUnderFinger = useCallback(() => {
-    const weekStart = addWeeksIso(anchorWeekStart, Math.round(pos.get()));
+    const weekStart = addWeeksIso(anchorWeekStart, weekOffsetOfPage(Math.round(pos.get()), weekShiftSV.get()));
     const dates = weekDatesFrom(weekStart);
     return {
       weekStart,
       dates,
-      blocks: resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
+      blocks: resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview, timetableStart }),
     };
-  }, [anchorWeekStart, courses, exceptions, placements, pos, preview, timeSlots, weekdays]);
+  }, [anchorWeekStart, courses, exceptions, placements, pos, preview, timeSlots, timetableStart, weekShiftSV, weekdays]);
 
   /**
    * Whether a proposed range is free.
@@ -1368,7 +1443,7 @@ export function TimetableSurface({
           pos.set(
             withSpring(Math.round(panStartPos.get()), PAGE_SPRING, () => {
               pageSettling.set(0);
-              runOnJS(reconcilePage)();
+              reconcilePage();
             }),
           );
         }
@@ -1411,7 +1486,7 @@ export function TimetableSurface({
         pos.set(
           withSpring(from + direction, { ...PAGE_SPRING, velocity: velocityPages }, () => {
             pageSettling.set(0);
-            runOnJS(reconcilePage)();
+            reconcilePage();
           }),
         );
         // A week actually changing hands opens the new one at its first day.
@@ -1698,7 +1773,7 @@ export function TimetableSurface({
       // that began before the pinch is still flying it home and owns its
       // own arrival. Nothing here may animate it, or a finished pinch would
       // end by moving the grid the user had just placed.
-      if (pageSettling.get() === 0) runOnJS(reconcilePage)();
+      if (pageSettling.get() === 0) reconcilePage();
     });
 
   /**
@@ -1865,6 +1940,9 @@ export function TimetableSurface({
 
   const anchorDates = useMemo(() => weekDatesFrom(anchorWeekStart), [anchorWeekStart]);
   const todayColumnVisible = weekdays.some((day) => anchorDates[day] === today);
+  // Today's week is drawn by page `-weekShift`, so this is how far the pager
+  // is from it — what fades the gutter's now label as another week comes in.
+  const distanceFromToday = useDerivedValue(() => pos.get() + weekShiftSV.get());
 
   // While a finger is shaping something, the live overlay draws it; the
   // page only draws the settled provisional or selected item.
@@ -1892,16 +1970,17 @@ export function TimetableSurface({
       {size.width === 0 || slotCount === 0 ? null : (
         <GestureDetector gesture={gesture}>
           <View style={styles.flex} collapsable={false}>
-            {/* Previous, current and next stay mounted throughout a drag and
-                its settle. Each one places itself from its own page index,
-                so the set can change at commit without moving the pages
-                that survive — there is no shared wrapper to re-offset. */}
-            {PAGE_OFFSETS.map((offset) => {
-              const pageIndex = baseIndex + offset;
-              const weekStart = addWeeksIso(anchorWeekStart, pageIndex);
+            {/* Previous, current and next, in three slots that are created
+                once and never torn down. Each one places itself from its own
+                page index, so recycling a slot cannot move the pages that
+                survive — there is no shared wrapper to re-offset. Paging a
+                week re-renders one slot; jumping any distance re-renders
+                three. Neither mounts anything. See `pageWindow`. */}
+            {weekPageWindow(baseIndex).map(({ key, pageIndex }) => {
+              const weekStart = addWeeksIso(anchorWeekStart, weekOffsetOfPage(pageIndex, weekShift));
               return (
                 <WeekPage
-                  key={weekStart}
+                  key={key}
                   weekStart={weekStart}
                   pageIndex={pageIndex}
                   pos={pos}
@@ -1911,6 +1990,7 @@ export function TimetableSurface({
                   courses={courses}
                   exceptions={exceptions}
                   preview={preview}
+                  timetableStart={timetableStart}
                   today={today}
                   now={now}
                   width={size.width}
@@ -1932,7 +2012,7 @@ export function TimetableSurface({
               timeSlots={timeSlots}
               now={now}
               showNowLabel={todayColumnVisible}
-              pageDistanceFromToday={pos}
+              pageDistanceFromToday={distanceFromToday}
               bodyHeight={bodyHeight}
               slotHeight={slotHeight}
               pinchScaleY={pinchScaleY}

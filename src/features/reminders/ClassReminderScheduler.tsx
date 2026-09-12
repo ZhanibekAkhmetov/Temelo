@@ -14,11 +14,18 @@ const DAY_ROLL_CHECK_MS = 60_000;
  * Draws nothing; keeps the scheduled reminders in step with the timetable.
  *
  * Every event the reminders have to react to — a class created, edited,
- * moved, resized or deleted, a changed recurrence, a changed term, a changed
- * reminder setting — is a change to the stored timetable, and every one of
- * them produces a new `AppState` object. So there is one trigger here rather
- * than a call at each of those sites: the places that edit the timetable
- * cannot forget to refresh, because they are not the ones doing it.
+ * moved, resized or deleted, a changed recurrence, a changed reminder setting,
+ * a timetable archived or restored — is a change to the stored timetable, and
+ * every one of them produces a new `AppState` object. So there is one trigger
+ * here rather than a call at each of those sites: the places that edit the
+ * timetable cannot forget to refresh, because they are not the ones doing it.
+ *
+ * That is what makes archiving need no reminder code of its own. An archived
+ * timetable's placements are no longer in `state`, so the next refresh plans
+ * nothing for them and cancels what the OS was still holding; a restore puts
+ * them back and the same refresh schedules them from the restored data. Only
+ * the active timetable is ever the input, because only the active timetable is
+ * ever in state.
  *
  * The other three triggers are the ones state changes cannot cover: the first
  * run when the app starts (this effect's own mount), coming back to the
@@ -58,6 +65,7 @@ export function ClassReminderScheduler() {
       courses: state.courses,
       exceptions: state.exceptions,
       timeSlots: state.timeSlots,
+      timetableStart: state.timetable?.anchorDate ?? null,
       fromDate: windowStart,
       text,
       channelText,

@@ -76,6 +76,36 @@ export function NavigationRow({ label, value, onPress }: NavigationRowProps) {
   );
 }
 
+/**
+ * Several rows on one quiet surface — the timetables list, drawn with
+ * `TimetableSummaryRow`.
+ *
+ * A group rather than a card per row, and only for lists of *things*: a
+ * timetable is an object you open, and a page of them drawn as bare text on
+ * the background read as loose lines rather than as a list. One restrained
+ * surface — the elevated background, a hairline edge, the app's usual corner —
+ * is enough to say "these belong together"; the rows inside keep their own
+ * hairlines between them. Forms stay ungrouped: see `FormSection`.
+ */
+export function ListGroup({ children }: { children: ReactNode }) {
+  const { colors, spacing, radii, borderWidth } = useTheme();
+
+  return (
+    <View
+      style={{
+        marginTop: spacing.xs,
+        backgroundColor: colors.surfaceElevated,
+        borderColor: colors.divider,
+        borderWidth: borderWidth.thin,
+        borderRadius: radii.lg,
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   heading: {
     letterSpacing: 0.8,

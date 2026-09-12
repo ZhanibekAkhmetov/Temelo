@@ -18,10 +18,13 @@ import { GridBlock, SelectionOutline } from "@/features/timetable/GridBlock";
 import type { PageOverlay } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
 import { getClassColors } from "@/theme/classColors";
+import { radii } from "@/theme/tokens";
 import { useTheme } from "@/theme/useTheme";
 import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
 
 const DATE_BADGE_SIZE = 28;
+/** The today disc's corner — `radii.lg`, fixed here so nothing at runtime can re-derive it. */
+const DATE_BADGE_RADIUS = radii.lg;
 
 /** Line box of `typography.gridText`, and the block's vertical padding. */
 const NAME_LINE_HEIGHT = 16;
@@ -44,7 +47,10 @@ function nameLinesFor(span: number, settledSlotHeight: number): number {
 }
 
 interface WeekPageProps {
-  /** Immutable for the lifetime of this page — everything below derives from it. */
+  /**
+   * The week this page is currently drawing; everything below derives from it.
+   * It changes when the slot is recycled onto another week — see `pageWindow`.
+   */
   weekStart: string;
   /** Page number in the pager's own coordinates; the page positions itself from it. */
   pageIndex: number;
@@ -57,6 +63,8 @@ interface WeekPageProps {
   exceptions: OccurrenceException[];
   /** An edit awaiting a scope choice, drawn where it would land. */
   preview: OccurrencePreview | null;
+  /** The timetable's start date; nothing is drawn before it. */
+  timetableStart: string;
   today: string;
   now: string;
   width: number;
@@ -84,15 +92,21 @@ interface WeekPageProps {
  * One week, and nothing but that week.
  *
  * Its dates, its classes, its alternating-week occurrences and its "today"
- * marking are all derived from its own `weekStart`, never from whichever
- * page the pager currently calls the current one — so a page's content is
- * fixed for as long as it is mounted, however far mid-swipe the pager is.
+ * marking are all derived from its own `weekStart` prop, never from whichever
+ * page the pager currently calls the current one — so whatever a page is
+ * drawing is internally consistent, however far mid-swipe the pager is.
  *
- * It also places itself: the horizontal offset is `(pageIndex - pos)`
- * pages, which means mounting or unmounting a neighbour can never shift the
- * pages that stay. Zoom is a second, independent horizontal offset applied
- * *inside* the page, so a week that is wider than the viewport still slides
- * as one page.
+ * It is *recycled* rather than replaced. There are three of these for the life
+ * of the surface and paging hands them different weeks; a page's React key is
+ * its slot in the window, not its week. Nothing about this component depends on
+ * that — everything below reads from props — and `memo` means a slot whose week
+ * did not change does not re-render at all. See `pageWindow` for why the
+ * alternative, a key per week, was what made paging slow.
+ *
+ * It also places itself: the horizontal offset is `(pageIndex - pos)` pages, so
+ * recycling one slot can never shift the two that kept their week. Zoom is a
+ * second, independent horizontal offset applied *inside* the page, so a week
+ * that is wider than the viewport still slides as one page.
  */
 function WeekPageComponent({
   weekStart,
@@ -104,6 +118,7 @@ function WeekPageComponent({
   courses,
   exceptions,
   preview,
+  timetableStart,
   today,
   now,
   width,
@@ -118,13 +133,13 @@ function WeekPageComponent({
   hiddenOccurrenceId,
   overlay,
 }: WeekPageProps) {
-  const { colors, typography, borderWidth, radii } = useTheme();
+  const { colors, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
 
   const dates = useMemo(() => weekDatesFrom(weekStart), [weekStart]);
   const blocks = useMemo(
-    () => resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview }),
-    [weekdays, dates, placements, courses, exceptions, timeSlots, preview],
+    () => resolveWeekBlocks({ weekdays, dates, placements, courses, exceptions, timeSlots, preview, timetableStart }),
+    [weekdays, dates, placements, courses, exceptions, timeSlots, preview, timetableStart],
   );
 
   // A selected class is ringed in its own colour, one step brighter than the
@@ -211,7 +226,27 @@ function WeekPageComponent({
                 <Text style={[typography.gridSecondary, styles.weekdayLabel, { color: dayColor }]} numberOfLines={1}>
                   {format.weekdayShort(day).toUpperCase()}
                 </Text>
-                <View style={[styles.dateBadge, { borderRadius: radii.lg, backgroundColor: isToday ? colors.accent : "transparent" }]}>
+                {/*
+                 * The today disc is always mounted, always a real native view,
+                 * and always the same shape — only its opacity follows `isToday`.
+                 *
+                 * It used to be the badge's own background, toggled between the
+                 * accent and transparent. A transparent badge has nothing that
+                 * forms a native view, so Fabric flattened it away, and every
+                 * time a recycled page slot's "today" moved the badge was
+                 * destroyed or re-created — on Android, out of a view pool whose
+                 * recycling resets background and border state. Stressed paging
+                 * is exactly what drives that churn, and the rounded corner is
+                 * the state it lost. Now nothing about the shape is ever
+                 * re-applied: the corner radius is a constant set once, when the
+                 * disc is created with its page, and paging changes one opacity.
+                 */}
+                <View style={styles.dateBadge} collapsable={false}>
+                  <View
+                    pointerEvents="none"
+                    collapsable={false}
+                    style={[styles.todayDisc, { backgroundColor: colors.accent, opacity: isToday ? 1 : 0 }]}
+                  />
                   <Text
                     style={[
                       styles.dateText,
@@ -370,7 +405,14 @@ function DayHeaderCell({
   return <Animated.View style={[styles.headerCell, style]}>{children}</Animated.View>;
 }
 
-function PeriodLine({
+/**
+ * Memoized, and for one specific reason: a page is recycled onto another week
+ * rather than rebuilt, and none of these lines care which week that is. Their
+ * props — an index, a shared value, a colour — are identical across a page
+ * change, so this is the difference between re-rendering fourteen grid lines per
+ * swipe and re-rendering none.
+ */
+const PeriodLine = memo(function PeriodLine({
   index,
   slotHeight,
   color,
@@ -383,7 +425,7 @@ function PeriodLine({
 }) {
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: index * slotHeight.get() }] }));
   return <Animated.View pointerEvents="none" style={[styles.periodLine, { borderTopWidth: thickness, borderColor: color }, style]} />;
-}
+})
 
 /**
  * The line between two day columns.
@@ -395,7 +437,8 @@ function PeriodLine({
  * while the grid was taller than the screen and obvious the moment it was not:
  * bare vertical lines continuing below the last period, down to nothing.
  */
-function ColumnRule({
+/** Memoized for the same reason as `PeriodLine`. */
+const ColumnRule = memo(function ColumnRule({
   index,
   slotCount,
   columnWidth,
@@ -420,7 +463,7 @@ function ColumnRule({
       style={[styles.columnRule, { borderLeftWidth: thickness, borderColor: color }, style]}
     />
   );
-}
+})
 
 /**
  * The current time, drawn only inside today's column so it reads as "now,
@@ -493,6 +536,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginTop: 2,
+  },
+  todayDisc: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: DATE_BADGE_RADIUS,
   },
   dateText: {
     fontSize: 15,

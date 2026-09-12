@@ -4,9 +4,16 @@
  * The plan is computed fresh every time (`domain/reminderSchedule`) and then
  * reconciled against what is actually scheduled, rather than being tracked
  * incrementally. That is the whole design: there is no bookkeeping to get out
- * of step with a move, a split series, a deleted class or a changed term, and
- * a refresh after any of them converges on the same answer as a refresh after
- * all of them.
+ * of step with a move, a split series, a deleted class or a whole timetable
+ * being archived, and a refresh after any of them converges on the same answer
+ * as a refresh after all of them.
+ *
+ * Archiving is the strongest case for that design. The archived timetable's
+ * classes simply stop being in the state the plan is computed from, so the
+ * plan comes back empty, every notification the OS was holding fails to match
+ * it and is cancelled, and every `scheduled` ledger row is forgotten — with no
+ * code anywhere that knows what archiving is. Restoring brings the same
+ * placements back and the same reconciliation schedules them again.
  *
  * Duplicate delivery is prevented at four levels:
  *
@@ -64,6 +71,11 @@ export interface ReminderSyncInput {
   courses: Course[];
   exceptions: OccurrenceException[];
   timeSlots: TimeSlot[];
+  /**
+   * The active timetable's start date. Nothing before it is planned, so a
+   * timetable that starts next month schedules no reminders until it does.
+   */
+  timetableStart: string | null;
   /** First day of the rolling window — today, as the app reads it. */
   fromDate: string;
   /**

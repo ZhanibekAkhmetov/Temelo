@@ -19,7 +19,8 @@ import { join } from "node:path";
 
 import { createId } from "@/domain/id";
 import { generateTimeSlots } from "@/domain/time";
-import { createDefaultTerm, createDefaultTimeSlots, DEFAULT_SETTINGS } from "@/state/defaults";
+import { defaultSeriesEndDate } from "@/domain/recurrence";
+import { createDefaultTimeSlots, defaultTimetableAnchorDate, DEFAULT_SETTINGS } from "@/state/defaults";
 import { createSampleTimetable } from "@/state/sampleTimetable";
 import { openTemeloDatabase } from "@/storage/database";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
@@ -108,7 +109,8 @@ function freshState() {
     slotSpan: 2,
     recurrenceType: "biweekly",
     startsOn: "2026-09-08",
-    endsOn: "2026-12-22",
+    // Open-ended, like every repeating class the app creates now.
+    endsOn: defaultSeriesEndDate(),
     reminderMinutes: 45,
     createdAt: now,
     updatedAt: now,
@@ -136,7 +138,13 @@ function freshState() {
 
   return {
     settings,
-    term: { ...createDefaultTerm(), name: "Autumn 2026" },
+    timetable: {
+      id: createId(),
+      name: "Autumn 2026",
+      anchorDate: defaultTimetableAnchorDate(),
+      createdAt: now,
+      updatedAt: now,
+    },
     timeSlots,
     courses: [course],
     placements: [placement],
@@ -441,6 +449,8 @@ async function testOrdinaryPersistence() {
 
   equal("recurrence type survives", placements[0].recurrenceType, "biweekly");
   equal("biweekly anchor date survives", placements[0].startsOn, "2026-09-08");
+  equal("the open end survives", placements[0].endsOn, "9999-12-31");
+  equal("the timetable name survives", relaunched.timetable.timetable.name, "Autumn 2026");
   equal("slot span survives", placements[0].slotSpan, 2);
   equal("placement reminder survives", placements[0].reminderMinutes, 45);
   equal("course colour survives", courses[0].appearanceId, "blue");
@@ -467,6 +477,11 @@ async function testBuiltInStatesAreCoherent() {
 
   const sample = createSampleTimetable();
   equal("the sample timetable's periods match its slot count", sample.timeSlots.length, sample.settings.slotCount);
+  check(
+    "the sample timetable's repeating classes are open-ended",
+    sample.placements.every((placement) => placement.endsOn === "9999-12-31"),
+    "one of them still carries a real end date",
+  );
 
   const opened = await openFresh();
   let saved = true;

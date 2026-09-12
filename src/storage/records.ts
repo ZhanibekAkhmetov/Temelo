@@ -12,7 +12,6 @@ import type { Weekday, WeekendMode } from "@/domain/week";
 import { normalizeLanguagePreference } from "@/i18n/language";
 import { normalizeAppearancePreference } from "@/theme/appearance";
 import type {
-  AcademicTerm,
   Course,
   GridOrientation,
   OccurrenceException,
@@ -21,6 +20,7 @@ import type {
   RecurrenceType,
   Settings,
   TimeSlot,
+  Timetable,
 } from "@/types/models";
 
 export const SETTINGS_ROW_ID = "app";
@@ -41,11 +41,41 @@ export interface SettingsRow {
   onboarding_completed: number;
 }
 
-export interface TermRow {
+/**
+ * The single row that says which timetable is active.
+ *
+ * `singleton` is a constant, `CHECK`ed by the schema, so "at most one active
+ * timetable" is a property of the table rather than a rule the code has to
+ * keep. No row at all is the legitimate state of a user who archived their
+ * only timetable and has not made another.
+ */
+export const ACTIVE_TIMETABLE_ROW_ID = "active";
+
+export interface ActiveTimetableRow {
+  singleton: string;
   id: string;
   name: string;
-  start_date: string;
-  estimated_end_date: string;
+  anchor_date: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One archived timetable: its identity and list metadata as columns, the
+ * timetable itself as a versioned JSON snapshot.
+ *
+ * The columns are the ones the Timetables list has to render without parsing
+ * anything, and the ones a malformed snapshot must not be able to hide: a
+ * broken archive still shows its name and the day it was archived, and can
+ * still be renamed or deleted. Everything else is inside `snapshot`.
+ */
+export interface ArchivedTimetableRow {
+  id: string;
+  name: string;
+  archived_at: string;
+  created_at: string;
+  format_version: number;
+  snapshot: string;
 }
 
 export interface TimeSlotRow {
@@ -76,6 +106,8 @@ export interface PlacementRow {
   recurrence_type: string;
   starts_on: string;
   ends_on: string;
+  /** 1 when the series reaches back to the timetable's start; since v7. */
+  starts_with_timetable: number;
   /** Minutes of lead time; NULL is "no reminder". */
   reminder_minutes: number | null;
   created_at: string;
@@ -214,21 +246,24 @@ export function settingsFromRow(row: SettingsRow): Settings {
   };
 }
 
-export function termToRow(term: AcademicTerm): TermRow {
+export function activeTimetableToRow(timetable: Timetable): ActiveTimetableRow {
   return {
-    id: term.id,
-    name: term.name,
-    start_date: term.startDate,
-    estimated_end_date: term.estimatedEndDate,
+    singleton: ACTIVE_TIMETABLE_ROW_ID,
+    id: timetable.id,
+    name: timetable.name,
+    anchor_date: timetable.anchorDate,
+    created_at: timetable.createdAt,
+    updated_at: timetable.updatedAt,
   };
 }
 
-export function termFromRow(row: TermRow): AcademicTerm {
+export function activeTimetableFromRow(row: ActiveTimetableRow): Timetable {
   return {
     id: row.id,
     name: row.name,
-    startDate: row.start_date,
-    estimatedEndDate: row.estimated_end_date,
+    anchorDate: row.anchor_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -281,6 +316,7 @@ export function placementToRow(placement: Placement): PlacementRow {
     recurrence_type: placement.recurrenceType,
     starts_on: placement.startsOn,
     ends_on: placement.endsOn,
+    starts_with_timetable: placement.startsWithTimetable ? 1 : 0,
     reminder_minutes: placement.reminderMinutes,
     created_at: placement.createdAt,
     updated_at: placement.updatedAt,
@@ -298,6 +334,9 @@ export function placementFromRow(row: PlacementRow): Placement {
     recurrenceType: narrow(row.recurrence_type, RECURRENCE_TYPES, "weekly"),
     startsOn: row.starts_on,
     endsOn: row.ends_on,
+    // Only an explicit 0 bounds a series by its own start; the column's own
+    // default is 1, so anything else is the ordinary case.
+    startsWithTimetable: row.starts_with_timetable !== 0,
     reminderMinutes: reminderMinutesFromColumn(row.reminder_minutes),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

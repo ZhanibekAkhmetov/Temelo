@@ -27,10 +27,14 @@ const EXPAND_DURATION_MS = 180;
 
 /**
  * A field that shows only its value until tapped, then unfolds its picker
- * in place. The panel's height is passed in rather than measured: both
+ * in place. The panel's height is passed in rather than measured: the
  * pickers are fixed-size by construction, and a known target height keeps
  * the unfold from jumping on the first frame the way a measure-then-animate
  * pass does.
+ *
+ * Only for pickers short enough to unfold where they are. A date is not one
+ * of them — a month grid opened below the fold — and has its own sheet; see
+ * `DatePickerSheet`.
  */
 export function CollapsibleField({
   label,
@@ -59,22 +63,22 @@ export function CollapsibleField({
 
   return (
     <FieldRow
-      label={label}
-      onPress={onToggle}
-      accessibilityLabel={`${label}, ${valueText}`}
-      accessibilityExpanded={expanded}
-      error={error}
-      helperText={helperText}
-      panel={
-        <Animated.View style={[styles.panel, { height, opacity: progress }]}>
-          <View style={{ height: panelHeight }}>{children}</View>
-        </Animated.View>
-      }
-    >
-      {/* An open field's value is drawn in the accent, which is the only
-          state this row has: the panel below it is the rest of the answer. */}
-      {valueContent ?? <FieldValue>{valueText}</FieldValue>}
-      {expanded && !valueContent ? <View style={[styles.openMark, { backgroundColor: colors.accent }]} /> : null}
+        label={label}
+        onPress={onToggle}
+        accessibilityLabel={`${label}, ${valueText}`}
+        accessibilityExpanded={expanded}
+        error={error}
+        helperText={helperText}
+        panel={
+          <Animated.View style={[styles.panel, { height, opacity: progress }]}>
+            <View style={{ height: panelHeight }}>{children}</View>
+          </Animated.View>
+        }
+      >
+        {/* An open field's value is drawn in the accent, which is the only
+            state this row has: the panel below it is the rest of the answer. */}
+        {valueContent ?? <FieldValue>{valueText}</FieldValue>}
+        {expanded && !valueContent ? <View style={[styles.openMark, { backgroundColor: colors.accent }]} /> : null}
     </FieldRow>
   );
 }

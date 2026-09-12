@@ -1,21 +1,23 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
-import { InlineDateField } from "@/components/InlineDateField";
+import { DateField } from "@/components/DateField";
+import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { ReminderField } from "@/components/ReminderField";
 import { SwitchRow } from "@/components/SwitchRow";
 import { TextField } from "@/components/TextField";
 import { nextClassColorId, type ClassColorId } from "@/domain/classColor";
 import {
+  classEditorSchedule,
   createPendingClassEdit,
   draftHasChanges,
   validateClassEditDraft,
   type PendingClassEdit,
 } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
-import { defaultSeriesStartDate } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
@@ -26,7 +28,7 @@ import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
-import type { AcademicTerm, RecurrenceType, TimeSlot } from "@/types/models";
+import type { RecurrenceType, TimeSlot, Timetable } from "@/types/models";
 
 interface ClassEditorModalProps {
   visible: boolean;
@@ -39,7 +41,7 @@ interface ClassEditorModalProps {
   slotSpan: number;
   /** End of the last period in the span. */
   endTime: string;
-  term: AcademicTerm;
+  timetable: Timetable;
   existing?: ScheduledClass;
   /**
    * Edits to a repeating class leave here as a draft rather than as a
@@ -48,8 +50,14 @@ interface ClassEditorModalProps {
   onRequestScope: (edit: PendingClassEdit) => void;
 }
 
-/** Which inline picker is unfolded — at most one at a time. */
-type OpenPicker = "date" | "startsOn" | "endsOn" | "color" | null;
+/**
+ * Which picker is open — at most one at a time. The colour unfolds in place;
+ * a one-off's date opens a sheet over the form.
+ */
+type OpenPicker = "date" | "color" | null;
+
+/** Answers Android's Back before the editor does; true when it handled it. */
+type BackInterceptor = (() => boolean) | null;
 
 export function ClassEditorModal({
   visible,
@@ -59,27 +67,42 @@ export function ClassEditorModal({
   timeSlot,
   slotSpan,
   endTime,
-  term,
+  timetable,
   existing,
   onRequestScope,
 }: ClassEditorModalProps) {
+  /*
+   * Back inside a native Modal arrives as `onRequestClose` and never as a
+   * BackHandler event, so an open date sheet cannot hear it for itself. The
+   * form registers what Back should close first, and only when nothing is
+   * registered does Back close the editor.
+   */
+  const backInterceptor = useRef<BackInterceptor>(null);
+  const setBackInterceptor = useCallback((handler: BackInterceptor) => {
+    backInterceptor.current = handler;
+  }, []);
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        if (backInterceptor.current?.()) return;
+        onClose();
+      }}
       presentationStyle={Platform.OS === "ios" ? "fullScreen" : undefined}
     >
       {visible ? (
         <ClassEditorForm
           key={`${weekday}-${date}-${timeSlot.id}-${existing?.occurrenceId ?? "new"}`}
+          onBackInterceptorChange={setBackInterceptor}
           onClose={onClose}
           weekday={weekday}
           date={date}
           timeSlot={timeSlot}
           slotSpan={slotSpan}
           endTime={endTime}
-          term={term}
+          timetable={timetable}
           existing={existing}
           onRequestScope={onRequestScope}
         />
@@ -89,16 +112,17 @@ export function ClassEditorModal({
 }
 
 function ClassEditorForm({
+  onBackInterceptorChange,
   onClose,
   weekday,
   date,
   timeSlot,
   slotSpan,
   endTime,
-  term,
+  timetable,
   existing,
   onRequestScope,
-}: Omit<ClassEditorModalProps, "visible">) {
+}: Omit<ClassEditorModalProps, "visible"> & { onBackInterceptorChange: (handler: BackInterceptor) => void }) {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
   const { state, upsertPlacement, deletePlacement, setDefaultReminder } = useAppState();
@@ -125,19 +149,7 @@ function ClassEditorForm({
   // tapped — so these read from the series even when this occurrence has
   // been moved or altered on its own.
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(existing?.basePlacement.recurrenceType ?? "weekly");
-  const [startsOn, setStartsOn] = useState(
-    existing && existing.basePlacement.recurrenceType !== "once"
-      ? existing.basePlacement.startsOn
-      : defaultSeriesStartDate(existing?.basePlacement.recurrenceType ?? "weekly", date, term.startDate),
-  );
-  /**
-   * Whether the start date is the user's own choice. An existing series
-   * always owns its start; a new one follows the recurrence type until the
-   * user picks a date, after which it stops moving underneath them.
-   */
-  const [startDateIsOwn, setStartDateIsOwn] = useState(Boolean(existing));
-  const [endsOn, setEndsOn] = useState(existing?.basePlacement.endsOn ?? term.estimatedEndDate);
-  // A one-off defaults to the day that was tapped, not the start of term.
+  // A one-off defaults to the day that was tapped.
   const [onceDate, setOnceDate] = useState(
     existing?.basePlacement.recurrenceType === "once" ? existing.basePlacement.startsOn : date,
   );
@@ -156,8 +168,20 @@ function ClassEditorForm({
   const [formError, setFormError] = useState<DomainError | undefined>();
 
   const isOneOff = recurrenceType === "once";
-  const effectiveStartsOn = isOneOff ? onceDate : startsOn;
-  const effectiveEndsOn = isOneOff ? onceDate : endsOn;
+
+  /*
+   * The series' dates, which the user is not asked for and does not see —
+   * only a one-off's date is offered, because it is the lesson itself. A
+   * stored series keeps its anchor, end and `startsWithTimetable` exactly as
+   * they are; a new one anchors on the tapped week. See `classEditorSchedule`.
+   */
+  const schedule = classEditorSchedule({
+    recurrenceType,
+    tappedDate: date,
+    onceDate,
+    timetableStart: timetable.anchorDate,
+    base: existing?.basePlacement,
+  });
 
   const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
     { label: t("recurrence.weekly"), value: "weekly" },
@@ -174,11 +198,20 @@ function ClassEditorForm({
   const reminderDiffersFromDefault = reminderMinutes !== defaultReminderMinutes;
   const remindersBlocked = reminderStatus.permission === "denied";
 
+  /*
+   * "One time on 3 Nov" / "Repeats every week" / "Repeats every two weeks".
+   *
+   * The two recurring forms no longer name an end date because there is not
+   * one to name: a repeating class runs until the user changes or deletes it.
+   * The sentence used to read "Every week until 22 Dec", where the date was
+   * the estimate onboarding had made them type months earlier — and the single
+   * most surprising thing in the app was discovering it had been enforced.
+   */
   const summaryText = isOneOff
     ? t("classEditor.summaryOnce", { date: format.dateLong(onceDate) })
     : recurrenceType === "biweekly"
-      ? t("classEditor.summaryBiweekly", { date: format.dateLong(effectiveEndsOn) })
-      : t("classEditor.summaryWeekly", { date: format.dateLong(effectiveEndsOn) });
+      ? t("classEditor.summaryBiweekly")
+      : t("classEditor.summaryWeekly");
 
   const slotText =
     slotSpan > 1
@@ -200,21 +233,21 @@ function ClassEditorForm({
     setOpenPicker((current) => (current === picker ? null : picker));
   }
 
-  /**
-   * Choosing "every 2 weeks" also chooses which half of the fortnight the
-   * class falls on, and the start date is where that is recorded — so a new
-   * class re-anchors on the week the user tapped. Left at the start of term
-   * it would land on the same alternating weeks as every other one, and
-   * collide with all of them.
-   */
-  function handleRecurrenceChange(next: RecurrenceType) {
-    setRecurrenceType(next);
-    if (!startDateIsOwn) setStartsOn(defaultSeriesStartDate(next, date, term.startDate));
-  }
+  const dateSheetOpen = openPicker === "date";
 
-  function handleStartDateChange(value: string) {
-    setStartDateIsOwn(true);
-    setStartsOn(value);
+  // While the date sheet is open, Back closes the sheet and leaves the editor.
+  useEffect(() => {
+    if (!dateSheetOpen) return;
+    onBackInterceptorChange(() => {
+      setOpenPicker(null);
+      return true;
+    });
+    return () => onBackInterceptorChange(null);
+  }, [dateSheetOpen, onBackInterceptorChange]);
+
+  function handleDateConfirm(value: string) {
+    setOnceDate(value);
+    setOpenPicker(null);
   }
 
   function handleSave() {
@@ -254,8 +287,10 @@ function ClassEditorForm({
         // is scoped by the same question and rebased by the same rules.
         appearanceId,
         recurrenceType,
-        startsOn: effectiveStartsOn,
-        endsOn: effectiveEndsOn,
+        startsOn: schedule.startsOn,
+        endsOn: schedule.endsOn,
+        // Undefined: the series keeps whatever it already was.
+        startsWithTimetable: schedule.startsWithTimetable,
         reminderMinutes,
       });
 
@@ -281,8 +316,9 @@ function ClassEditorForm({
       notes,
       appearanceId,
       recurrenceType,
-      startsOn: effectiveStartsOn,
-      endsOn: effectiveEndsOn,
+      startsOn: schedule.startsOn,
+      endsOn: schedule.endsOn,
+      startsWithTimetable: schedule.startsWithTimetable ?? true,
       reminderMinutes,
     });
 
@@ -309,6 +345,19 @@ function ClassEditorForm({
   }
 
   return (
+    /*
+     * A gesture root of its own, and this is not optional.
+     *
+     * A React Native `Modal` is a separate native window — a Dialog on Android,
+     * its own view controller on iOS — so nothing inside it is a descendant of
+     * the `GestureHandlerRootView` in the root layout. Gesture Handler
+     * recognisers mounted in here are simply never handed the touches, which is
+     * why the month pager's horizontal swipe stopped working the moment the date
+     * fields moved into this editor: the pager was unchanged and correct, and it
+     * was not receiving anything. It worked on the old term screen because that
+     * was an ordinary pushed screen, inside the root.
+     */
+    <GestureHandlerRootView style={styles.flex}>
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={["top", "left", "right", "bottom"]}>
       <View
         style={[
@@ -449,38 +498,17 @@ function ClassEditorForm({
                 label={t("classEditor.recurrence")}
                 value={recurrenceType}
                 options={RECURRENCE_OPTIONS}
-                onChange={handleRecurrenceChange}
+                onChange={setRecurrenceType}
                 sheetTitle={t("recurrence.label")}
               />
 
-              {isOneOff ? (
-                <InlineDateField
-                  label={t("classEditor.date")}
-                  value={onceDate}
-                  onChange={setOnceDate}
-                  expanded={openPicker === "date"}
-                  onToggle={() => togglePicker("date")}
-                />
-              ) : (
-                <>
-                  <InlineDateField
-                    label={t("classEditor.startDate")}
-                    value={startsOn}
-                    onChange={handleStartDateChange}
-                    expanded={openPicker === "startsOn"}
-                    onToggle={() => togglePicker("startsOn")}
-                    helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
-                  />
-                  <InlineDateField
-                    label={t("classEditor.endDate")}
-                    value={endsOn}
-                    onChange={setEndsOn}
-                    expanded={openPicker === "endsOn"}
-                    onToggle={() => togglePicker("endsOn")}
-                    helperText={t("classEditor.endDateHint")}
-                  />
-                </>
-              )}
+              {/* Only a one-off has a date to pick: it is the lesson itself. A
+                  repeating class has no start-date row — where its series is
+                  anchored is internal, and the timetable's start is the date
+                  the user controls. Opens the date sheet over the form. */}
+              {schedule.dateField === "occurrenceDate" ? (
+                <DateField label={t("classEditor.date")} value={onceDate} onPress={() => setOpenPicker("date")} />
+              ) : null}
             </FormSection>
           ) : null}
 
@@ -498,6 +526,18 @@ function ClassEditorForm({
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+
+      {/* Over the whole editor and still inside its gesture root, which is
+          what keeps the month pager's swipe working in here. */}
+      {dateSheetOpen ? (
+        <DatePickerSheet
+          title={t("classEditor.date")}
+          value={onceDate}
+          onCancel={() => setOpenPicker(null)}
+          onConfirm={handleDateConfirm}
+        />
+      ) : null}
+    </GestureHandlerRootView>
   );
 }
 

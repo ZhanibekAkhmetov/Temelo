@@ -31,6 +31,8 @@ export interface ResolveWeekInput {
   timeSlots: TimeSlot[];
   /** An edit awaiting a scope choice, drawn where it would land. */
   preview?: OccurrencePreview | null;
+  /** The timetable's start date; weeks before it draw nothing. See `OccurrenceSource`. */
+  timetableStart?: string | null;
 }
 
 /** Stable key for a grid cell: one weekday of the shown week × one period. */

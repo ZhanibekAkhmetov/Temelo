@@ -34,11 +34,94 @@ export interface Settings {
   onboardingCompleted: boolean;
 }
 
-export interface AcademicTerm {
+/**
+ * Which of the stored settings belong to *this timetable* rather than to the
+ * app as a whole.
+ *
+ * They all live in the same single `settings` row — splitting the table would
+ * be a migration with nothing to show for it — so the distinction is declared
+ * here as data instead, and it is load-bearing in exactly two places: what an
+ * archive snapshot carries, and what a restore is allowed to overwrite.
+ *
+ * The line is drawn on "is this a fact about the schedule, or about the
+ * person reading it":
+ *
+ *  - the academic day (start, lesson and break length, period count) *is* the
+ *    timetable's skeleton. The periods it generates are addressed by id from
+ *    every placement in the timetable, so it could not travel separately even
+ *    if we wanted it to.
+ *  - `weekendMode` is which days this timetable has classes on. A school year
+ *    with Saturday classes and a university term without them are two
+ *    different timetables, not one user changing their mind.
+ *
+ * Everything else stays app-global, including two that are close calls:
+ *
+ *  - `gridOrientation` is how the user prefers to *read* a week grid, not a
+ *    property of any particular week in it. Carrying it in an archive would
+ *    mean restoring a timetable silently re-rotated the screen.
+ *  - `defaultReminderMinutes` is how this user likes to be reminded. It is the
+ *    starting point for classes they create next, and should not change
+ *    because they restored last year's timetable.
+ *
+ * Appearance and language are about the person too, and
+ * `onboardingCompleted` records that the app has been set up at least once —
+ * which stays true across every archive and restore.
+ */
+export const TIMETABLE_SETTING_KEYS = [
+  "weekendMode",
+  "academicDayStart",
+  "defaultLessonDurationMinutes",
+  "defaultBreakDurationMinutes",
+  "slotCount",
+] as const satisfies readonly (keyof Settings)[];
+
+export type TimetableSettingKey = (typeof TIMETABLE_SETTING_KEYS)[number];
+
+/** The slice of `Settings` an archived timetable carries with it. */
+export type TimetableSettings = Pick<Settings, TimetableSettingKey>;
+
+/**
+ * A timetable: the thing the user names, archives and restores.
+ *
+ * This replaces the old `AcademicTerm`, and the difference is not only the
+ * name. A term was a *date range* — a required start, an estimated end — and
+ * that range was what stopped recurring classes. A timetable has a start and
+ * no end: it is a name over a set of periods and classes, and a weekly class
+ * in it repeats until the user says otherwise.
+ *
+ * There is at most one active timetable at a time. `null` where a
+ * `Timetable` is expected is a real state — the user archived their only one
+ * — and not an error.
+ */
+export interface Timetable {
   id: string;
   name: string;
-  startDate: string;
-  estimatedEndDate: string;
+  /**
+   * The timetable's start date — "Starts on" in the UI.
+   *
+   * Stored as `anchor_date` since migration v6, and the name is kept because
+   * renaming a column is a migration with nothing to show for it. It does two
+   * things, and both follow from "this is when the timetable begins":
+   *
+   *  - it is a lower bound on every occurrence. Nothing in the timetable is
+   *    drawn, clash-checked or reminded before it (see `OccurrenceSource`). The
+   *    calendar itself stays navigable before it; those weeks are simply empty.
+   *  - it is how far back every series that `startsWithTimetable` reaches. So
+   *    moving it earlier extends ordinary classes into the newly included
+   *    weeks, and a class added in November is there when they page back to
+   *    October.
+   *
+   * It is not a semester: there is no end date, and changing it rewrites
+   * nothing. Every series keeps its own `startsOn`, which is what keeps an
+   * alternating class on its own weeks whatever the timetable's start does.
+   *
+   * An upgrading user's timetable inherited the old term's start date in v6,
+   * so not one existing class re-anchored and no alternating class changed
+   * weeks. New timetables default to the Monday of the week they are made in.
+   */
+  anchorDate: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TimeSlot {
@@ -124,7 +207,40 @@ export interface Placement {
    */
   slotSpan: number;
   recurrenceType: RecurrenceType;
+  /**
+   * The series' parity anchor — and its first date only when it does not
+   * `startsWithTimetable`.
+   *
+   * For an every-two-week class this is which half of the fortnight it falls
+   * on, counted from the first occurrence on or after it, which is why the
+   * anchor is per-series and travels with the series whenever it moves.
+   */
   startsOn: string;
+  /**
+   * Whether the series is part of the timetable's pattern, reaching back as far
+   * as the timetable does — or genuinely begins on `startsOn`.
+   *
+   * True for an ordinary class added by tapping a slot: moving the timetable's
+   * start earlier brings it into the newly included weeks, on the same parity.
+   * False for the later half of a "this and future" split, whose start is the
+   * split and must never leak back into the weeks its earlier half covers, and
+   * for a series whose start date the user chose in the editor. Ignored for a
+   * one-off, which is only ever its own date.
+   *
+   * Stored since migration v7; see `seriesLowerBound` in `domain/recurrence`.
+   */
+  startsWithTimetable: boolean;
+  /**
+   * The series' last date, or `OPEN_ENDED_DATE` when it does not have one.
+   *
+   * Open-ended is the normal case for anything that repeats: a weekly class
+   * runs until the user changes or deletes it, not until a date they were once
+   * asked to guess. A real date here means the series genuinely stops — a
+   * one-off, which ends on its own day, or the earlier half of a series that a
+   * "this and future" edit split.
+   *
+   * See `domain/recurrence` for the sentinel and `isOpenEndedSeries`.
+   */
   endsOn: string;
   /**
    * Minutes before the class starts that its reminder fires, or null for no

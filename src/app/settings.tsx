@@ -1,16 +1,20 @@
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
 import { ChoiceRowField } from "@/components/ChoiceRowField";
-import { FormSection, NavigationRow } from "@/components/FormSection";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FormSection } from "@/components/FormSection";
 import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
-import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
+import { ScreenHeader } from "@/components/ScreenHeader";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
 import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
+import { shapeOfActive, timetableSummary } from "@/features/timetables/summary";
+import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
 import { useI18n } from "@/i18n/I18nProvider";
 import { LANGUAGE_PREFERENCES, type LanguagePreference } from "@/i18n/language";
 import type { TranslationKey } from "@/i18n/translate";
@@ -18,12 +22,6 @@ import { useAppState } from "@/state/AppStateContext";
 import { APPEARANCE_PREFERENCES, type AppearancePreference } from "@/theme/appearance";
 import { useTheme } from "@/theme/useTheme";
 import type { GridOrientation } from "@/types/models";
-
-const WEEKEND_MODE_LABEL_KEY: Record<WeekendMode, TranslationKey> = {
-  saturdaySunday: "week.weekendSaturdaySunday",
-  sundayOnly: "week.weekendSundayOnly",
-  none: "week.weekendNone",
-};
 
 const APPEARANCE_LABEL_KEY: Record<AppearancePreference, TranslationKey> = {
   system: "settings.appearanceSystem",
@@ -61,14 +59,19 @@ const LANGUAGE_ENDONYM: Record<Exclude<LanguagePreference, "system">, string> = 
  *   made. A setting that is several fields at once is a screen of its own.
  *
  * So there is no Save button here at all. Every row on this page commits on
- * tap; the two things that cannot — the academic day and the term — are rows
- * that open their own editors, where a Save belongs because there is a whole
- * form to commit. The previous version had one editor inlined at the bottom
- * with its own Save, which meant the page had a button that governed two of
- * its rows and not the other five, and no way to tell which was which.
+ * tap; the one thing that cannot is a row that leaves for a screen of its own.
  *
- * Three groups, and each row's value is on the right, so the page can be read
- * as "what is Temelo set to" without opening anything.
+ * What this page is *about* narrowed with the timetable lifecycle, and that is
+ * the more important change. It used to hold the term, the academic day and
+ * the days without classes alongside appearance and language — five rows about
+ * the app and three about one particular timetable, in one undifferentiated
+ * list. Now the timetable's own properties live on the timetable's own screen,
+ * and Settings keeps one row pointing at it. What is left here is true of
+ * Temelo however many timetables the user has.
+ *
+ * The layout is the deliberate exception: it is how the user prefers to read a
+ * week grid, not a fact about any particular week in it, so it stays a
+ * preference and stays here.
  */
 export default function SettingsScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
@@ -76,7 +79,6 @@ export default function SettingsScreen() {
   const {
     state,
     persistence,
-    setWeekendMode,
     setGridOrientation,
     setAppearancePreference,
     setLanguagePreference,
@@ -85,6 +87,8 @@ export default function SettingsScreen() {
     resetPrototype,
   } = useAppState();
   const reminderStatus = useReminderStatus();
+  /** Which of this screen's two whole-app confirmations is open, if either. */
+  const [confirming, setConfirming] = useState<"reset" | "sample" | null>(null);
 
   const appearanceOptions = APPEARANCE_PREFERENCES.map((preference) => ({
     value: preference,
@@ -101,66 +105,46 @@ export default function SettingsScreen() {
     label: t(LAYOUT_LABEL_KEY[orientation]),
   }));
 
-  const weekendOptions = ALL_WEEKEND_MODES.map((mode) => ({
-    value: mode,
-    label: t(WEEKEND_MODE_LABEL_KEY[mode]),
-  }));
+  /*
+   * The one line under the timetable's name: the days it covers and the hours
+   * its day runs. The same summary the Timetables screen shows, so the row the
+   * user taps and the screen it opens agree about what they are describing.
+   */
+  const timetableRowTitle = state.timetable?.name ?? t("timetables.noCurrent");
+  const timetableRowSubtitle = state.timetable
+    ? timetableSummary(t, format, shapeOfActive(state.settings.weekendMode, state.timeSlots))
+    : t("timetables.noCurrentHint");
 
-  // The hours the configured day actually covers, which is the one thing worth
-  // knowing about it without opening the editor.
-  const firstSlot = state.timeSlots[0];
-  const lastSlot = state.timeSlots[state.timeSlots.length - 1];
-  const academicDaySummary =
-    firstSlot && lastSlot
-      ? t("settings.academicDaySummary", { start: firstSlot.startTime, end: lastSlot.endTime })
-      : undefined;
-
-  function handleLoadSample() {
-    Alert.alert(t("settings.loadSampleTitle"), t("settings.loadSampleMessage"), [
-      { text: t("common.cancel"), style: "cancel" },
-      {
-        text: t("settings.loadSampleConfirm"),
-        onPress: () => {
-          loadSampleTimetable();
-          router.dismissAll();
-        },
-      },
-    ]);
+  function confirmLoadSample() {
+    setConfirming(null);
+    loadSampleTimetable();
+    router.dismissAll();
   }
 
-  function handleReset() {
-    Alert.alert(t("settings.resetTitle"), t("settings.resetMessage"), [
-      { text: t("common.cancel"), style: "cancel" },
-      {
-        text: t("settings.resetConfirm"),
-        style: "destructive",
-        onPress: () => {
-          resetPrototype();
-          // Settings sits on top of timetable in the stack; drop back to
-          // timetable first, then replace it, so no stale screen is left
-          // underneath the fresh onboarding flow.
-          router.dismissAll();
-          router.replace("/onboarding/week");
-        },
-      },
-    ]);
+  function confirmReset() {
+    setConfirming(null);
+    resetPrototype();
+    // Settings sits on top of timetable in the stack; drop back to timetable
+    // first, then replace it, so no stale screen is left underneath the fresh
+    // onboarding flow.
+    router.dismissAll();
+    router.replace("/timetables/new-timetable");
   }
 
   return (
-    <ScreenContainer>
-      <View style={styles.headerRow}>
-        <Text style={[typography.title, styles.title, { color: colors.textPrimary }]}>{t("settings.title")}</Text>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel={t("common.close")}
-          hitSlop={8}
-          pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
-          style={({ pressed }) => [styles.closeTarget, { opacity: pressed ? 0.5 : 1 }]}
-        >
-          <Text style={[typography.label, { color: colors.accentStrong }]}>{t("common.close")}</Text>
-        </Pressable>
-      </View>
+    // A pushed screen, so the same header every other pushed screen has: Back
+    // at the leading edge. It used to be a Close at the trailing edge, which
+    // put the way out on the opposite side from the Timetables screen one tap
+    // further in.
+    <ScreenContainer
+      header={
+        <ScreenHeader
+          title={t("settings.title")}
+          onBack={() => router.back()}
+          accessibilityBackLabel={t("common.back")}
+        />
+      }
+    >
 
       {/* A failed write is the one thing on this screen that has to be said out
           loud, and it belongs at the top rather than beside whichever control
@@ -185,6 +169,41 @@ export default function SettingsScreen() {
         </Text>
       ) : null}
 
+      {/*
+        Timetable first, and the timetable itself first inside it.
+        It was below the layout preference, in the value column of a row whose
+        label said "Current timetable" — which put the single most important
+        thing on this screen in the place the eye uses for "what is this set
+        to". Switching, archiving and restoring a timetable is a Beta feature;
+        a layout preference is not.
+      */}
+      <FormSection title={t("settings.sectionTimetable")}>
+        {/* One door to everything about timetables — the current one's name,
+            days and academic day, the archived ones, and creating another. The
+            three rows that used to be here were all reachable through it, and
+            keeping them here as well would have made this page the second
+            place to change a timetable's shape. */}
+        {/* The same row the Timetables screen draws the timetable with, so the
+            thing tapped here and the thing on the next screen look like one
+            object. Here it stands alone in the form, so it says what it is —
+            "Current timetable" — above the name; there, a section heading
+            does that job. */}
+        <TimetableSummaryRow
+          context={t("settings.currentTimetable")}
+          name={timetableRowTitle}
+          summary={timetableRowSubtitle}
+          onPress={() => router.push("/timetables")}
+        />
+        <ChoiceRowField
+          label={t("settings.layout")}
+          value={state.settings.gridOrientation}
+          options={layoutOptions}
+          onChange={(gridOrientation) => setGridOrientation({ gridOrientation })}
+          sheetTitle={t("settings.layout")}
+          helperText={t("settings.layoutHint")}
+        />
+      </FormSection>
+
       <FormSection title={t("settings.sectionGeneral")}>
         <ChoiceRowField
           label={t("settings.appearance")}
@@ -204,36 +223,6 @@ export default function SettingsScreen() {
         />
       </FormSection>
 
-      <FormSection title={t("settings.sectionTimetable")}>
-        <ChoiceRowField
-          label={t("settings.layout")}
-          value={state.settings.gridOrientation}
-          options={layoutOptions}
-          onChange={(gridOrientation) => setGridOrientation({ gridOrientation })}
-          sheetTitle={t("settings.layout")}
-        />
-        <ChoiceRowField
-          label={t("settings.daysWithoutClasses")}
-          value={state.settings.weekendMode}
-          options={weekendOptions}
-          onChange={(weekendMode) => setWeekendMode({ weekendMode })}
-          sheetTitle={t("settings.daysWithoutClasses")}
-        />
-        {/* Both of these are whole forms, so both are rows that open one. Each
-            says what it currently holds, so the page still answers the
-            question without being opened. */}
-        <NavigationRow
-          label={t("settings.academicDay")}
-          value={academicDaySummary}
-          onPress={() => router.push("/onboarding/academic-day")}
-        />
-        <NavigationRow
-          label={t("settings.term")}
-          value={state.term.name || format.dateLong(state.term.estimatedEndDate)}
-          onPress={() => router.push("/onboarding/term")}
-        />
-      </FormSection>
-
       <FormSection title={t("reminders.title")}>
         <ReminderField
           label={t("reminders.defaultForNewClasses")}
@@ -248,7 +237,7 @@ export default function SettingsScreen() {
       </FormSection>
 
       <View style={{ marginTop: spacing.xl }}>
-        <Button label={t("settings.reset")} variant="destructive" onPress={handleReset} />
+        <Button label={t("settings.reset")} variant="destructive" onPress={() => setConfirming("reset")} />
       </View>
 
       {/* Development tools. The sample timetable is invented placeholder
@@ -258,7 +247,7 @@ export default function SettingsScreen() {
       {__DEV__ ? (
         <FormSection title={t("settings.developer")}>
           <View style={{ gap: spacing.md, marginTop: spacing.sm, marginBottom: spacing.lg }}>
-            <Button label={t("settings.loadSample")} variant="secondary" onPress={handleLoadSample} />
+            <Button label={t("settings.loadSample")} variant="secondary" onPress={() => setConfirming("sample")} />
             <StorageDiagnostics />
             <HapticsDiagnostics />
             <RemindersDiagnostics />
@@ -267,26 +256,31 @@ export default function SettingsScreen() {
       ) : (
         <View style={{ height: spacing.lg }} />
       )}
+
+      {confirming === "reset" ? (
+        <ConfirmDialog
+          destructive
+          title={t("settings.resetTitle")}
+          message={t("settings.resetMessage")}
+          confirmLabel={t("settings.resetConfirm")}
+          onConfirm={confirmReset}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
+      {confirming === "sample" ? (
+        <ConfirmDialog
+          title={t("settings.loadSampleTitle")}
+          message={t("settings.loadSampleMessage")}
+          confirmLabel={t("settings.loadSampleConfirm")}
+          onConfirm={confirmLoadSample}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  title: {
-    flexShrink: 1,
-  },
-  closeTarget: {
-    minWidth: 44,
-    height: 44,
-    alignItems: "flex-end",
-    justifyContent: "center",
-  },
   notice: {
     width: "100%",
   },
