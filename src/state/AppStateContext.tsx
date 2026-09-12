@@ -752,8 +752,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
 
     const createNewTimetable: AppStateContextValue["createNewTimetable"] = (input) => {
-      // A blank name is not refused: storage picks "Timetable 2" or whatever is
-      // free, inside the same transaction that creates it.
+      // A blank name is not refused: storage picks "Timetable1" or the lowest
+      // free number, inside the same transaction that creates it.
       const name = normalizeTimetableName(input.name) ?? "";
 
       const slots = generateTimeSlots({

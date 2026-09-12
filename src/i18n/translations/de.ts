@@ -82,8 +82,6 @@ export const de: Translations = {
   "classEditor.slotSpan": "{weekday} · {from}.–{to}. Stunde · {start}–{end}",
   "classEditor.recurrence": "Wiederholung",
   "classEditor.date": "Datum",
-  "classEditor.startDate": "Beginn",
-  "classEditor.biweeklyStartHint": "Legt fest, in welcher der wechselnden Wochen der Kurs liegt",
   "classEditor.deleteClass": "Kurs löschen",
   "classEditor.deleteTitle": "Kurs löschen?",
   "classEditor.deleteMessage": "„{name}“ aus dem Stundenplan entfernen. Das lässt sich nicht rückgängig machen.",

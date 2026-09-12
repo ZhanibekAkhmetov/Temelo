@@ -75,8 +75,6 @@ export const en = {
   "classEditor.slotSpan": "{weekday} · periods {from}–{to} · {start}–{end}",
   "classEditor.recurrence": "Recurrence",
   "classEditor.date": "Date",
-  "classEditor.startDate": "Start date",
-  "classEditor.biweeklyStartHint": "Sets which alternating week this class falls on",
   "classEditor.deleteClass": "Delete class",
   "classEditor.deleteTitle": "Delete class?",
   "classEditor.deleteMessage": "Remove {name} from the timetable. This cannot be undone.",

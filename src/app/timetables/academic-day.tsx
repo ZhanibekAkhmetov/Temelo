@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Alert, Text } from "react-native";
 import { router } from "expo-router";
 
-import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AcademicDayFields, isUsableAcademicDay } from "@/features/timetables/AcademicDayFields";
@@ -61,10 +60,18 @@ export default function AcademicDayScreen() {
   return (
     <ScreenContainer
       header={
+        // Save in the header's trailing slot, where the current timetable's
+        // screen one step back has it — not as a button at the foot of the form.
         <ScreenHeader
           title={t("timetables.academicDay")}
           onBack={() => router.back()}
           accessibilityBackLabel={t("common.back")}
+          action={{
+            label: t("common.save"),
+            onPress: handleSave,
+            emphasis: true,
+            disabled: !isUsableAcademicDay(academicDay),
+          }}
         />
       }
     >
@@ -73,12 +80,6 @@ export default function AcademicDayScreen() {
       </Text>
 
       <AcademicDayFields value={academicDay} onChange={setAcademicDay} />
-
-      <OnboardingNav
-        onContinue={handleSave}
-        continueLabel={t("common.save")}
-        continueDisabled={!isUsableAcademicDay(academicDay)}
-      />
     </ScreenContainer>
   );
 }

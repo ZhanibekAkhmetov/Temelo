@@ -108,7 +108,10 @@ when persistence is actually implemented.
   stored fact — `Placement.startsWithTimetable` (migration v7). An ordinary
   class is part of the timetable's pattern and reaches back as far as the
   timetable does; the later half of a "this and future" split, or a series
-  whose start the user chose, genuinely begins on `startsOn`. It is stored
+  whose start a user chose in an earlier build, genuinely begins on
+  `startsOn`. The class editor no longer offers a series start date at all —
+  only a one-off's own date — so none of these anchors is a user-facing
+  field (`classEditorSchedule` in `domain/classEdit`). It is stored
   rather than derived because the record alone cannot tell "weekly, starts
   5 Oct, added when the timetable began then" from "weekly, starts 5 Oct, the
   later half of a split" — and only the first may extend backwards.

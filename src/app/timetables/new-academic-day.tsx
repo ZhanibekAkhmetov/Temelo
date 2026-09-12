@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
 import type { DomainError } from "@/domain/errors";
 import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
 import { AcademicDayFields, isUsableAcademicDay } from "@/features/timetables/AcademicDayFields";
@@ -89,9 +90,16 @@ export default function NewAcademicDayScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-    <ScreenContainer>
-      <Text style={[typography.title, { color: colors.textPrimary }]}>{t("onboarding.academicDayTitle")}</Text>
-      <Text style={[typography.body, { color: colors.textSecondary, marginTop: spacing.xs }]}>
+    <ScreenContainer
+      header={
+        <ScreenHeader
+          title={t("onboarding.academicDayTitle")}
+          onBack={() => router.back()}
+          accessibilityBackLabel={t("common.back")}
+        />
+      }
+    >
+      <Text style={[typography.body, { color: colors.textSecondary }]}>
         {t("onboarding.academicDaySubtitle")}
       </Text>
 
@@ -104,7 +112,6 @@ export default function NewAcademicDayScreen() {
       ) : null}
 
       <OnboardingNav
-        onBack={() => router.back()}
         onContinue={handleCreatePress}
         continueLabel={t("timetables.createFinish")}
         continueDisabled={busy || !isUsableAcademicDay(academicDay)}

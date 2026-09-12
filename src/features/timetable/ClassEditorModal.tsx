@@ -11,13 +11,13 @@ import { SwitchRow } from "@/components/SwitchRow";
 import { TextField } from "@/components/TextField";
 import { nextClassColorId, type ClassColorId } from "@/domain/classColor";
 import {
+  classEditorSchedule,
   createPendingClassEdit,
   draftHasChanges,
   validateClassEditDraft,
   type PendingClassEdit,
 } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
-import { defaultSeriesEndDate, defaultSeriesStartDate, firstSeriesDate } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
@@ -52,9 +52,9 @@ interface ClassEditorModalProps {
 
 /**
  * Which picker is open — at most one at a time. The colour unfolds in place;
- * the two dates open a sheet over the form.
+ * a one-off's date opens a sheet over the form.
  */
-type OpenPicker = "date" | "startsOn" | "color" | null;
+type OpenPicker = "date" | "color" | null;
 
 /** Answers Android's Back before the editor does; true when it handled it. */
 type BackInterceptor = (() => boolean) | null;
@@ -149,35 +149,6 @@ function ClassEditorForm({
   // tapped — so these read from the series even when this occurrence has
   // been moved or altered on its own.
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>(existing?.basePlacement.recurrenceType ?? "weekly");
-  const [startsOn, setStartsOn] = useState(
-    existing && existing.basePlacement.recurrenceType !== "once"
-      ? existing.basePlacement.startsOn
-      : defaultSeriesStartDate(existing?.basePlacement.recurrenceType ?? "weekly", date, timetable.anchorDate),
-  );
-  /**
-   * Whether the start date is the user's own choice. An existing series
-   * always owns its start; a new one follows the recurrence type until the
-   * user picks a date, after which it stops moving underneath them.
-   */
-  const [startDateIsOwn, setStartDateIsOwn] = useState(Boolean(existing));
-  /**
-   * Whether the user picked a start date in *this* sitting — which is what
-   * turns a series that starts with the timetable into one that genuinely
-   * begins on that date. Separate from `startDateIsOwn`, which only stops the
-   * date following the recurrence type around.
-   */
-  const [startDateTouched, setStartDateTouched] = useState(false);
-  /*
-   * The series' end, which the user is no longer asked for and no longer sees.
-   *
-   * A new series is open-ended, and an existing one keeps whatever it already
-   * has — which is the sentinel for anything created or migrated under this
-   * model, and a real date only for the earlier half of a series that a "this
-   * and future" edit split. Held as state rather than read inline because the
-   * draft carries it to the scope chooser, where splitting still needs to know
-   * where the series ends.
-   */
-  const [endsOn] = useState(existing?.basePlacement.endsOn ?? defaultSeriesEndDate());
   // A one-off defaults to the day that was tapped.
   const [onceDate, setOnceDate] = useState(
     existing?.basePlacement.recurrenceType === "once" ? existing.basePlacement.startsOn : date,
@@ -197,26 +168,20 @@ function ClassEditorForm({
   const [formError, setFormError] = useState<DomainError | undefined>();
 
   const isOneOff = recurrenceType === "once";
-  const effectiveStartsOn = isOneOff ? onceDate : startsOn;
-  const effectiveEndsOn = isOneOff ? onceDate : endsOn;
 
   /*
-   * The start date as the user will experience it.
-   *
-   * A series that starts with the timetable stores only a parity anchor, which
-   * may be weeks after the first lesson actually drawn — the timetable's start
-   * could have been moved earlier since. Showing that anchor as "Start date"
-   * would contradict the grid, so the field shows the first real lesson
-   * instead, and only a date the user picks here is stored as a start.
+   * The series' dates, which the user is not asked for and does not see —
+   * only a one-off's date is offered, because it is the lesson itself. A
+   * stored series keeps its anchor, end and `startsWithTimetable` exactly as
+   * they are; a new one anchors on the tapped week. See `classEditorSchedule`.
    */
-  const startsWithTimetable =
-    !startDateTouched && (existing && existing.basePlacement.recurrenceType !== "once" ? existing.basePlacement.startsWithTimetable : true);
-  const shownStartsOn = startsWithTimetable
-    ? firstSeriesDate(
-        { weekday: existing?.basePlacement.weekday ?? weekday, recurrenceType, startsOn, endsOn, startsWithTimetable },
-        timetable.anchorDate,
-      )
-    : startsOn;
+  const schedule = classEditorSchedule({
+    recurrenceType,
+    tappedDate: date,
+    onceDate,
+    timetableStart: timetable.anchorDate,
+    base: existing?.basePlacement,
+  });
 
   const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
     { label: t("recurrence.weekly"), value: "weekly" },
@@ -268,42 +233,21 @@ function ClassEditorForm({
     setOpenPicker((current) => (current === picker ? null : picker));
   }
 
-  const dateSheet = openPicker === "date" || openPicker === "startsOn" ? openPicker : null;
+  const dateSheetOpen = openPicker === "date";
 
-  // While a date sheet is open, Back closes the sheet and leaves the editor.
+  // While the date sheet is open, Back closes the sheet and leaves the editor.
   useEffect(() => {
-    if (!dateSheet) return;
+    if (!dateSheetOpen) return;
     onBackInterceptorChange(() => {
       setOpenPicker(null);
       return true;
     });
     return () => onBackInterceptorChange(null);
-  }, [dateSheet, onBackInterceptorChange]);
+  }, [dateSheetOpen, onBackInterceptorChange]);
 
   function handleDateConfirm(value: string) {
-    if (dateSheet === "date") setOnceDate(value);
-    else handleStartDateChange(value);
+    setOnceDate(value);
     setOpenPicker(null);
-  }
-
-  /**
-   * Choosing "every 2 weeks" also chooses which half of the fortnight the
-   * class falls on, and the start date is where that is recorded — so a new
-   * class re-anchors on the week the user tapped. Anchored anywhere fixed it
-   * would land on the same alternating weeks as every other one, and collide
-   * with all of them.
-   */
-  function handleRecurrenceChange(next: RecurrenceType) {
-    setRecurrenceType(next);
-    if (!startDateIsOwn) setStartsOn(defaultSeriesStartDate(next, date, timetable.anchorDate));
-  }
-
-  function handleStartDateChange(value: string) {
-    // Done on the date that was already shown is not a decision to fix it.
-    if (startsWithTimetable && value === shownStartsOn) return;
-    setStartDateIsOwn(true);
-    setStartDateTouched(true);
-    setStartsOn(value);
   }
 
   function handleSave() {
@@ -343,10 +287,10 @@ function ClassEditorForm({
         // is scoped by the same question and rebased by the same rules.
         appearanceId,
         recurrenceType,
-        startsOn: effectiveStartsOn,
-        endsOn: effectiveEndsOn,
-        // Untouched, the series keeps whatever it already was.
-        startsWithTimetable: startDateTouched ? false : undefined,
+        startsOn: schedule.startsOn,
+        endsOn: schedule.endsOn,
+        // Undefined: the series keeps whatever it already was.
+        startsWithTimetable: schedule.startsWithTimetable,
         reminderMinutes,
       });
 
@@ -372,9 +316,9 @@ function ClassEditorForm({
       notes,
       appearanceId,
       recurrenceType,
-      startsOn: effectiveStartsOn,
-      endsOn: effectiveEndsOn,
-      startsWithTimetable: !startDateTouched,
+      startsOn: schedule.startsOn,
+      endsOn: schedule.endsOn,
+      startsWithTimetable: schedule.startsWithTimetable ?? true,
       reminderMinutes,
     });
 
@@ -554,22 +498,17 @@ function ClassEditorForm({
                 label={t("classEditor.recurrence")}
                 value={recurrenceType}
                 options={RECURRENCE_OPTIONS}
-                onChange={handleRecurrenceChange}
+                onChange={setRecurrenceType}
                 sheetTitle={t("recurrence.label")}
               />
 
-              {/* Each opens the date sheet over the form rather than unfolding
-                  a month below the fold. */}
-              {isOneOff ? (
+              {/* Only a one-off has a date to pick: it is the lesson itself. A
+                  repeating class has no start-date row — where its series is
+                  anchored is internal, and the timetable's start is the date
+                  the user controls. Opens the date sheet over the form. */}
+              {schedule.dateField === "occurrenceDate" ? (
                 <DateField label={t("classEditor.date")} value={onceDate} onPress={() => setOpenPicker("date")} />
-              ) : (
-                <DateField
-                  label={t("classEditor.startDate")}
-                  value={shownStartsOn}
-                  onPress={() => setOpenPicker("startsOn")}
-                  helperText={recurrenceType === "biweekly" ? t("classEditor.biweeklyStartHint") : undefined}
-                />
-              )}
+              ) : null}
             </FormSection>
           ) : null}
 
@@ -590,10 +529,10 @@ function ClassEditorForm({
 
       {/* Over the whole editor and still inside its gesture root, which is
           what keeps the month pager's swipe working in here. */}
-      {dateSheet ? (
+      {dateSheetOpen ? (
         <DatePickerSheet
-          title={dateSheet === "date" ? t("classEditor.date") : t("classEditor.startDate")}
-          value={dateSheet === "date" ? onceDate : shownStartsOn}
+          title={t("classEditor.date")}
+          value={onceDate}
           onCancel={() => setOpenPicker(null)}
           onConfirm={handleDateConfirm}
         />

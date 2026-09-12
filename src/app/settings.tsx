@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FormSection } from "@/components/FormSection";
 import { ReminderField } from "@/components/ReminderField";
 import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
 import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
 import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
@@ -131,20 +132,19 @@ export default function SettingsScreen() {
   }
 
   return (
-    <ScreenContainer>
-      <View style={styles.headerRow}>
-        <Text style={[typography.title, styles.title, { color: colors.textPrimary }]}>{t("settings.title")}</Text>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel={t("common.close")}
-          hitSlop={8}
-          pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
-          style={({ pressed }) => [styles.closeTarget, { opacity: pressed ? 0.5 : 1 }]}
-        >
-          <Text style={[typography.label, { color: colors.accentStrong }]}>{t("common.close")}</Text>
-        </Pressable>
-      </View>
+    // A pushed screen, so the same header every other pushed screen has: Back
+    // at the leading edge. It used to be a Close at the trailing edge, which
+    // put the way out on the opposite side from the Timetables screen one tap
+    // further in.
+    <ScreenContainer
+      header={
+        <ScreenHeader
+          title={t("settings.title")}
+          onBack={() => router.back()}
+          accessibilityBackLabel={t("common.back")}
+        />
+      }
+    >
 
       {/* A failed write is the one thing on this screen that has to be said out
           loud, and it belongs at the top rather than beside whichever control
@@ -281,21 +281,6 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  title: {
-    flexShrink: 1,
-  },
-  closeTarget: {
-    minWidth: 44,
-    height: 44,
-    alignItems: "flex-end",
-    justifyContent: "center",
-  },
   notice: {
     width: "100%",
   },

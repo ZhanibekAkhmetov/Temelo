@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 
@@ -8,7 +8,9 @@ import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { FormSection } from "@/components/FormSection";
 import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
+import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
+import { nextDefaultTimetableName } from "@/domain/timetableName";
 import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
 import { useI18n } from "@/i18n/I18nProvider";
 import { WEEKEND_MODE_LABEL_KEY } from "@/i18n/weekendMode";
@@ -36,14 +38,41 @@ import { useTheme } from "@/theme/useTheme";
 export default function NewTimetableScreen() {
   const { colors, spacing, typography } = useTheme();
   const { t } = useI18n();
-  const { state } = useAppState();
+  const { state, readArchivedTimetables } = useAppState();
 
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState(defaultTimetableAnchorDate);
   const [startSheetOpen, setStartSheetOpen] = useState(false);
   const [weekendMode, setWeekendMode] = useState<WeekendMode>(state.settings.weekendMode);
+  /** Every archived name, so the placeholder can say which number is free. */
+  const [archivedNames, setArchivedNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void readArchivedTimetables().then((list) => {
+      if (!cancelled) setArchivedNames(list.map((entry) => entry.name));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [readArchivedTimetables]);
 
   const current = state.timetable;
+
+  /*
+   * The name a blank field would actually produce — "Timetable1",
+   * "Расписание1" — rather than the bare word, which was a number out from
+   * what the user then saw on the next screen.
+   *
+   * A preview only: the real name is chosen inside the transaction that
+   * creates the timetable, against the names that exist at that moment. The
+   * current timetable is archived rather than removed by this flow, so its
+   * name is taken too.
+   */
+  const namePlaceholder = nextDefaultTimetableName(t("timetables.defaultName"), [
+    ...(current ? [current.name] : []),
+    ...archivedNames,
+  ]);
 
   function handleContinue() {
     // Blank travels as blank. The name is only generated when the timetable
@@ -56,9 +85,18 @@ export default function NewTimetableScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScreenContainer>
-        <Text style={[typography.title, { color: colors.textPrimary }]}>{t("timetables.createTitle")}</Text>
-        <Text style={[typography.body, { color: colors.textSecondary, marginTop: spacing.xs }]}>
+      {/* Back at the top-left like every pushed screen. On first launch there
+          is nothing to go back to, and the header keeps the slot empty. */}
+      <ScreenContainer
+        header={
+          <ScreenHeader
+            title={t("timetables.createTitle")}
+            onBack={router.canGoBack() ? () => router.back() : undefined}
+            accessibilityBackLabel={t("common.back")}
+          />
+        }
+      >
+        <Text style={[typography.body, { color: colors.textSecondary }]}>
           {t("timetables.createSubtitle")}
         </Text>
 
@@ -75,13 +113,13 @@ export default function NewTimetableScreen() {
         ) : null}
 
         <FormSection>
-          {/* Optional. The placeholder is the word a blank name becomes, so
+          {/* Optional. The placeholder is the name a blank field becomes, so
               leaving it empty is visibly a choice rather than an omission. */}
           <TextField
             label={t("onboarding.timetableName")}
             value={name}
             onChangeText={setName}
-            placeholder={t("timetables.defaultName")}
+            placeholder={namePlaceholder}
             helperText={t("timetables.nameOptionalHint")}
             autoFocus
             maxLength={MAX_TIMETABLE_NAME_LENGTH}
@@ -105,7 +143,7 @@ export default function NewTimetableScreen() {
           ))}
         </FormSection>
 
-        <OnboardingNav onBack={router.canGoBack() ? () => router.back() : undefined} onContinue={handleContinue} />
+        <OnboardingNav onContinue={handleContinue} />
       </ScreenContainer>
 
       {startSheetOpen ? (

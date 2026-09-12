@@ -24,6 +24,8 @@ import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/doma
 import { findOccurrenceConflict, findPlacementConflict } from "@/domain/conflict";
 import {
   anchorOnOrBefore,
+  defaultSeriesEndDate,
+  defaultSeriesStartDate,
   hasOccurrenceBetween,
   seriesLowerBound,
   seriesRangeMovedTo,
@@ -212,6 +214,77 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
   };
 
   return { draft, preview };
+}
+
+/** What the class editor reads of the stored series it was opened on. */
+export type EditorSeriesBase = Pick<Placement, "recurrenceType" | "startsOn" | "endsOn" | "startsWithTimetable">;
+
+export interface EditorScheduleInput {
+  /** The repetition rule as currently chosen in the editor. */
+  recurrenceType: RecurrenceType;
+  /** Date of the tapped cell, in the week that was on screen. */
+  tappedDate: string;
+  /** A one-off's date as currently picked in the editor. */
+  onceDate: string;
+  timetableStart: string;
+  /** The stored series being edited; omitted for a new class. */
+  base?: EditorSeriesBase;
+}
+
+export interface EditorSchedule {
+  /**
+   * The one date the editor lets the user pick: a one-off's own date, which
+   * is its actual occurrence. A repeating class has none — its `startsOn`,
+   * parity anchor and split boundary are internal recurrence structure, and
+   * the timetable's own start is the date the user controls.
+   */
+  dateField: "occurrenceDate" | null;
+  startsOn: string;
+  endsOn: string;
+  /** Undefined when the stored series keeps whatever it already was. */
+  startsWithTimetable: boolean | undefined;
+}
+
+/**
+ * The series fields the class editor saves, and the date it offers.
+ *
+ * A stored repeating series keeps its anchor, its end and its
+ * `startsWithTimetable` untouched: nothing in the editor can move them, so an
+ * edit to a name or a room never reads as a change to the series' structure.
+ * A new class anchors by its rule — an every-two-weeks one on the tapped week,
+ * which is what chooses its half of the fortnight — and a one-off turned into
+ * a series anchors on the tapped week too. Both start with the timetable, and
+ * both are open-ended: a one-off's date is its end, and that end must not
+ * survive its promotion to a series.
+ */
+export function classEditorSchedule(input: EditorScheduleInput): EditorSchedule {
+  const { recurrenceType, tappedDate, onceDate, timetableStart, base } = input;
+  const baseRepeats = base !== undefined && base.recurrenceType !== "once";
+
+  if (recurrenceType === "once") {
+    return {
+      dateField: "occurrenceDate",
+      startsOn: onceDate,
+      endsOn: onceDate,
+      startsWithTimetable: baseRepeats ? undefined : true,
+    };
+  }
+  if (baseRepeats) {
+    return { dateField: null, startsOn: base.startsOn, endsOn: base.endsOn, startsWithTimetable: undefined };
+  }
+  return {
+    dateField: null,
+    startsOn: base ? tappedDate : defaultSeriesStartDate(recurrenceType, tappedDate, timetableStart),
+    /*
+     * Open-ended, and this is the whole point of not carrying `base.endsOn`
+     * through: the only base that reaches here is a one-off, whose end is its
+     * own single date. Kept, it became the new series' end — so a class turned
+     * from "once, 16 Oct" into "every week" stopped on 16 Oct instead of
+     * repeating. A repeating series ends only where a split put an end.
+     */
+    endsOn: defaultSeriesEndDate(),
+    startsWithTimetable: true,
+  };
 }
 
 export type EditCheck = { ok: true } | { ok: false; error: DomainError };

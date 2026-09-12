@@ -8,7 +8,7 @@ interface ScreenHeaderProps {
   onBack?: () => void;
   accessibilityBackLabel: string;
   /** A trailing action — "Save", "Done". At most one. */
-  action?: { label: string; onPress: () => void; emphasis?: boolean };
+  action?: { label: string; onPress: () => void; emphasis?: boolean; disabled?: boolean };
 }
 
 /**
@@ -25,6 +25,12 @@ interface ScreenHeaderProps {
  * press retention — the same rule the class editor's header follows, for the
  * same reason: a header press that is missed is a press the user has to think
  * about.
+ *
+ * The one placement rule for every pushed screen: Back at the leading edge,
+ * the action at the trailing edge, and neither ever moves with the screen's
+ * state. A control that is absent leaves its empty 44-point slot behind, so
+ * the title and the other control stay exactly where they were. (Modal
+ * editors and sheets follow the same sides with Cancel and Save/Done.)
  */
 export function ScreenHeader({ title, onBack, accessibilityBackLabel, action }: ScreenHeaderProps) {
   const { colors, spacing, typography, borderWidth } = useTheme();
@@ -63,11 +69,17 @@ export function ScreenHeader({ title, onBack, accessibilityBackLabel, action }: 
       {action ? (
         <Pressable
           onPress={action.onPress}
+          disabled={action.disabled}
           accessibilityRole="button"
           accessibilityLabel={action.label}
+          accessibilityState={{ disabled: Boolean(action.disabled) }}
           hitSlop={8}
           pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
-          style={({ pressed }) => [styles.target, styles.actionTarget, { opacity: pressed ? 0.5 : 1 }]}
+          style={({ pressed }) => [
+            styles.target,
+            styles.actionTarget,
+            { opacity: action.disabled ? 0.4 : pressed ? 0.5 : 1 },
+          ]}
         >
           <Text
             style={[

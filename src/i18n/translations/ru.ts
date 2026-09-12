@@ -81,8 +81,6 @@ export const ru: Translations = {
   "classEditor.slotSpan": "{weekday} · занятия {from}–{to} · {start}–{end}",
   "classEditor.recurrence": "Повтор",
   "classEditor.date": "Дата",
-  "classEditor.startDate": "Начало",
-  "classEditor.biweeklyStartHint": "Задаёт, на какой из чередующихся недель проходит занятие",
   "classEditor.deleteClass": "Удалить занятие",
   "classEditor.deleteTitle": "Удалить занятие?",
   "classEditor.deleteMessage": "Убрать «{name}» из расписания. Это действие нельзя отменить.",

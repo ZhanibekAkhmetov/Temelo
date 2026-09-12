@@ -97,8 +97,9 @@ Everything else is optional at creation time and editable afterward:
 - Lecturer or teacher.
 - Notes.
 - Recurrence settings (if plain weekly is not what's wanted).
-- The start date, which for an every-two-weeks class is also which half of the
-  fortnight it falls on.
+- For a one-time class, its date. A repeating class has no start date of its
+  own to edit: it follows the timetable's start, and an every-two-weeks class
+  falls on the half of the fortnight of the week it was added in.
 - Visual appearance (e.g. color).
 
 A **course** (e.g. "Mathematics") is a reusable entity, independent of any

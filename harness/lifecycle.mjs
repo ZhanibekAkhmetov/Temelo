@@ -25,7 +25,12 @@ import { join } from "node:path";
 import { weekdayOfIsoDate } from "@/domain/calendar";
 import { addDaysIso } from "@/domain/date";
 import { createId } from "@/domain/id";
-import { applyClassEditScope, createPendingClassEdit } from "@/domain/classEdit";
+import {
+  applyClassEditScope,
+  classEditorSchedule,
+  createPendingClassEdit,
+  onlyThisBlockedReason,
+} from "@/domain/classEdit";
 import { findPlacementConflict } from "@/domain/conflict";
 import { resolveOccurrences } from "@/domain/occurrence";
 import {
@@ -1940,17 +1945,21 @@ function emptyAppState() {
 }
 
 async function testOptionalNames() {
-  section("Optional names: blank becomes a localized default, numbered only when taken");
+  section("Optional names: blank becomes a localized default, numbered from 1");
 
   // A: the rule itself, in all three languages.
-  equal("A. nothing taken: the plain word", nextDefaultTimetableName("Timetable", []), "Timetable");
-  equal("A. Russian", nextDefaultTimetableName("Расписание", []), "Расписание");
-  equal("A. German", nextDefaultTimetableName("Stundenplan", []), "Stundenplan");
-  equal("A. taken: the next number", nextDefaultTimetableName("Расписание", ["Расписание"]), "Расписание 2");
-  equal("A. ...and the next", nextDefaultTimetableName("Stundenplan", ["Stundenplan", "Stundenplan 2"]), "Stundenplan 3");
-  equal("A. the lowest free number, not one past the highest", nextDefaultTimetableName("Timetable", ["Timetable", "Timetable 3"]), "Timetable 2");
-  equal("A. case and spaces do not make a name free", nextDefaultTimetableName("Timetable", [" timetable "]), "Timetable 2");
-  equal("A. another language's names do not collide", nextDefaultTimetableName("Расписание", ["Timetable", "Timetable 2"]), "Расписание");
+  equal("A. nothing taken: number 1", nextDefaultTimetableName("Timetable", []), "Timetable1");
+  equal("A. Russian", nextDefaultTimetableName("Расписание", []), "Расписание1");
+  equal("A. German", nextDefaultTimetableName("Stundenplan", []), "Stundenplan1");
+  equal("A. taken: the next number", nextDefaultTimetableName("Расписание", ["Расписание1"]), "Расписание2");
+  equal("A. ...and the next", nextDefaultTimetableName("Stundenplan", ["Stundenplan1", "Stundenplan2"]), "Stundenplan3");
+  equal("A. the lowest free number, not one past the highest", nextDefaultTimetableName("Timetable", ["Timetable1", "Timetable3"]), "Timetable2");
+  equal("A. a freed 1 is the lowest free number", nextDefaultTimetableName("Timetable", ["Timetable2", "Timetable3"]), "Timetable1");
+  equal("A. case and spaces do not make a name free", nextDefaultTimetableName("Timetable", [" timetable1 "]), "Timetable2");
+  equal("A. Timetable10 does not take Timetable1", nextDefaultTimetableName("Timetable", ["Timetable10"]), "Timetable1");
+  equal("A. older un-numbered and spaced names take no number", nextDefaultTimetableName("Timetable", ["Timetable", "Timetable 2"]), "Timetable1");
+  equal("A. another language's names do not collide", nextDefaultTimetableName("Расписание", ["Timetable1", "Timetable2"]), "Расписание1");
+  equal("A. a blank stem has nothing to number", nextDefaultTimetableName("  ", []), "");
 
   // B: through the real creation path, which is where the name is chosen.
   const path = nextPath();
@@ -1968,18 +1977,27 @@ async function testOptionalNames() {
     created.push(result.state.timetable.name);
     state = result.state;
   }
-  equal("B. three blank creations are numbered in turn", created.join("|"), "Timetable|Timetable 2|Timetable 3");
-  equal("B. ...counting the archives, not just the active one", (await listArchivedTimetables(db)).map((entry) => entry.name).sort().join("|"), "Timetable|Timetable 2");
+  equal("B. three blank creations are numbered in turn, from 1", created.join("|"), "Timetable1|Timetable2|Timetable3");
+  equal("B. ...counting the archives, not just the active one", (await listArchivedTimetables(db)).map((entry) => entry.name).sort().join("|"), "Timetable1|Timetable2");
 
   const russian = await createTimetable(db, state, { ...newTimetableInput(""), defaultName: "Расписание" });
-  equal("B. a Russian user's blank timetable", russian.state.timetable.name, "Расписание");
+  equal("B. a Russian user's blank timetable", russian.state.timetable.name, "Расписание1");
   state = russian.state;
 
-  const second = (await listArchivedTimetables(db)).find((entry) => entry.name === "Timetable 2");
+  const german = nextDefaultTimetableName("Stundenplan", [state.timetable.name, ...(await listArchivedTimetables(db)).map((entry) => entry.name)]);
+  equal("B. a German user's would be Stundenplan1", german, "Stundenplan1");
+
+  const second = (await listArchivedTimetables(db)).find((entry) => entry.name === "Timetable2");
   await deleteArchivedTimetable(db, second.id);
   const reused = await createTimetable(db, state, newTimetableInput(""));
-  equal("B. a number freed by deleting its timetable is used again", reused.state.timetable.name, "Timetable 2");
+  equal("B. a number freed by deleting its timetable is used again", reused.state.timetable.name, "Timetable2");
   state = reused.state;
+
+  const firstArchive = (await listArchivedTimetables(db)).find((entry) => entry.name === "Timetable1");
+  await deleteArchivedTimetable(db, firstArchive.id);
+  const lowest = await createTimetable(db, state, newTimetableInput(""));
+  equal("B. with 2 and 3 still taken, a freed 1 is the one used", lowest.state.timetable.name, "Timetable1");
+  state = lowest.state;
 
   // C: what the user types is theirs, duplicates included.
   const first = await createTimetable(db, state, newTimetableInput("SoSe26"));
@@ -1996,9 +2014,266 @@ async function testOptionalNames() {
   db.closeSync();
   const relaunched = await reopen(path);
   equal("the names survive a cold reopen", relaunched.state.timetable.name, "Timetable");
-  // Seven creations, one deletion: six archived, one active.
+  // Nine creations, two deletions: six archived, one active.
   equal("...archives included", (await listArchivedTimetables(relaunched.db)).length, 6);
   relaunched.db.closeSync();
+}
+
+/* ------------------------ Q: the class editor offers no series start date */
+
+/**
+ * What the class editor would hand on for one occurrence, built the way the
+ * editor builds it — `classEditorSchedule` for every date, and only the name,
+ * the rule or a one-off's date changed.
+ */
+function editorEdit(state, placementId, occurrenceDate, edits = {}) {
+  const timetableStart = state.timetable?.anchorDate ?? TERM.start;
+  const [occurrence] = resolveOccurrences({ ...state, timetableStart }, [occurrenceDate]).filter(
+    (candidate) => candidate.basePlacement.id === placementId,
+  );
+  if (!occurrence) throw new Error(`no occurrence of ${placementId} on ${occurrenceDate}`);
+
+  const base = occurrence.basePlacement;
+  const recurrenceType = edits.recurrenceType ?? base.recurrenceType;
+  const schedule = classEditorSchedule({
+    recurrenceType,
+    tappedDate: occurrence.date,
+    onceDate: edits.onceDate ?? (base.recurrenceType === "once" ? base.startsOn : occurrence.date),
+    timetableStart,
+    base,
+  });
+  const { draft } = createPendingClassEdit({
+    occurrence,
+    source: "editor",
+    effectiveDate: occurrence.date,
+    weekday: occurrence.weekday,
+    timeSlotId: occurrence.placement.timeSlotId,
+    slotSpan: occurrence.placement.slotSpan,
+    name: edits.name ?? occurrence.course.name,
+    room: occurrence.course.room,
+    teacher: occurrence.course.teacher,
+    notes: occurrence.course.notes,
+    appearanceId: occurrence.course.appearanceId,
+    recurrenceType,
+    startsOn: schedule.startsOn,
+    endsOn: schedule.endsOn,
+    startsWithTimetable: schedule.startsWithTimetable,
+    reminderMinutes: occurrence.placement.reminderMinutes,
+  });
+  return { schedule, draft };
+}
+
+/**
+ * Beta 1 took the "Start date" row off repeating classes: it asked "this
+ * occurrence / this and future / all" about a structural boundary, and it was
+ * how a series' anchor could be dragged around the first timetable week. The
+ * anchors themselves — `startsOn`, `startsWithTimetable`, parity, split
+ * boundaries — are untouched, and this is what proves it.
+ */
+async function testClassEditorSchedule() {
+  section("Q. The class editor offers a one-off's date, never a repeating class's start");
+
+  const path = await buildV5Database();
+  const { db } = await open(path);
+  const state = await loadTimetable(db);
+  db.closeSync();
+
+  const timetableStart = state.timetable?.anchorDate ?? TERM.start;
+  const editable = {
+    timeSlots: state.timeSlots,
+    courses: state.courses,
+    placements: state.placements,
+    exceptions: state.exceptions,
+    timetableStart,
+  };
+  const source = (next) => ({ ...state, ...next, timetableStart });
+
+  // Existing repeating series: no date field, and every structural field passes through as stored.
+  for (const [id, date] of [
+    ["p-maths", "2026-09-14"],
+    ["p-history", "2026-09-29"],
+    ["p-physics-old", "2026-10-01"],
+    ["p-physics-new", "2026-10-29"],
+  ]) {
+    const stored = placementById(state, id);
+    const { schedule, draft } = editorEdit(state, id, date, { name: "Renamed" });
+    equal(`${id}: the editor offers no start-date field`, schedule.dateField, null);
+    equal(`${id}: ...the draft keeps the stored anchor`, draft.startsOn, stored.startsOn);
+    equal(`${id}: ...the stored end`, draft.endsOn, stored.endsOn);
+    equal(`${id}: ...and startsWithTimetable`, draft.startsWithTimetable, stored.startsWithTimetable);
+    equal(`${id}: a rename is not a recurrence change`, draft.changed.recurrence, false);
+    equal(`${id}: ...so "only this occurrence" stays available`, onlyThisBlockedReason(draft), null);
+  }
+  const toBiweekly = editorEdit(state, "p-maths", "2026-09-14", { recurrenceType: "biweekly" });
+  equal("changing an existing rule still offers no start-date field", toBiweekly.schedule.dateField, null);
+  equal("...and keeps the stored anchor", toBiweekly.draft.startsOn, placementById(state, "p-maths").startsOn);
+
+  // New repeating classes: anchored internally, parity from the tapped week.
+  const newWeekly = classEditorSchedule({ recurrenceType: "weekly", tappedDate: "2026-10-07", onceDate: "2026-10-07", timetableStart });
+  equal("a new weekly class: no start-date field", newWeekly.dateField, null);
+  equal("...it starts with the timetable", newWeekly.startsWithTimetable, true);
+  equal("...and is open-ended", newWeekly.endsOn, OPEN_ENDED_DATE);
+  const newBiweekly = classEditorSchedule({ recurrenceType: "biweekly", tappedDate: "2026-10-07", onceDate: "2026-10-07", timetableStart });
+  equal("a new every-two-weeks class: no start-date field", newBiweekly.dateField, null);
+  equal("...its parity is anchored on the tapped week", newBiweekly.startsOn, "2026-10-07");
+  equal("...and it starts with the timetable", newBiweekly.startsWithTimetable, true);
+
+  // One-offs: the date is the lesson, and it stays editable.
+  const newOnce = classEditorSchedule({ recurrenceType: "once", tappedDate: "2026-10-07", onceDate: "2026-10-09", timetableStart });
+  equal("a new one-off: the date field is offered", newOnce.dateField, "occurrenceDate");
+  equal("...and the picked date is what is saved", `${newOnce.startsOn}..${newOnce.endsOn}`, "2026-10-09..2026-10-09");
+  const trip = editorEdit(state, "p-trip", "2026-10-16", { onceDate: "2026-10-23" });
+  equal("an existing one-off: the date field is offered", trip.schedule.dateField, "occurrenceDate");
+  equal("...and a new date is what is saved", `${trip.schedule.startsOn}..${trip.schedule.endsOn}`, "2026-10-23..2026-10-23");
+  const movedTrip = { ...placementById(state, "p-trip"), startsOn: trip.schedule.startsOn, endsOn: trip.schedule.endsOn };
+  const withMovedTrip = { placements: state.placements.map((p) => (p.id === "p-trip" ? movedTrip : p)) };
+  equal(
+    "...and the one-off is drawn on its new date only",
+    drawnDates(source(withMovedTrip), "p-trip", "2026-10-01", "2026-10-31").join(","),
+    "2026-10-23",
+  );
+  equal(
+    "a series turned into a one-off offers the date field",
+    editorEdit(state, "p-history", "2026-09-29", { recurrenceType: "once" }).schedule.dateField,
+    "occurrenceDate",
+  );
+
+  // Biweekly parity: an editor edit at either whole-series scope moves no week.
+  const historyBefore = drawnDates(source({}), "p-history", "2026-08-01", "2026-12-31");
+  const rename = () => editorEdit(state, "p-history", "2026-09-29", { name: "World history" }).draft;
+  const all = applyClassEditScope(editable, rename(), "all", NOW);
+  check("an editor rename of the alternating class applies to all", all.ok, JSON.stringify(all.error ?? null));
+  equal("...its anchor is unchanged", placementById(all.next, "p-history").startsOn, placementById(state, "p-history").startsOn);
+  equal(
+    "...and it meets on exactly the same weeks",
+    drawnDates(source(all.next), "p-history", "2026-08-01", "2026-12-31").join(","),
+    historyBefore.join(","),
+  );
+  const split = applyClassEditScope(editable, rename(), "thisAndFuture", NOW);
+  check("an editor rename of the alternating class splits", split.ok, JSON.stringify(split.error ?? null));
+  const laterHalf = split.next.placements.find((p) => !p.deletedAt && !state.placements.some((q) => q.id === p.id));
+  equal("...the later half begins on the split date", `${laterHalf.startsOn}:${laterHalf.startsWithTimetable}`, "2026-09-29:false");
+  equal(
+    "...and the two halves together meet on exactly the same weeks",
+    [
+      ...drawnDates(source(split.next), "p-history", "2026-08-01", "2026-12-31"),
+      ...drawnDates(source(split.next), laterHalf.id, "2026-08-01", "2026-12-31"),
+    ].sort().join(","),
+    historyBefore.join(","),
+  );
+
+  // Split boundaries: editing either half from the editor leaves the cut where it was.
+  const physicsNew = applyClassEditScope(editable, editorEdit(state, "p-physics-new", "2026-10-29", { name: "Physics II" }).draft, "all", NOW);
+  check("an editor rename of a split's later half applies", physicsNew.ok, JSON.stringify(physicsNew.error ?? null));
+  const storedNew = placementById(state, "p-physics-new");
+  const editedNew = placementById(physicsNew.next, "p-physics-new");
+  equal("...it keeps its own start", `${editedNew.startsOn}:${editedNew.startsWithTimetable}`, `${storedNew.startsOn}:false`);
+  equal(
+    "...and still first meets on its split date",
+    drawnDates(source(physicsNew.next), "p-physics-new", "2025-09-01", "2026-12-31")[0],
+    "2026-10-22",
+  );
+  const physicsOld = applyClassEditScope(editable, editorEdit(state, "p-physics-old", "2026-10-01", { name: "Physics I" }).draft, "all", NOW);
+  check("an editor rename of a split's earlier half applies", physicsOld.ok, JSON.stringify(physicsOld.error ?? null));
+  equal("...it keeps its real end", placementById(physicsOld.next, "p-physics-old").endsOn, placementById(state, "p-physics-old").endsOn);
+  const oldDates = drawnDates(source(physicsOld.next), "p-physics-old", "2026-08-01", "2026-12-31");
+  equal("...and its last lesson is still the one before the split", oldDates[oldDates.length - 1], "2026-10-15");
+}
+
+/* ----------------------- R: a one-time class promoted to a repeating one */
+
+/** The placement as the editor would save it under a new repetition rule. */
+function convertedPlacement(state, placementId, occurrenceDate, recurrenceType) {
+  const { schedule } = editorEdit(state, placementId, occurrenceDate, { recurrenceType });
+  const stored = placementById(state, placementId);
+  return {
+    ...stored,
+    // The editor saves the tapped cell's weekday, which for a one-off being
+    // promoted is the day its single lesson fell on.
+    weekday: weekdayOfIsoDate(recurrenceType === "once" ? schedule.startsOn : occurrenceDate),
+    recurrenceType,
+    startsOn: schedule.startsOn,
+    endsOn: schedule.endsOn,
+    startsWithTimetable: schedule.startsWithTimetable ?? stored.startsWithTimetable,
+    updatedAt: NOW,
+  };
+}
+
+/**
+ * The bug this suite exists for: a one-off's date is also its end, and
+ * promoting it to a repeating class used to carry that end along — so "every
+ * week" from 16 Oct met once, on 16 Oct, and never again. The end must not
+ * survive the transition; the anchor must, because it is the fortnight an
+ * every-two-weeks class falls on.
+ */
+async function testOnceToRepeating() {
+  section("R. A one-time class turned into a repeating one repeats, open-ended");
+
+  const path = await buildV5Database();
+  const { db } = await open(path);
+  const state = await loadTimetable(db);
+  const at = (next) => ({ ...state, ...next, timetableStart: state.timetable?.anchorDate ?? TERM.start });
+  const withTrip = (placement) => at({ placements: state.placements.map((p) => (p.id === "p-trip" ? placement : p)) });
+  const TRIP_DATE = "2026-10-16";
+  equal("the fixture's one-off ends on its own day", placementById(state, "p-trip").endsOn, TRIP_DATE);
+
+  // once → weekly.
+  const weekly = convertedPlacement(state, "p-trip", TRIP_DATE, "weekly");
+  equal("once → weekly: the old one-time end is gone", weekly.endsOn, OPEN_ENDED_DATE);
+  equal("...anchored on the occurrence that was tapped", weekly.startsOn, TRIP_DATE);
+  equal("...and it starts with the timetable", weekly.startsWithTimetable, true);
+  const weeklyDates = drawnDates(withTrip(weekly), "p-trip", "2026-09-01", "2026-12-31");
+  const afterOldEnd = weeklyDates.filter((date) => date > TRIP_DATE);
+  check("...it goes on meeting after its old one-time date", afterOldEnd.length >= 8, weeklyDates.join(","));
+  check("...every week, on that weekday", weeklyDates.every((date) => weekdayOfIsoDate(date) === "friday"), weeklyDates.join(","));
+  check(
+    "...with no gaps",
+    weeklyDates.every((date, index) => index === 0 || date === addDaysIso(weeklyDates[index - 1], 7)),
+    weeklyDates.join(","),
+  );
+  check("...including the week straight after it", afterOldEnd[0] === "2026-10-23", afterOldEnd.join(","));
+
+  // once → biweekly, on the tapped occurrence's fortnight.
+  const biweekly = convertedPlacement(state, "p-trip", TRIP_DATE, "biweekly");
+  equal("once → every two weeks: the old one-time end is gone", biweekly.endsOn, OPEN_ENDED_DATE);
+  equal("...anchored on the occurrence that was tapped", biweekly.startsOn, TRIP_DATE);
+  const biweeklyDates = drawnDates(withTrip(biweekly), "p-trip", "2026-09-01", "2026-12-31");
+  check("...it goes on meeting after its old one-time date", biweeklyDates.filter((date) => date > TRIP_DATE).length >= 4, biweeklyDates.join(","));
+  check(
+    "...always on the anchor's fortnight",
+    biweeklyDates.length > 0 && biweeklyDates.every((date) => (Date.parse(date) - Date.parse(TRIP_DATE)) / 86400000 % 14 === 0),
+    biweeklyDates.join(","),
+  );
+  check("...so it meets on 30 Oct and not on 23 Oct", biweeklyDates.includes("2026-10-30") && !biweeklyDates.includes("2026-10-23"), biweeklyDates.join(","));
+
+  // The conversion survives being written and read back.
+  const converted = { ...state, placements: state.placements.map((p) => (p.id === "p-trip" ? weekly : p)) };
+  await saveTimetable(db, converted, state);
+  db.closeSync();
+  const relaunched = await reopen(path);
+  const reloaded = placementById(relaunched.state, "p-trip");
+  equal("a cold reopen still has it repeating", reloaded.recurrenceType, "weekly");
+  equal("...and still open-ended", reloaded.endsOn, OPEN_ENDED_DATE);
+  equal("...on the same anchor", reloaded.startsOn, TRIP_DATE);
+  const reloadedDates = drawnDates(
+    { ...relaunched.state, timetableStart: relaunched.state.timetable?.anchorDate ?? TERM.start },
+    "p-trip",
+    "2026-09-01",
+    "2026-12-31",
+  );
+  equal("...and it is drawn on exactly the same weeks", reloadedDates.join(","), weeklyDates.join(","));
+  relaunched.db.closeSync();
+
+  // The other direction is untouched.
+  const backToOnce = convertedPlacement(relaunched.state, "p-trip", TRIP_DATE, "once");
+  equal("weekly → once ends on its own date again", `${backToOnce.startsOn}..${backToOnce.endsOn}`, `${TRIP_DATE}..${TRIP_DATE}`);
+  const historyOnce = convertedPlacement(state, "p-history", "2026-09-29", "once");
+  equal("an alternating class turned into a one-off keeps the tapped date", `${historyOnce.startsOn}..${historyOnce.endsOn}`, "2026-09-29..2026-09-29");
+  equal(
+    "...and meets exactly once",
+    drawnDates(at({ placements: state.placements.map((p) => (p.id === "p-history" ? historyOnce : p)) }), "p-history", "2026-08-01", "2026-12-31").join(","),
+    "2026-09-29",
+  );
 }
 
 /* -------------------------------------------------------------------- entry */
@@ -2018,6 +2293,8 @@ export async function runLifecycleHarness() {
     await testNavigationGate();
     await testTimetableStartDate();
     await testTimetableStartExtendsPattern();
+    await testClassEditorSchedule();
+    await testOnceToRepeating();
     testNames();
     await testOptionalNames();
   } finally {

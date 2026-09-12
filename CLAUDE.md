@@ -61,7 +61,10 @@ development build, not Expo Go.
   rewrites no placement. Moving it earlier extends every series that starts
   with the timetable into the new weeks. The calendar stays navigable before it.
 - Naming a timetable is optional. A blank name becomes a localized default
-  ("Timetable", "Timetable 2", …), chosen only when creation commits.
+  ("Timetable1", "Timetable2", … — the lowest free number), chosen only when
+  creation commits.
+- A repeating class has no user-facing start date; only a one-off's date is
+  editable. `startsOn`, parity and split anchors are internal structure.
 - Lifecycle confirmations (archive, restore, delete, replace) use
   `ConfirmDialog`, never the platform `Alert`.
 - There is no automatic archiving and no end date; archiving is always the
