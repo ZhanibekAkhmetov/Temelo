@@ -278,7 +278,29 @@ export const en = {
   "transfer.importAsArchive": "It will be added to your archived timetables. Your current timetable stays as it is.",
   "transfer.importAsActive": "It will become your timetable.",
   "transfer.importedNotice": "Imported. Restore it when you want to start using it.",
+  "transfer.importHint": "Choose a .temelo file, or share one to Temelo from another app.",
   "transfer.selectionActions": "Actions for {name}",
+
+  /*
+   * ------------------------------------------------------------------ share
+   *
+   * The receiver another app's share sheet opens.
+   *
+   * It is not the app — there is no navigation out of it — so every sentence
+   * here has to stand on its own. The person reading it may never have opened
+   * Temelo, and this may be the only screen of it they ever see, so the two
+   * "Open Temelo to…" lines say where the timetable went rather than assuming
+   * anybody knows what an archive is here for.
+   *
+   * Leaving is "Done" and "Close" from `common`: the same words the rest of the
+   * app already uses for the same act.
+   */
+  "share.readingTitle": "Reading the file…",
+  "share.importedTitle": "Timetable imported",
+  "share.importedBody": "“{name}” was added to Temelo.",
+  "share.importedAsActive": "Open Temelo to see it.",
+  "share.importedAsArchive": "Open Temelo to find it under your archived timetables.",
+  "share.failedTitle": "Couldn’t import this file",
 
   // ---------------------------------------------------------------- errors
   "errors.slotInUse": "This slot is already used by {name}.",

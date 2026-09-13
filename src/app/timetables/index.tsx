@@ -231,6 +231,12 @@ export default function TimetablesScreen() {
             onPress={importing.choose}
             disabled={busy}
           />
+          {/* One line, under the button it is about: a `.temelo` can also
+              arrive through another app's share sheet, and there is nowhere
+              else a user would ever find that out. Deliberately a sentence and
+              not a walkthrough — the whole instruction is "tap Share, pick
+              Temelo", and anybody who has shared a photo already knows it. */}
+          <Text style={[typography.caption, { color: colors.textMuted }]}>{t("transfer.importHint")}</Text>
           {transferError ? (
             <Text style={[typography.caption, { color: colors.danger }]}>
               {t(transferError.key, transferError.params)}

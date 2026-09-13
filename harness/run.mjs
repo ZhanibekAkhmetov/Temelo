@@ -29,9 +29,11 @@ const { runStorageHarness } = await load("storage.mjs");
 const { runLifecycleHarness } = await load("lifecycle.mjs");
 const { runTransferHarness } = await load("transfer.mjs");
 const { runNavigationHarness } = await load("navigation.mjs");
+const { runArchitectureHarness } = await load("architecture.mjs");
 
 runGeometryHarness();
 runNavigationHarness();
+runArchitectureHarness();
 await runStorageHarness();
 await runLifecycleHarness();
 await runTransferHarness();

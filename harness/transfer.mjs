@@ -20,6 +20,17 @@
  * suites below check both halves of that: a domain fingerprint that ignores ids
  * (the timetable must be identical) and an id census (no id may be shared).
  *
+ * The third question arrived with the share sheet: a `.temelo` can now reach the
+ * app without the user having browsed to it, from `features/timetables/
+ * ShareReceiver`. Suites Q to W cover that path — what `expo-sharing` hands the
+ * router and what the router is told to do with it, that a shared file is
+ * judged by exactly the gate a picked one is, that the payload is consumed once
+ * and before the user answers, and that cancelling or refusing leaves the
+ * database byte-for-byte identical. What they cannot cover is Android: which
+ * task the receiving activity lands in, and whether Done returns the user to
+ * the sending app. Nothing running in Node can, and the suites say so where it
+ * matters rather than implying otherwise by passing.
+ *
  * The fixture is deliberately the awkward one: a split series whose two halves
  * must stay two halves, a biweekly class whose parity must survive, a one-off, a
  * modified and a cancelled exception with colour and reminder overrides, a
@@ -35,9 +46,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createId } from "@/domain/id";
+import {
+  createAnsweredShares,
+  incomingShareLaunchPath,
+  isIncomingShareLink,
+  INCOMING_SHARE_HOST,
+} from "@/domain/incomingShare";
 import { OPEN_ENDED_DATE, occursOn } from "@/domain/recurrence";
 import { addDaysIso } from "@/domain/date";
+import { nextAvailableImportName } from "@/domain/timetableName";
 import { generateTimeSlots } from "@/domain/time";
+import { previewTimetableFile } from "@/features/timetables/importPipeline";
 import { openTemeloDatabase } from "@/storage/database";
 import {
   SNAPSHOT_FORMAT_VERSION,
@@ -64,8 +83,10 @@ import {
   createTimetable,
   importTimetableSnapshot,
   listArchivedTimetables,
+  listTimetableNames,
   readArchivedSnapshotRow,
   restoreArchivedTimetable,
+  MAX_TIMETABLE_NAME_LENGTH,
 } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
 import { DEFAULT_SETTINGS } from "@/state/defaults";
@@ -901,13 +922,25 @@ async function testImportBesideActive(text) {
   equal("there are now two archives", await countArchivedTimetables(db), 2);
   check("they were given different ids", first.timetableId !== second.timetableId, "both imports share an id");
 
+  /*
+   * The second copy is told apart by name, which is the only thing about it
+   * that differs. Two rows reading "Computer Science" are two timetables the
+   * user has no way to choose between, and the list is how they choose. See
+   * `nextAvailableImportName` — and note that nothing *inside* either copy
+   * moved: the rename is the local copy's, not the file's.
+   */
   const both = await listArchivedTimetables(db);
-  equal("both carry the same name, which is allowed", both[0].name, both[1].name);
+  const names = both.map((entry) => entry.name).sort();
+  equal("the two copies are named apart", names.join(" / "), "Computer Science / Computer Science (1)");
 
   const a = await readArchivedSnapshotRow(db, first.timetableId);
   const b = await readArchivedSnapshotRow(db, second.timetableId);
   equal("the first copy is domain-equivalent to the file", domainPrint(a.snapshot), domainPrint(file.file.timetable));
-  equal("the second copy is too", domainPrint(b.snapshot), domainPrint(file.file.timetable));
+  equal(
+    "the second copy is too, but for the name it was given",
+    domainPrint({ ...b.snapshot, timetable: { ...b.snapshot.timetable, name: a.snapshot.timetable.name } }),
+    domainPrint(file.file.timetable),
+  );
 
   const idsA = idsOf(a.snapshot);
   const idsB = idsOf(b.snapshot);
@@ -1390,7 +1423,7 @@ async function testLegacyArchiveExports() {
 /* --------------------------------------------------------- O: naming rules */
 
 async function testNames(text) {
-  section("O. Imported names are preserved, never made unique");
+  section("O. A user's own names are never rewritten; an import's are made distinct");
 
   const good = JSON.parse(text);
 
@@ -1403,11 +1436,26 @@ async function testNames(text) {
   const { db, state } = await buildFixture("Timetable1");
   equal("the device already has a timetable with a name", state.timetable.name, "Timetable1");
 
+  /*
+   * The rule this suite exists for: a file whose name is already on the device
+   * gets the lowest free `(n)`, and the timetable the user is actually using is
+   * never touched. Three imports of the same file are three rows a person can
+   * tell apart, which is the entire point — they were three rows all reading
+   * "Timetable1" before.
+   */
   const collision = await importTimetableSnapshot(db, state, named("Timetable1"), LATER);
   const listed = await listArchivedTimetables(db);
   equal("a friend's timetable with the same name imports", listed.length, 1);
-  equal("...under exactly that name", listed[0].name, "Timetable1");
-  equal("...and the device's own keeps it too", collision.state.timetable.name, "Timetable1");
+  equal("...under a distinguishable name", listed[0].name, "Timetable1 (1)");
+  equal("...and the device's own is left exactly as it was", collision.state.timetable.name, "Timetable1");
+
+  const again = await importTimetableSnapshot(db, collision.state, named("Timetable1"), LATER);
+  const twice = await readArchivedSnapshotRow(db, again.timetableId);
+  equal("the same file a third time takes the next free number", twice.snapshot.timetable.name, "Timetable1 (2)");
+
+  const free = await importTimetableSnapshot(db, collision.state, named("SoSe26"), LATER);
+  const untouched = await readArchivedSnapshotRow(db, free.timetableId);
+  equal("a name nothing else is using is imported exactly as it is", untouched.snapshot.timetable.name, "SoSe26");
 
   const longName = "A".repeat(200);
   const trimmed = await importTimetableSnapshot(db, collision.state, named(longName), LATER);
@@ -1423,6 +1471,403 @@ async function testNames(text) {
   equal("surrounding whitespace is trimmed, as it is everywhere else", tidy.snapshot.timetable.name, "Spaced");
 
   equal("the file itself was never mutated by any of that", JSON.stringify(JSON.parse(text)), JSON.stringify(good));
+
+  /*
+   * The other half of the rule, and the one that would be easy to lose: only an
+   * *import* is renamed. A name the user typed into the creation flow is theirs
+   * even when it collides, because two timetables called "SoSe26" is a choice
+   * the product allows and the app has no business overruling it.
+   */
+  const listedNow = await listTimetableNames(db, padded.state);
+  check(
+    "the name list the preview reads includes the active timetable and every archive",
+    listedNow.includes("Timetable1") && listedNow.includes("Timetable1 (1)") && listedNow.includes("SoSe26"),
+    JSON.stringify(listedNow),
+  );
+
+  const typed = await createTimetable(db, padded.state, newTimetableInput("SoSe26"));
+  equal("a name the user typed is never given a number, even when it collides", typed.state.timetable.name, "SoSe26");
+
+  db.closeSync();
+}
+
+/* ------------------------------------------------------------------- naming */
+
+function testNamingRule() {
+  section("P. The imported-name rule, on its own");
+
+  equal("a free name is returned unchanged", nextAvailableImportName("SoSe26", ["WiSe25"]), "SoSe26");
+  equal("a taken one gets (1)", nextAvailableImportName("SoSe26", ["SoSe26"]), "SoSe26 (1)");
+  equal(
+    "the lowest free number wins, not the next one up",
+    nextAvailableImportName("SoSe26", ["SoSe26", "SoSe26 (2)"]),
+    "SoSe26 (1)",
+  );
+  equal(
+    "a run of them keeps counting",
+    nextAvailableImportName("SoSe26", ["SoSe26", "SoSe26 (1)", "SoSe26 (2)"]),
+    "SoSe26 (3)",
+  );
+
+  // The same normalization `nextDefaultTimetableName` uses, so the two cannot
+  // disagree about what "already exists" means.
+  equal("case does not let a duplicate through", nextAvailableImportName("SoSe26", ["sose26"]), "SoSe26 (1)");
+  equal("nor does surrounding whitespace", nextAvailableImportName("  SoSe26 ", ["SoSe26"]), "SoSe26 (1)");
+
+  equal(
+    "a file already called (1) is not re-based onto a name the user never had",
+    nextAvailableImportName("SoSe26 (1)", ["SoSe26 (1)"]),
+    "SoSe26 (1) (1)",
+  );
+
+  // The base loses characters, not the suffix: a name four characters shorter
+  // is still recognisable, and one that collides again is not.
+  const long = "A".repeat(MAX_TIMETABLE_NAME_LENGTH);
+  const shortened = nextAvailableImportName(long, [long], MAX_TIMETABLE_NAME_LENGTH);
+  equal("a name at the limit still fits its suffix", [...shortened].length, MAX_TIMETABLE_NAME_LENGTH);
+  check("...and the suffix is what survived", shortened.endsWith(" (1)"), shortened);
+
+  equal("a blank name is left for the caller's own normalization", nextAvailableImportName("   ", ["x"]), "   ");
+}
+
+/* ---------------------------------------------------------- incoming share */
+
+/**
+ * The native side of an incoming share, faked.
+ *
+ * `expo-sharing` parks the whole `ACTION_SEND` intent in a static object and
+ * hands it out on request; this is that object, with a reader that can also be
+ * told to fail the way a revoked `content://` grant fails. Nothing about the
+ * app is simulated here — only Android.
+ */
+function createSharedIntent() {
+  let held = null;
+
+  return {
+    /** Another app shares a file into Temelo. */
+    send(uri, text) {
+      held = { uri, text };
+    },
+    /** `readSharedTimetableFile`. */
+    read() {
+      return held ? { uri: held.uri } : null;
+    },
+    /** `readTimetableFileAt`, with the same result shape. */
+    bytes(uri) {
+      if (!held || held.uri !== uri || held.text === null) {
+        return { ok: false, kind: "unreadable", detail: "the provider would not open it" };
+      }
+      return { ok: true, text: held.text, fileName: "shared.temelo" };
+    },
+    /** `clearSharedTimetableFile`. */
+    clear() {
+      held = null;
+    },
+    get pending() {
+      return held;
+    },
+  };
+}
+
+/**
+ * What `ShareReceiver` does between a payload arriving and a preview being on
+ * screen, without React.
+ *
+ * The component is a state machine over four calls, and this makes those four
+ * calls in the same order with the same values. It deliberately re-implements
+ * no *policy*: what a valid file is, what the copy will be called and where it
+ * will land are all decided by `previewTimetableFile`, which is the same
+ * function the component calls and the same one the Import button calls.
+ *
+ * What this can therefore prove is the sequencing — that the payload is
+ * consumed exactly once and before the user answers, that an already-answered
+ * file is dropped, that nothing reaches the database on the way to a preview —
+ * and that a refusal here is the same refusal the picker would produce.
+ *
+ * What it cannot prove is anything about Android: which task the receiving
+ * activity lands in, whether `Done` returns the user to the sending app, or
+ * whether the intent is redelivered at all. Nothing running in Node can. That
+ * half is the device checklist, not this file.
+ */
+async function receiveShare({ intent, answered, db, state }) {
+  const shared = intent.read();
+  if (!shared) return { kind: "idle" };
+  if (answered.has(shared.uri)) {
+    intent.clear();
+    return { kind: "idle" };
+  }
+
+  const file = intent.bytes(shared.uri);
+  // Consumed the moment the bytes are in hand, not when the user answers.
+  answered.add(shared.uri);
+  intent.clear();
+  if (!file.ok) return { kind: "failed", reason: file.kind };
+
+  const preview = previewTimetableFile({
+    text: file.text,
+    hasActive: state.timetable !== null,
+    existingNames: await listTimetableNames(db, state),
+  });
+  if (!preview.ok) return { kind: "failed", reason: preview.failure.kind };
+
+  return { kind: "preview", candidate: preview.candidate };
+}
+
+function testIncomingLinks() {
+  section("Q. What `expo-sharing` hands the router, and what the router is told to do with it");
+
+  equal("the host is the one the module hard-codes", INCOMING_SHARE_HOST, "expo-sharing");
+
+  check("the sentinel is recognised", isIncomingShareLink("temelo://expo-sharing"));
+  check("...with a trailing slash", isIncomingShareLink("temelo://expo-sharing/"));
+  check("...with a query string", isIncomingShareLink("temelo://expo-sharing?x=1"));
+  check("...with a fragment", isIncomingShareLink("temelo://expo-sharing#x"));
+  // A development build and a production build do not always agree about the
+  // scheme, and the host is the half `expo-sharing` actually controls.
+  check("...under the development build's scheme too", isIncomingShareLink("exp+temelo://expo-sharing"));
+  check("...and with the slashes it is built with", isIncomingShareLink("temelo:///expo-sharing"));
+
+  check("an ordinary route is not swallowed", !isIncomingShareLink("temelo://timetable"));
+  // The whole host, never a prefix: a real route whose name merely starts with
+  // the sentinel's must still reach the router.
+  check("nor is a route whose name starts with the same word", !isIncomingShareLink("temelo://expo-sharing-settings"));
+  check("nor is a web link", !isIncomingShareLink("https://example.com/expo-sharing"));
+
+  // Total: this runs inside `redirectSystemPath`, which must not throw, before
+  // the first frame — so every shape of nonsense is "no", not an exception.
+  for (const value of ["", "not a url", "://x", ":", "temelo", null, undefined, 42, {}, []]) {
+    check(`${JSON.stringify(value)} is not an incoming share`, !isIncomingShareLink(value));
+  }
+
+  equal("a cold share launches where any launch launches", incomingShareLaunchPath(true), "/");
+  // Expo Router's subscriber forwards a href only `if (href)`, so the empty
+  // string is how a redirect declines to navigate at all.
+  equal("a warm share navigates nowhere", incomingShareLaunchPath(false), "");
+}
+
+function testAnsweredShares() {
+  section("R. A file the user has answered is not offered again");
+
+  const answered = createAnsweredShares(3);
+  check("a file nobody has seen is not remembered", !answered.has("content://a"));
+
+  answered.add("content://a");
+  check("...and is once it has been answered", answered.has("content://a"));
+
+  answered.add("content://b");
+  answered.add("content://c");
+  answered.add("content://d");
+  check("the oldest is forgotten once the memory is full", !answered.has("content://a"));
+  check("...and the rest are kept", answered.has("content://b") && answered.has("content://d"));
+
+  // Re-answering moves a file to the newest end rather than leaving it next in
+  // line to be forgotten.
+  answered.add("content://b");
+  answered.add("content://e");
+  check("a file answered again is not the next one evicted", answered.has("content://b"));
+  check("...the one that had not been touched is", !answered.has("content://c"));
+
+  answered.clear();
+  check("clearing forgets everything", !answered.has("content://b"));
+}
+
+async function testSharedFileMeetsTheSameGate(text) {
+  section("S. A shared file is judged by exactly the gate a picked one is");
+
+  const { db, state } = await buildFixture("SoSe26");
+
+  const names = await listTimetableNames(db, state);
+  const shared = previewTimetableFile({ text, hasActive: true, existingNames: names });
+  check("a real file previews", shared.ok);
+  equal("the preview knows where it would land", shared.candidate.destination, "archive");
+  // Five, not six: the fixture carries a soft-deleted class, and a count the
+  // user is shown never includes one.
+  equal("...and how many classes are in it", shared.candidate.summary.classCount, 5);
+
+  /*
+   * Every way a file can be wrong, put through the share path.
+   *
+   * The assertion is not "it was refused" but "it was refused for the same
+   * reason `parseTemeloFile` gives", which is the thing that would break if a
+   * second, looser idea of a valid file ever grew on the incoming side. There
+   * is no argument `previewTimetableFile` takes that could relax any of these.
+   */
+  const good = JSON.parse(text);
+  const mutated = (change) => {
+    const copy = JSON.parse(text);
+    change(copy);
+    return JSON.stringify(copy);
+  };
+
+  const bad = {
+    "not JSON at all": "this is not a timetable, it is a sentence",
+    "an empty file": "",
+    "a JSON array": "[]",
+    "JSON without the magic": JSON.stringify({ formatVersion: 1, timetable: good.timetable }),
+    "the wrong magic": mutated((copy) => {
+      copy.type = "temelo-something-else";
+    }),
+    "a newer envelope": mutated((copy) => {
+      copy.formatVersion = TEMELO_FILE_FORMAT_VERSION + 1;
+    }),
+    "a newer snapshot": mutated((copy) => {
+      copy.timetable.formatVersion = 99;
+    }),
+    "no timetable inside": mutated((copy) => {
+      copy.timetable = "nope";
+    }),
+    "a dangling reference": mutated((copy) => {
+      copy.timetable.placements[0].courseId = "does-not-exist";
+    }),
+    "absurdly many records": mutated((copy) => {
+      copy.timetable.placements = new Array(MAX_TEMELO_FILE_RECORDS + 1).fill(copy.timetable.placements[0]);
+    }),
+  };
+
+  for (const [description, payload] of Object.entries(bad)) {
+    const direct = parseTemeloFile(payload);
+    const viaShare = previewTimetableFile({ text: payload, hasActive: true, existingNames: names });
+    check(`${description} is refused on the shared path`, !viaShare.ok);
+    equal(`...for the reason the picker would give`, viaShare.ok ? "(accepted)" : viaShare.failure.kind, direct.failure.kind);
+  }
+
+  db.closeSync();
+}
+
+async function testIncomingShareBesideActive(text) {
+  section("T. A shared file, previewed and imported, with a timetable already active");
+
+  const intent = createSharedIntent();
+  const answered = createAnsweredShares();
+  const { db, state } = await buildFixture("SoSe26");
+  const activeBefore = JSON.stringify(await loadTimetable(db));
+  const before = await databasePrint(db);
+
+  intent.send("content://telegram/1", text);
+  const session = await receiveShare({ intent, answered, db, state });
+  equal("the share produced a preview", session.kind, "preview");
+  equal("the preview names the timetable in the file", session.candidate.name, "Computer Science");
+  equal("...and says it will be archived", session.candidate.destination, "archive");
+
+  equal("the payload was consumed as soon as it was read", intent.pending, null);
+  check("...and the file is remembered as answered", answered.has("content://telegram/1"));
+  equal("nothing at all was written on the way to the preview", await databasePrint(db), before);
+
+  const imported = await importTimetableSnapshot(db, state, session.candidate.snapshot, LATER);
+  equal("confirming archived it", imported.destination, "archive");
+
+  const after = await loadTimetable(db);
+  equal("the timetable the user was using is untouched", JSON.stringify(after), activeBefore);
+  const archived = await listArchivedTimetables(db);
+  equal("there is exactly one new archive", archived.length, 1);
+  equal("...under the name the preview promised", archived[0].name, session.candidate.name);
+
+  /*
+   * The result the receiver draws its success state from, in full.
+   *
+   * Everything "Timetable imported" needs is in this value — the name and where
+   * it landed — and none of it is a navigation. That is what "the success state
+   * does not depend on navigating anywhere" means: there is nothing else to
+   * ask, and nothing to ask it of.
+   */
+  check("the import reports everything the success state draws", typeof imported.timetableId === "string");
+  equal("...including an id minted here rather than taken from the file", imported.timetableId, archived[0].id);
+
+  db.closeSync();
+}
+
+async function testIncomingShareOnEmptyDevice(text) {
+  section("U. A shared file on a device with no active timetable becomes the timetable");
+
+  const intent = createSharedIntent();
+  const answered = createAnsweredShares();
+  const path = nextPath();
+  const { db } = await open(path);
+  await saveTimetable(db, EMPTY_STATE, null);
+  const state = await loadTimetable(db);
+  equal("the device starts with nothing", state.timetable, null);
+
+  intent.send("content://whatsapp/2", text);
+  const session = await receiveShare({ intent, answered, db, state });
+  equal("the preview says it will become the timetable", session.candidate.destination, "active");
+
+  const imported = await importTimetableSnapshot(db, state, session.candidate.snapshot, LATER);
+  equal("and it does", imported.destination, "active");
+  equal("...with the name the preview promised", imported.state.timetable.name, session.candidate.name);
+  check("...and the app counts as set up", imported.state.settings.onboardingCompleted);
+
+  // The whole reason the receiver does not navigate: the next ordinary launch
+  // is where the user sees this, and a cold read has to show it.
+  const { state: reopened } = await reopen(path);
+  equal("a cold relaunch finds it", reopened.timetable.name, session.candidate.name);
+  equal("...with its classes", reopened.placements.length, 6);
+
+  db.closeSync();
+}
+
+async function testIncomingShareWritesNothingUntilConfirmed(text) {
+  section("V. Cancelling, and a file that is not a timetable, change nothing at all");
+
+  const { db, state } = await buildFixture("SoSe26");
+  const before = await databasePrint(db);
+
+  // Cancel. The preview is reached, the user says no, and the receiver is
+  // simply dismissed — there is no undo because there was no write.
+  const cancelled = createSharedIntent();
+  const cancelledAnswered = createAnsweredShares();
+  cancelled.send("content://telegram/3", text);
+  const preview = await receiveShare({ intent: cancelled, answered: cancelledAnswered, db, state });
+  equal("cancelling happens from a preview", preview.kind, "preview");
+  equal("cancelling wrote nothing", await databasePrint(db), before);
+  equal("...and let the payload go", cancelled.pending, null);
+
+  // A file that is not a Temelo timetable never reaches a transaction at all.
+  const refused = createSharedIntent();
+  const refusedAnswered = createAnsweredShares();
+  refused.send("content://telegram/4", "a photo somebody renamed");
+  const failure = await receiveShare({ intent: refused, answered: refusedAnswered, db, state });
+  equal("a file that is not a timetable is refused", failure.kind, "failed");
+  equal("...as 'this is not a Temelo file'", failure.reason, "notTemelo");
+  equal("and refusing wrote nothing either", await databasePrint(db), before);
+
+  // A payload whose URI cannot be opened — the shape a revoked `content://`
+  // grant takes. Reported, not thrown, and equally harmless.
+  const unreadable = createSharedIntent();
+  const unreadableAnswered = createAnsweredShares();
+  unreadable.send("content://telegram/5", null);
+  const gone = await receiveShare({ intent: unreadable, answered: unreadableAnswered, db, state });
+  equal("a payload that cannot be opened is reported", gone.kind, "failed");
+  equal("...as unreadable rather than as a bad timetable", gone.reason, "unreadable");
+  equal("and that wrote nothing", await databasePrint(db), before);
+
+  db.closeSync();
+}
+
+async function testIncomingShareIsAnsweredOnce(text) {
+  section("W. A redelivered share is not presented twice");
+
+  const intent = createSharedIntent();
+  const answered = createAnsweredShares();
+  const { db, state } = await buildFixture("SoSe26");
+
+  intent.send("content://telegram/6", text);
+  const first = await receiveShare({ intent, answered, db, state });
+  equal("the first delivery is previewed", first.kind, "preview");
+
+  /*
+   * Android redelivers the intent that started a task when the task is resumed
+   * after the process was reclaimed. Without the memory, the user would be
+   * handed the same preview for a file they already dealt with.
+   */
+  intent.send("content://telegram/6", text);
+  const second = await receiveShare({ intent, answered, db, state });
+  equal("the same file arriving again is ignored", second.kind, "idle");
+  equal("...and is cleared so it cannot arrive a third time", intent.pending, null);
+
+  // A genuinely new file is still a new file, even from the same app.
+  intent.send("content://telegram/7", text);
+  const third = await receiveShare({ intent, answered, db, state });
+  equal("a different file is still offered", third.kind, "preview");
 
   db.closeSync();
 }
@@ -1443,6 +1888,14 @@ export async function runTransferHarness() {
     testCloning(snapshot);
     await testLegacyArchiveExports();
     await testNames(text);
+    testNamingRule();
+    testIncomingLinks();
+    testAnsweredShares();
+    await testSharedFileMeetsTheSameGate(text);
+    await testIncomingShareBesideActive(text);
+    await testIncomingShareOnEmptyDevice(text);
+    await testIncomingShareWritesNothingUntilConfirmed(text);
+    await testIncomingShareIsAnsweredOnce(text);
   } finally {
     try {
       rmSync(directory, { recursive: true, force: true });

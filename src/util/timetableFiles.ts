@@ -1,6 +1,6 @@
 /**
- * The two places a timetable crosses the edge of the app: out through the
- * share sheet, in through the document picker.
+ * The places a timetable crosses the edge of the app: out through the share
+ * sheet, and in through the document picker or another app's share sheet.
  *
  * Everything that knows about `expo-file-system` and `expo-sharing` is in this
  * file, and nothing in it knows what a timetable is. What crosses the boundary
@@ -11,11 +11,21 @@
  * what lets the whole of the file *format* be exercised by the Node harness,
  * which has no native modules at all.
  *
- * Both functions are total: they return a reason rather than throwing, because
- * both are reachable from a button and every way they fail is something to say
- * to the user rather than something to crash on. A cancelled picker is not a
- * failure and is reported as its own outcome — the user changed their mind,
- * which is not an error and must not produce an error message.
+ * Every function here is total: each returns a reason rather than throwing,
+ * because each is reachable from a button or from a launch and every way they
+ * fail is something to say to the user rather than something to crash on. A
+ * cancelled picker is not a failure and is reported as its own outcome — the
+ * user changed their mind, which is not an error and must not produce an error
+ * message.
+ *
+ * ## The two ways in are one way in
+ *
+ * The picker and an `ACTION_SEND` differ only in how the app learns the
+ * location of some bytes. Both end at `readTimetableFileAt`, which applies the
+ * same size bound and returns the same shape, so there is one read path and —
+ * above this file — one parser, one preview and one import. A file that arrives
+ * through a share sheet is trusted exactly as much as one the user browsed to,
+ * which is to say not at all.
  *
  * ## Where an export is written
  *
@@ -36,18 +46,22 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
 /**
- * The largest file the picker will hand on to be read, in bytes.
+ * The largest file this module will read into memory, in bytes.
  *
- * Checked against the picked file's reported size *before* a single byte is
- * read into memory, which is the only point at which a very large file can
- * still be refused cheaply. `storage/timetableFile` applies a second, tighter
- * bound to the text itself; this one exists so that a two-gigabyte video
- * renamed to `.temelo` never becomes a two-gigabyte string first.
+ * Checked against the file's reported size *before* a single byte is read,
+ * which is the only point at which a very large file can still be refused
+ * cheaply. `storage/timetableFile` applies a second, tighter bound to the text
+ * itself; this one exists so that a two-gigabyte video renamed to `.temelo`
+ * never becomes a two-gigabyte string first.
+ *
+ * It applies to both ways in, because a file that arrives through a share sheet
+ * is a file somebody *else* chose — which is the case this bound was written
+ * for, and which is now reachable without the user having browsed to anything.
  *
  * Deliberately generous relative to a real timetable (tens of kilobytes) and
  * tiny relative to the media files that share a Downloads folder with it.
  */
-const MAX_PICKED_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_INCOMING_FILE_BYTES = 8 * 1024 * 1024;
 
 /** The cache subdirectory an export is staged in. Cleared before each write. */
 const EXPORT_DIRECTORY = "timetable-export";
@@ -141,16 +155,67 @@ export async function shareTimetableFile(input: {
   }
 }
 
+/* -------------------------------------------------------------------- read */
+
+export type ReadTimetableFileResult =
+  | { ok: true; text: string; fileName: string }
+  /** The file is far too large to be a timetable; nothing was read. */
+  | { ok: false; kind: "tooLarge"; detail: string }
+  /** The file could not be reached, opened, or read. */
+  | { ok: false; kind: "unreadable"; detail: string };
+
+/**
+ * The text of a file at a URI, whatever kind of URI it is.
+ *
+ * The one place bytes enter the app, and the reason the two ways in are not two
+ * code paths. `expo-file-system`'s `File` resolves a `content://` URI through
+ * the content resolver, a document-provider URI through the Storage Access
+ * Framework, and a `file://` one directly — so a `.temelo` in Downloads and a
+ * `.temelo` WhatsApp shared in are both just a URI here, and neither is trusted
+ * any further than the next function that reads it.
+ *
+ * ## Why the text is read now, and carried rather than the URI
+ *
+ * A `content://` handed over by an `ACTION_SEND` comes with a *temporary* read
+ * grant, and the grant belongs to the activity's task. Reading happens while
+ * that is unambiguously still true. By the time the user has looked at a
+ * preview and tapped Import the grant may be gone — and on a development build
+ * it demonstrably can be, because `expo-dev-launcher` clears and rebuilds the
+ * task around the launch. An import that had to go back to the provider would
+ * be an import that fails *after* it was confirmed, which is the one moment it
+ * must not.
+ *
+ * Constructing the `File` can throw on a string that is not a URI at all, so
+ * even that is inside the `try`: this is handed values that came from another
+ * application.
+ */
+export async function readTimetableFileAt(uri: string): Promise<ReadTimetableFileResult> {
+  try {
+    const file = new File(uri);
+    /*
+     * The size before the read, which is the only point at which a very large
+     * file can still be refused cheaply — after `text()` it is already a string
+     * in memory, and refusing it then would have cost exactly what the check is
+     * there to avoid. `storage/timetableFile` applies a second, tighter bound
+     * to the text itself.
+     */
+    const size = file.size;
+    if (typeof size === "number" && size > MAX_INCOMING_FILE_BYTES) {
+      return { ok: false, kind: "tooLarge", detail: `${size} bytes exceeds ${MAX_INCOMING_FILE_BYTES}` };
+    }
+    return { ok: true, text: await file.text(), fileName: file.name };
+  } catch (error: unknown) {
+    return { ok: false, kind: "unreadable", detail: `reading the file: ${messageOf(error)}` };
+  }
+}
+
 /* -------------------------------------------------------------------- pick */
 
 export type PickTimetableFileResult =
-  /** The user backed out of the picker. Not an error. */
-  | { ok: true; cancelled: true }
-  | { ok: true; cancelled: false; text: string; fileName: string }
-  /** The file is far too large to be a timetable; nothing was read. */
-  | { ok: false; kind: "tooLarge"; detail: string }
-  /** The file could not be read. */
-  | { ok: false; kind: "unreadable"; detail: string };
+  /** The user backed out of the picker. Not an error, and not an outcome. */
+  | { cancelled: true }
+  /** They chose something, and `file` says how reading it went. */
+  | { cancelled: false; file: ReadTimetableFileResult };
 
 /**
  * Asks the platform for a file and returns its text.
@@ -186,24 +251,71 @@ export type PickTimetableFileResult =
  */
 export async function pickTimetableFile(): Promise<PickTimetableFileResult> {
   const picked = await File.pickFileAsync({ mimeTypes: ["*/*"] });
-  if (picked.canceled) return { ok: true, cancelled: true };
+  if (picked.canceled) return { cancelled: true };
+  // Nested rather than spread, so that "the user cancelled" and "the file could
+  // not be read" stay two separate questions with no shape in which both look
+  // like the same answer.
+  return { cancelled: false, file: await readTimetableFileAt(picked.result.uri) };
+}
 
-  const file = picked.result;
+/* ------------------------------------------------------------------ shared */
 
+/**
+ * The file another app shared into Temelo, or null.
+ *
+ * `expo-sharing` parks the whole `ACTION_SEND` intent in a native singleton and
+ * parses it on demand; this reduces the result to the one thing above this
+ * module can use. Only a payload whose value is a URI is a candidate — a
+ * plain-text share is a message, not a timetable, and has no bytes to read.
+ *
+ * Synchronous, and cheap enough to call on every resume: it reads a field off
+ * an intent that is already in memory. That is what lets the receiver poll it
+ * rather than having to be told when a share happened.
+ *
+ * The first file payload wins. Temelo registers for single-file sends only, so
+ * there is never legitimately more than one; taking the first rather than
+ * refusing a list of several means an app that sends a `SEND_MULTIPLE` anyway
+ * gets a sensible answer instead of nothing.
+ *
+ * Reading does not consume — `clearSharedTimetableFile` is a separate call.
+ */
+export function readSharedTimetableFile(): { uri: string } | null {
+  let payloads: { value: string }[];
   try {
-    /*
-     * The size before the read, which is the only point at which a very large
-     * file can still be refused cheaply — after `text()` it is already a string
-     * in memory, and refusing it then would have cost exactly what the check is
-     * there to avoid. `storage/timetableFile` applies a second, tighter bound
-     * to the text itself.
-     */
-    const size = file.size;
-    if (typeof size === "number" && size > MAX_PICKED_FILE_BYTES) {
-      return { ok: false, kind: "tooLarge", detail: `${size} bytes exceeds ${MAX_PICKED_FILE_BYTES}` };
-    }
-    return { ok: true, cancelled: false, text: await file.text(), fileName: file.name };
+    payloads = Sharing.getSharedPayloads();
   } catch (error: unknown) {
-    return { ok: false, kind: "unreadable", detail: `reading the file: ${messageOf(error)}` };
+    // Most likely a development build made before the share plugin was
+    // configured. Nothing was shared, as far as anything above here can tell.
+    if (__DEV__) console.warn("[temelo/files] could not read the shared payload:", messageOf(error));
+    return null;
   }
+
+  const file = payloads.find((payload) => isFileUri(payload.value));
+  return file ? { uri: file.value } : null;
+}
+
+/**
+ * Throws away whatever was shared with the app.
+ *
+ * The payload lives in a native singleton that outlives the screen, the React
+ * tree and — in a development build — the JavaScript context itself. Leaving it
+ * there means the *next* visit to an app that was never actually closed starts
+ * on a preview of a file the user already answered about, so this is called as
+ * soon as the bytes have been read and are safely a string in memory. From that
+ * moment the receiver owns the file and the intent no longer matters.
+ *
+ * Never throws: a payload that cannot be cleared is a duplicate preview at
+ * worst, and `domain/incomingShare`'s answered-URI memory catches that too.
+ */
+export function clearSharedTimetableFile(): void {
+  try {
+    Sharing.clearSharedPayloads();
+  } catch (error: unknown) {
+    if (__DEV__) console.warn("[temelo/files] could not clear the shared payload:", messageOf(error));
+  }
+}
+
+/** Whether a shared payload's value is somewhere bytes can be read from. */
+function isFileUri(value: string): boolean {
+  return value.startsWith("content://") || value.startsWith("file://");
 }

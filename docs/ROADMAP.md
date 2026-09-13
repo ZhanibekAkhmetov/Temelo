@@ -160,8 +160,22 @@ current implementation status.
     becomes the active timetable. Reminder lead times travel; the reminder
     ledger, OS notification identifiers and every app-global preference do not.
     Sharing a timetable is also offered by a long press on any row of the
-    Timetables screen. Not covered here: Android's "Open with Temelo" intent for
-    a `.temelo` chosen outside the app.
+    Timetables screen.
+
+    A `.temelo` can also arrive the other way: **Share → Temelo** from Telegram,
+    WhatsApp, mail or Drive. That is deliberately *not* a visit to the app — it
+    is a transient receiver drawn over whatever is on screen, with the same
+    preview, the same validator and the same import, then "Timetable imported"
+    and Done, which returns the user to the app they shared from. It performs no
+    navigation at all, which is the whole of why it is reliable; the imported
+    timetable is seen by opening Temelo normally. Repeated imports of the same
+    name are numbered ("SoSe26 (1)"), and the preview shows the final name
+    before the user agrees to it. See "Receiving a share" in
+    [ARCHITECTURE.md](ARCHITECTURE.md).
+
+    Not covered here: Android's "Open with Temelo" intent for a `.temelo` the
+    user *taps* outside the app, which stays best-effort at the mercy of
+    whichever content provider reports the file's type.
 
 13. **Calendar export**
     Timetable data can be exported in a format consumable by external

@@ -1,11 +1,12 @@
 /**
  * Sharing a timetable out and importing one in, as two hooks.
  *
- * This is the one place the three layers meet: `state/AppStateContext` owns the
- * database, `storage/timetableFile` owns what a `.temelo` is, and
- * `util/timetableFiles` owns the share sheet and the picker. None of the three
- * knows about the others, and none of them knows how to say "this file isn't a
- * valid Temelo timetable" — that is this module's job, and it is why the
+ * This is the one place the layers meet: `state/AppStateContext` owns the
+ * database, `storage/timetableFile` owns what a `.temelo` is,
+ * `features/timetables/importPipeline` owns what a valid one *means*, and
+ * `util/timetableFiles` owns the share sheet and the picker. None of them knows
+ * about the others, and none of them knows how to say "this file isn't a valid
+ * Temelo timetable" — that is this module's job, and it is why the
  * failure-to-copy mapping below is written out in full rather than hidden
  * behind a default.
  *
@@ -25,21 +26,15 @@
 import { useCallback, useRef, useState } from "react";
 
 import { domainError, type DomainError } from "@/domain/errors";
+import { previewTimetableFile, type ImportCandidate } from "@/features/timetables/importPipeline";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState, type ImportActionResult, type SnapshotResult } from "@/state/AppStateContext";
 import {
-  summarizeTimetableSnapshot,
-  type TimetableSnapshot,
-  type TimetableSnapshotSummary,
-} from "@/storage/snapshot";
-import {
   buildValidatedTemeloFile,
-  parseTemeloFile,
   temeloFileName,
   TEMELO_FILE_MIME_TYPE,
   type TemeloFileFailure,
 } from "@/storage/timetableFile";
-import type { ImportDestination } from "@/storage/timetableLifecycle";
 import { pickTimetableFile, shareTimetableFile } from "@/util/timetableFiles";
 
 /**
@@ -164,27 +159,9 @@ export function useShareTimetable(): TimetableSharing {
 
 /* ------------------------------------------------------------------ import */
 
-/**
- * A validated file, waiting for the user to say yes.
- *
- * Everything the preview screen draws, and nothing it does not: the timetable's
- * name, the one-line shape the Timetables list already shows for every other
- * timetable, how many classes are in it, and which of the two things importing
- * will do. No ids, no versions, no record counts beyond the one a person would
- * ask for.
- */
-export interface PendingImport {
-  name: string;
-  summary: TimetableSnapshotSummary;
-  /** Where it will land if confirmed — decided by whether a timetable is active. */
-  destination: ImportDestination;
-  /** The validated snapshot itself. Not drawn; handed to the import. */
-  snapshot: TimetableSnapshot;
-}
-
 export interface TimetableImporting {
   /** The chosen file, validated, awaiting confirmation. Null when there is none. */
-  pending: PendingImport | null;
+  pending: ImportCandidate | null;
   /** True while the picker is open, or while the import is being written. */
   busy: boolean;
   /** Why the last attempt did not happen; cleared by the next one. */
@@ -205,14 +182,20 @@ export interface TimetableImporting {
  * database. Between them the user can read what they are about to accept, and
  * a file that is not a Temelo timetable never gets past the first half.
  *
- * The preview also states *where* the timetable will land, because that depends
- * on something the user may not be thinking about — whether they currently have
- * an active timetable — and finding out afterwards is how an import feels like
- * it went wrong even when it went right.
+ * The preview also states *where* the timetable will land, and what it will be
+ * *called*, because both depend on something the user may not be thinking about
+ * — whether they currently have an active timetable, and whether they already
+ * have one of that name — and finding out afterwards is how an import feels
+ * like it went wrong even when it went right.
+ *
+ * Both answers are `previewTimetableFile`'s, not this hook's. That is the one
+ * structural thing worth noticing here: the file another app shares into Temelo
+ * goes through the same function, so there is no second idea of what a valid
+ * file is or of what the copy will be named.
  */
 export function useImportTimetable(): TimetableImporting {
-  const { state, importTimetable } = useAppState();
-  const [pending, setPending] = useState<PendingImport | null>(null);
+  const { state, importTimetable, timetableNames } = useAppState();
+  const [pending, setPending] = useState<ImportCandidate | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DomainError | null>(null);
 
@@ -241,35 +224,33 @@ export function useImportTimetable(): TimetableImporting {
     void (async () => {
       try {
         const picked = await pickTimetableFile();
-
-        if (!picked.ok) {
-          logDetail("a file could not be read", picked.detail);
-          setError(domainError(picked.kind === "tooLarge" ? "errors.fileTooLarge" : "errors.fileUnreadable"));
-          return;
-        }
         // Backing out of the picker is not an event. No error, no preview, and
         // deliberately no "cancelled" message.
         if (picked.cancelled) return;
 
-        const parsed = parseTemeloFile(picked.text);
-        if (!parsed.ok) {
-          setError(fileError(parsed.failure));
+        if (!picked.file.ok) {
+          logDetail("a file could not be read", picked.file.detail);
+          setError(domainError(picked.file.kind === "tooLarge" ? "errors.fileTooLarge" : "errors.fileUnreadable"));
           return;
         }
 
-        const snapshot = parsed.file.timetable;
-        setPending({
-          name: snapshot.timetable.name,
-          summary: summarizeTimetableSnapshot(snapshot),
-          destination: hasActive ? "archive" : "active",
-          snapshot,
+        const preview = previewTimetableFile({
+          text: picked.file.text,
+          hasActive,
+          existingNames: await timetableNames(),
         });
+        if (!preview.ok) {
+          setError(fileError(preview.failure));
+          return;
+        }
+
+        setPending(preview.candidate);
       } finally {
         inFlight.current = false;
         setBusy(false);
       }
     })();
-  }, [hasActive]);
+  }, [hasActive, timetableNames]);
 
   const confirm = useCallback(async () => {
     if (!pending || inFlight.current) return null;

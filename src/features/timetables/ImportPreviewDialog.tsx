@@ -4,10 +4,10 @@ import { Button } from "@/components/Button";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 import { daysLabel, hoursLabel } from "@/features/timetables/summary";
-import type { PendingImport } from "@/features/timetables/transfer";
+import type { ImportCandidate } from "@/features/timetables/importPipeline";
 
 interface ImportPreviewDialogProps {
-  pending: PendingImport;
+  pending: ImportCandidate;
   /** True while the import is being written. Both buttons are held. */
   busy: boolean;
   /** Why the last attempt did not happen, already translated. */
@@ -28,6 +28,15 @@ interface ImportPreviewDialogProps {
  * timetable *is* — its name, when it starts, which days it covers, what hours
  * its day runs, how many classes are in it — and what will happen to it, and
  * then asks.
+ *
+ * The name is the one the *local copy* will be created under, which is not
+ * always the one in the file: a second copy of "SoSe26" is created as
+ * "SoSe26 (1)", and being told that afterwards is how an import looks like it
+ * went to the wrong place. See `ImportCandidate`.
+ *
+ * The same dialog serves both ways in — the Import button and a file another
+ * app shared into Temelo — because the question is identical and a shared file
+ * is trusted no further than a picked one.
  *
  * Nothing has been written when this is on screen. Cancel is not an undo; it is
  * a decision not to start, which is why it is a plain secondary button and

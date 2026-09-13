@@ -33,7 +33,7 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { createId } from "@/domain/id";
-import { nextDefaultTimetableName } from "@/domain/timetableName";
+import { nextAvailableImportName, nextDefaultTimetableName } from "@/domain/timetableName";
 import {
   courseToRow,
   exceptionToRow,
@@ -371,8 +371,20 @@ async function readBackWithin(db: SQLiteDatabase): Promise<PersistedTimetable> {
   return state;
 }
 
-/** Every timetable name in use: the active timetable's and each archive's. */
-async function existingNamesWithin(db: SQLiteDatabase, current: PersistedTimetable): Promise<string[]> {
+/**
+ * Every timetable name in use: the active timetable's and each archive's.
+ *
+ * Exported because two callers need the same answer for different reasons.
+ * `createTimetable` and `importTimetableSnapshot` ask *inside* their
+ * transaction, where it is authoritative. The import preview asks beforehand,
+ * outside any transaction, only so that it can show the user the name their
+ * copy is about to get — a prediction, which is allowed to be one because
+ * nothing is written on the strength of it.
+ *
+ * Names, not summaries: this reads one column and parses no snapshots, which
+ * matters because the preview calls it on a screen the user is waiting on.
+ */
+export async function listTimetableNames(db: SQLiteDatabase, current: PersistedTimetable): Promise<string[]> {
   const rows = await db.getAllAsync<{ name: string }>("SELECT name FROM archived_timetables");
   const names = rows.map((row) => row.name);
   return current.timetable ? [current.timetable.name, ...names] : names;
@@ -436,7 +448,7 @@ export async function createTimetable(
      * it was used; chosen outside the transaction, two creations could pick
      * the same number.
      */
-    const name = typed ?? nextDefaultTimetableName(fallback ?? "", await existingNamesWithin(db, current));
+    const name = typed ?? nextDefaultTimetableName(fallback ?? "", await listTimetableNames(db, current));
     const timetable: Timetable = {
       id: createId(),
       name,
@@ -701,18 +713,33 @@ export async function importTimetableSnapshot(
   const local = cloneSnapshotWithFreshIds(snapshot, now);
 
   /*
-   * The name is taken from the file exactly as it was validated, and is *not*
-   * made unique. Two timetables called "Timetable1" — a friend's and mine — is
-   * a thing the Timetables screen has always been able to draw, and renaming
-   * somebody's timetable because a name was taken would be a worse answer to a
-   * problem the user does not have. `nextDefaultTimetableName` exists for the
-   * one case that genuinely needs a free number: a *blank* name at creation.
+   * The name comes from the file, trimmed to the stored limit — and then gets a
+   * `(1)` after it if the device already has a timetable called that.
+   *
+   * The general rule has not changed: two timetables called "SoSe26" is
+   * allowed, and a name the *user* typed is never rewritten. This is the one
+   * case where the name was nobody's choice. Importing the same file three
+   * times — which is a thing people do, because a file in a chat is easy to tap
+   * twice — otherwise produces three rows all reading "SoSe26", and the list is
+   * precisely how the user tells timetables apart. See
+   * `nextAvailableImportName`. The `.temelo` itself is not touched; this is the
+   * name of the local copy.
+   *
+   * Chosen inside the transaction, against the names that exist at that exact
+   * moment, for the same reason `createTimetable` chooses its number there: a
+   * name read beforehand could be taken by the time it is used, and two imports
+   * running at once could otherwise pick the same one. The preview shows the
+   * name too, read outside — that one is a prediction and is allowed to be.
    */
-  const name = normalizeTimetableName(local.timetable.name) ?? local.timetable.name;
-  const timetable: Timetable = { ...local.timetable, name };
+  const base = normalizeTimetableName(local.timetable.name) ?? local.timetable.name;
+  const namedWithin = async (): Promise<Timetable> => ({
+    ...local.timetable,
+    name: nextAvailableImportName(base, await listTimetableNames(db, current), MAX_TIMETABLE_NAME_LENGTH),
+  });
 
   if (current.timetable) {
-    const state = await withTransaction(db, async () => {
+    const imported = await withTransaction(db, async () => {
+      const timetable = await namedWithin();
       await db.runAsync(
         `INSERT INTO archived_timetables (id, name, archived_at, created_at, format_version, snapshot)
          VALUES (?, ?, ?, ?, ?, ?)`,
@@ -726,10 +753,10 @@ export async function importTimetableSnapshot(
       // Read back inside the transaction, exactly as every other operation
       // here does. The active timetable is untouched, and this is what proves
       // it rather than assumes it.
-      return readBackWithin(db);
+      return { state: await readBackWithin(db), timetableId: timetable.id };
     });
 
-    return { destination: "archive", state, timetableId: timetable.id };
+    return { destination: "archive", ...imported };
   }
 
   const settings: Settings = {
@@ -744,7 +771,8 @@ export async function importTimetableSnapshot(
     onboardingCompleted: true,
   };
 
-  const state = await withTransaction(db, async () => {
+  const imported = await withTransaction(db, async () => {
+    const timetable = await namedWithin();
     // `clearActiveWithin` with nothing active is four empty DELETEs; it is here
     // so that this path is literally the restore path and cannot drift from it.
     await clearActiveWithin(db);
@@ -757,8 +785,8 @@ export async function importTimetableSnapshot(
       local.placements,
       local.exceptions,
     );
-    return readBackWithin(db);
+    return { state: await readBackWithin(db), timetableId: timetable.id };
   });
 
-  return { destination: "active", state, timetableId: timetable.id };
+  return { destination: "active", ...imported };
 }

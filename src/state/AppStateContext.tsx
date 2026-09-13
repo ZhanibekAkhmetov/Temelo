@@ -27,6 +27,7 @@ import {
   deleteArchivedTimetable,
   importTimetableSnapshot,
   listArchivedTimetables,
+  listTimetableNames,
   normalizeTimetableName,
   readArchivedSnapshotRow,
   renameArchivedTimetable,
@@ -287,6 +288,16 @@ interface AppStateContextValue {
   deleteArchive: (archiveId: string) => Promise<LifecycleActionResult>;
   /** The archived timetables, freshly read. Not held in state — see below. */
   readArchivedTimetables: () => Promise<ArchivedTimetableSummary[]>;
+  /**
+   * Every timetable name on the device — the active one's and each archive's.
+   *
+   * Read on demand rather than held, for the same reason the archived
+   * timetables are. The one caller is the import preview, which needs it to
+   * predict what the imported copy will be called; the name that is actually
+   * used is chosen inside the import's own transaction, so this is allowed to
+   * be a prediction and must not become the decision.
+   */
+  timetableNames: () => Promise<string[]>;
   /**
    * The active timetable as a snapshot, ready to be written to a file.
    *
@@ -891,6 +902,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return listArchivedTimetables(db);
     };
 
+    const timetableNames: AppStateContextValue["timetableNames"] = async () => {
+      const db = databaseRef.current;
+      // The one name that is knowable without the database is still worth
+      // giving: without it a preview drawn before storage opened would offer a
+      // name that collides with the timetable on screen.
+      const current = latestStateRef.current;
+      if (!db) return current.timetable ? [current.timetable.name] : [];
+      return listTimetableNames(db, current);
+    };
+
     const activeTimetableSnapshot: AppStateContextValue["activeTimetableSnapshot"] = () => {
       const timetable = state.timetable;
       if (!timetable) return { ok: false, error: domainError("errors.noActiveTimetable") };
@@ -1247,6 +1268,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       renameArchive,
       deleteArchive,
       readArchivedTimetables,
+      timetableNames,
       activeTimetableSnapshot,
       readArchivedSnapshot,
       importTimetable,

@@ -45,7 +45,15 @@
         }
       ],
       "expo-localization",
-      "expo-sharing"
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": ["application/octet-stream"]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
