@@ -44,7 +44,8 @@
           "color": "#208AEF"
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -258,6 +258,28 @@ export const en = {
   "timetables.createConfirmMessage": "Your current timetable “{current}” will be archived.\nNothing will be deleted.",
   "timetables.createConfirm": "Create",
 
+  // -------------------------------------------------- export and import
+  /*
+   * Wording rules, so the three languages stay one voice:
+   *
+   *  - "Share" for sending a timetable out, never "Export". Share is what the
+   *    Android button does and what the user is about to see.
+   *  - "Import" for bringing one in, because there is no better everyday word
+   *    and the preview screen says what it will actually do.
+   *  - The preview never promises what happens afterwards in the abstract; it
+   *    states which of the two things will happen, by name.
+   */
+  "transfer.shareAction": "Share timetable",
+  "transfer.shareDialogTitle": "Share timetable",
+  "transfer.importAction": "Import timetable",
+  "transfer.importPreviewTitle": "Import timetable",
+  "transfer.importClasses": "Classes",
+  "transfer.importConfirm": "Import timetable",
+  "transfer.importAsArchive": "It will be added to your archived timetables. Your current timetable stays as it is.",
+  "transfer.importAsActive": "It will become your timetable.",
+  "transfer.importedNotice": "Imported. Restore it when you want to start using it.",
+  "transfer.selectionActions": "Actions for {name}",
+
   // ---------------------------------------------------------------- errors
   "errors.slotInUse": "This slot is already used by {name}.",
   "errors.classNameRequired": "Class name is required.",
@@ -265,6 +287,13 @@ export const en = {
   "errors.noActiveTimetable": "There is no active timetable.",
   "errors.archiveGone": "This archived timetable no longer exists.",
   "errors.archiveUnreadable": "This archived timetable is damaged and cannot be restored.",
+  "errors.fileNotTemelo": "This file isn't a valid Temelo timetable.",
+  "errors.fileFutureVersion": "This timetable was created by a newer version of Temelo. Update Temelo to import it.",
+  "errors.fileDamaged": "This Temelo timetable is damaged and can't be imported.",
+  "errors.fileTooLarge": "This file is too large to be a Temelo timetable.",
+  "errors.fileUnreadable": "Couldn't read this file.",
+  "errors.shareUnavailable": "Sharing isn't available on this device.",
+  "errors.shareFailed": "Couldn't share this timetable.",
   "errors.classGone": "This class no longer exists.",
   "errors.beforeTimetableStart": "This date is before the timetable starts.",
   "errors.startDateInvalid": "Start date must be a valid date (DD.MM.YYYY).",

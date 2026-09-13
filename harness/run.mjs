@@ -27,11 +27,13 @@ const { summarize } = await load("report.mjs");
 const { runGeometryHarness } = await load("geometry.mjs");
 const { runStorageHarness } = await load("storage.mjs");
 const { runLifecycleHarness } = await load("lifecycle.mjs");
+const { runTransferHarness } = await load("transfer.mjs");
 const { runNavigationHarness } = await load("navigation.mjs");
 
 runGeometryHarness();
 runNavigationHarness();
 await runStorageHarness();
 await runLifecycleHarness();
+await runTransferHarness();
 
 summarize();

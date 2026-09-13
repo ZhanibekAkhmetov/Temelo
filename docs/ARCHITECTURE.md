@@ -43,10 +43,10 @@ src/
                   dev-only diagnostics)
   i18n/           Translations, locale resolution, formatting
   state/          App state provider and defaults
-  storage/        Persistence / repository boundary
+  storage/        Persistence / repository boundary, and the `.temelo` format
   theme/          Design tokens, appearance preference, class colours
   types/          Shared model types
-  util/           Native-module wrappers (notifications, haptics)
+  util/           Native-module wrappers (notifications, haptics, files)
 ```
 
 New directories are added when real code needs them — empty directories are
@@ -166,8 +166,60 @@ active timetable still active.
 
 The snapshot format carries its own `formatVersion`, separate from the
 database's `user_version`, because it is a value that outlives the schema
-that produced it — and because the next feature writes it to a file the user
-keeps. File export and import are not implemented.
+that produced it — and because it is also what a `.temelo` file carries.
+
+## Export and import: the `.temelo` file
+
+A timetable file is a `TimetableSnapshot` inside a small versioned envelope
+(`storage/timetableFile`):
+
+```
+{ type: "temelo-timetable", formatVersion: 1, exportedAt: <ISO>, timetable: <snapshot> }
+```
+
+UTF-8 JSON, extension `.temelo`. The envelope is versioned separately from the
+snapshot because the two change for different reasons — the snapshot's version
+moves when what a timetable *is* changes, the envelope's when how a file is laid
+out does.
+
+Three rules govern it:
+
+- **One representation.** Export writes the same snapshot an archive holds, and
+  import validates it with the same `parseTimetableSnapshotValue` a restore uses.
+  There is no second model of a timetable for files. Export also parses back
+  what it just wrote before sharing it, so a timetable that could not be
+  imported is caught here rather than on the recipient's device.
+- **A file is untrusted input.** The magic, the envelope version, the snapshot
+  version, a length bound before `JSON.parse`, a record-count bound before
+  per-record validation, then every field and every reference. `JSON.parse`'s
+  result never becomes application state. Nothing is written to the database
+  until the user has confirmed a preview, so a malformed file is *declined*
+  rather than rolled back.
+- **Import clones.** Every id in the file is replaced by a device-generated one
+  before the transaction opens, with references remapped consistently
+  (`cloneSnapshotWithFreshIds`). A file may come from this very installation, so
+  keeping its ids would collide on a primary key — and, worse, would let two
+  copies of a class share a reminder identity, which is derived from the
+  placement id and occurrence date. Importing the same file twice therefore
+  produces two independent timetables.
+
+The file carries the timetable and nothing else: the app-global settings
+(appearance, language, default reminder, grid orientation) are excluded by
+construction, because the file carries a `TimetableSnapshot` and that is already
+bounded by `TIMETABLE_SETTING_KEYS`. The reminder ledger, OS notification
+identifiers and SQLite metadata are not in the snapshot and so cannot be in the
+file. Per-class and per-occurrence reminder *settings* do travel; reminder
+*history* does not.
+
+Importing reuses the lifecycle's transactions: with a timetable active it is one
+insert into `archived_timetables`, with none it is the same clear-and-write a
+restore performs. An import never displaces the active timetable.
+
+Platform access is confined to `util/timetableFiles`, which owns
+`expo-file-system` and `expo-sharing` and knows nothing about timetables —
+exactly the line `util/notifications` and `util/haptics` already draw. That is
+what lets the whole format be exercised by the Node harness, which has no native
+modules.
 
 ## Local persistence
 
@@ -235,7 +287,6 @@ The following are recognized as open questions, deliberately not decided
 yet:
 
 - Test runner choice and configuration.
-- Backup/restore file format.
 - Calendar export format/integration mechanism per target platform.
 - Synchronization protocol and any future account model.
 

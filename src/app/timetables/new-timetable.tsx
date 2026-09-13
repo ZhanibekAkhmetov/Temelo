@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 
+import { Button } from "@/components/Button";
 import { ChoiceRow } from "@/components/ChoiceRow";
 import { DateField } from "@/components/DateField";
 import { DatePickerSheet } from "@/components/DatePickerSheet";
@@ -10,6 +11,8 @@ import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
+import { ImportPreviewDialog } from "@/features/timetables/ImportPreviewDialog";
+import { useImportTimetable } from "@/features/timetables/transfer";
 import { nextDefaultTimetableName } from "@/domain/timetableName";
 import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
 import { useI18n } from "@/i18n/I18nProvider";
@@ -34,6 +37,29 @@ import { useTheme } from "@/theme/useTheme";
  * parameters and the timetable is created there, in one go, which is what
  * makes backing out of either step leave the current timetable completely
  * untouched.
+ *
+ * ## The second path, on a fresh install
+ *
+ * This is the *only* screen a first launch can reach: `app/index` redirects
+ * here until `onboardingCompleted` is set, so the Timetables screen — and with
+ * it the Import action — is behind a timetable the user has not made yet. For
+ * somebody whose reason for opening Temelo on a new phone is the `.temelo`
+ * backup sitting in their Downloads, that is a dead end: they would have to
+ * invent a timetable in order to be allowed to replace it.
+ *
+ * So when there is no active timetable, Import stands beside Continue as a
+ * second way out of this screen. It is offered *only* then, and that condition
+ * is the whole of the decision: reached from the Timetables screen with a
+ * timetable already active, this is "create another one", the Import action is
+ * one screen back where the user just came from, and importing from here would
+ * quietly mean something different anyway (an archived copy rather than an
+ * active one).
+ *
+ * The flow behind the button is not a second implementation of anything — it is
+ * `useImportTimetable` and `ImportPreviewDialog`, the same hook and the same
+ * preview the Timetables screen uses, which is also why "with no active
+ * timetable it becomes the active timetable and completes onboarding" needed no
+ * new code: that is what `importTimetableSnapshot` already does.
  */
 export default function NewTimetableScreen() {
   const { colors, spacing, typography } = useTheme();
@@ -46,6 +72,8 @@ export default function NewTimetableScreen() {
   const [weekendMode, setWeekendMode] = useState<WeekendMode>(state.settings.weekendMode);
   /** Every archived name, so the placeholder can say which number is free. */
   const [archivedNames, setArchivedNames] = useState<string[]>([]);
+
+  const importing = useImportTimetable();
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +101,25 @@ export default function NewTimetableScreen() {
     ...(current ? [current.name] : []),
     ...archivedNames,
   ]);
+
+  function handleImportConfirm() {
+    void importing.confirm().then((result) => {
+      if (!result?.ok) return;
+      /*
+       * Straight to the grid. With nothing active before the import, the
+       * imported timetable *is* the user's timetable now — `importTimetable`
+       * activated it and set `onboardingCompleted` in the same transaction —
+       * and leaving them on a setup form they no longer need to fill in would
+       * read as the import not having worked.
+       *
+       * `dismissAll` is guarded because this screen can be the whole stack: on
+       * a first launch `app/index` redirects here and there is nothing behind
+       * it to dismiss.
+       */
+      if (router.canDismiss()) router.dismissAll();
+      router.replace("/timetable");
+    });
+  }
 
   function handleContinue() {
     // Blank travels as blank. The name is only generated when the timetable
@@ -143,8 +190,40 @@ export default function NewTimetableScreen() {
           ))}
         </FormSection>
 
-        <OnboardingNav onContinue={handleContinue} />
+        <OnboardingNav onContinue={handleContinue} continueDisabled={importing.busy} />
+
+        {/* Only with nothing active — see the note at the top. Secondary, and
+            under the primary rather than beside it: these are not two halves of
+            one decision, they are the ordinary way forward and the way out for
+            somebody who already has their timetable in a file. */}
+        {current ? null : (
+          <View style={{ marginTop: spacing.sm }}>
+            <Button
+              label={t("transfer.importAction")}
+              variant="secondary"
+              onPress={importing.choose}
+              disabled={importing.busy}
+            />
+            {/* Only while the preview is closed: an error raised by the
+                confirmation belongs in the dialog the user is looking at. */}
+            {importing.error && !importing.pending ? (
+              <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
+                {t(importing.error.key, importing.error.params)}
+              </Text>
+            ) : null}
+          </View>
+        )}
       </ScreenContainer>
+
+      {importing.pending ? (
+        <ImportPreviewDialog
+          pending={importing.pending}
+          busy={importing.busy}
+          error={importing.error ? t(importing.error.key, importing.error.params) : undefined}
+          onConfirm={handleImportConfirm}
+          onCancel={importing.cancel}
+        />
+      ) : null}
 
       {startSheetOpen ? (
         <DatePickerSheet

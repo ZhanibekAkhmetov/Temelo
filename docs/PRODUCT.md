@@ -172,7 +172,8 @@ effort:
 - No cloud synchronization between devices.
 - No calendar export (Google/Apple/Samsung Calendar or others).
 - No direct device-calendar integration.
-- No timetable backup/restore feature yet.
+- No "Open with Temelo" for a `.temelo` file chosen outside the app; importing
+  one is started from inside Temelo.
 - No duplicate, copy, or undo of a placement. (Move and the
   single-occurrence-vs-recurring edit question, listed as future behaviour
   when this document was written, are now implemented — see
@@ -189,8 +190,10 @@ current build:
 - Calendar export to Google Calendar, Apple Calendar, Samsung Calendar, and
   similar applications.
 - Direct integration with the device's native calendar.
-- Timetable export to and import from a file (archiving and restoring on the
-  same device is implemented; moving a timetable between devices is not).
+- Opening a `.temelo` file from outside Temelo — the Android "Open with"
+  intent — so a file arriving in a chat or a mail can be imported without
+  starting in the app. (Exporting a timetable to a file, sharing it, and
+  importing one from inside Temelo are implemented.)
 
 ## Terminology
 
@@ -202,6 +205,11 @@ current build:
 - **Archived timetable** — A timetable the user has put away. It is preserved
   exactly, is not editable while archived, schedules no reminders, and can be
   restored, renamed or deleted permanently.
+- **Temelo file** — A single timetable written to a `.temelo` file, for
+  keeping as a backup or sending to somebody else. It holds the timetable and
+  nothing about the person: no appearance or language preference, and no
+  reminder history. Importing one always creates a *new copy* on the device, so
+  importing your own backup — or the same file twice — is safe.
 - **Time slot** — A recurring position in the academic-day structure,
   defined by a weekday and a local start/end time, generated from the
   academic-day configuration and individually editable afterward.

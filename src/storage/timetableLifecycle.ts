@@ -47,9 +47,12 @@ import {
   parseTimetableSnapshot,
   serializeTimetableSnapshot,
   settingsWithTimetableSettings,
+  summarizeTimetableSnapshot,
   timetableSettingsOf,
   type TimetableSnapshot,
+  type TimetableSnapshotSummary,
 } from "@/storage/snapshot";
+import { cloneSnapshotWithFreshIds } from "@/storage/timetableFile";
 import {
   loadTimetable,
   markInitializedWithin,
@@ -100,15 +103,7 @@ export interface ArchivedTimetableSummary {
   /** ISO timestamp. */
   archivedAt: string;
   createdAt: string;
-  contents: {
-    /** The timetable's start date, exactly as it was when archived. */
-    startDate: string;
-    weekendMode: TimetableSettings["weekendMode"];
-    slotCount: number;
-    /** First period's start and last period's end, or null with no periods. */
-    dayStart: string | null;
-    dayEnd: string | null;
-  } | null;
+  contents: TimetableSnapshotSummary | null;
 }
 
 function summaryOf(row: ArchivedTimetableRow): ArchivedTimetableSummary {
@@ -118,18 +113,7 @@ function summaryOf(row: ArchivedTimetableRow): ArchivedTimetableSummary {
     name: row.name,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
-    contents: parsed.ok ? contentsSummaryOf(parsed.snapshot) : null,
-  };
-}
-
-function contentsSummaryOf(snapshot: TimetableSnapshot): NonNullable<ArchivedTimetableSummary["contents"]> {
-  const ordered = [...snapshot.timeSlots].sort((a, b) => a.position - b.position);
-  return {
-    startDate: snapshot.timetable.anchorDate,
-    weekendMode: snapshot.settings.weekendMode,
-    slotCount: snapshot.settings.slotCount,
-    dayStart: ordered[0]?.startTime ?? null,
-    dayEnd: ordered[ordered.length - 1]?.endTime ?? null,
+    contents: parsed.ok ? summarizeTimetableSnapshot(parsed.snapshot) : null,
   };
 }
 
@@ -139,6 +123,38 @@ export async function listArchivedTimetables(db: SQLiteDatabase): Promise<Archiv
     "SELECT * FROM archived_timetables ORDER BY archived_at DESC, rowid DESC",
   );
   return rows.map(summaryOf);
+}
+
+/**
+ * One archived timetable's snapshot, validated, for export.
+ *
+ * The row's `name` is applied on the way out, for the same reason
+ * `restoreArchivedTimetable` applies it on the way in: renaming an archive
+ * updates the column and deliberately does not rewrite the snapshot, so the
+ * column is the name. Without this, exporting a timetable the user had renamed
+ * would quietly hand their friend the old name.
+ *
+ * A read, so it is not queued behind the write queue and takes no transaction.
+ * The failure shapes are the archive-reading ones the rest of this module
+ * already uses, so a caller has one vocabulary rather than two.
+ */
+export async function readArchivedSnapshotRow(
+  db: SQLiteDatabase,
+  archiveId: string,
+): Promise<{ ok: true; snapshot: TimetableSnapshot } | { ok: false; reason: LifecycleFailure }> {
+  const row = await db.getFirstAsync<ArchivedTimetableRow>(
+    "SELECT * FROM archived_timetables WHERE id = ?",
+    archiveId,
+  );
+  if (!row) return { ok: false, reason: { kind: "archiveNotFound" } };
+
+  const parsed = parseTimetableSnapshot(row.snapshot);
+  if (!parsed.ok) return { ok: false, reason: { kind: "archiveUnreadable", detail: parsed.reason } };
+
+  return {
+    ok: true,
+    snapshot: { ...parsed.snapshot, timetable: { ...parsed.snapshot.timetable, name: row.name } },
+  };
 }
 
 export async function countArchivedTimetables(db: SQLiteDatabase): Promise<number> {
@@ -598,4 +614,151 @@ export async function deleteArchivedTimetable(
   });
 
   return deleted ? { ok: true } : { ok: false, reason: { kind: "archiveNotFound" } };
+}
+
+/* ------------------------------------------------------------------ import */
+
+/**
+ * Where an imported timetable landed.
+ *
+ * Two outcomes, and the rule that picks between them is deliberately the
+ * simplest one that cannot surprise anybody: **an import never takes the user
+ * away from the timetable they are using.**
+ *
+ * With a timetable active, the import is added to the archive. Not because an
+ * archive is where imports belong — it is where timetables that are not the
+ * current one belong, which is the same shelf `archiveActiveTimetable` puts
+ * things on — but because the alternative is to decide, on the user's behalf,
+ * that the file they just opened matters more than the term they are half way
+ * through. Restore is one tap away and is the existing, explained, confirmed
+ * way to make that swap, so the import does not need its own.
+ *
+ * With none active, the import becomes the active timetable directly. There is
+ * nothing to displace, and landing a freshly imported timetable in the archive
+ * of an app showing "No timetable yet" would be a puzzle rather than a result.
+ */
+export type ImportDestination = "active" | "archive";
+
+/**
+ * What an import produced.
+ *
+ * There is deliberately no failure variant. Every way an import can be
+ * *declined* — not a Temelo file, a newer format, a damaged snapshot, too
+ * large — is decided by `storage/timetableFile` before this module is called,
+ * with nothing written and nothing to report back from here. What is left is
+ * the ordinary storage failure every writer shares: SQLite throwing, which
+ * rolls the transaction back and propagates, and which the caller already has
+ * a `catch` for. Inventing a `{ ok: false }` here would be a branch no code
+ * path can reach, sitting in front of every call site.
+ */
+export interface ImportTimetableResult {
+  destination: ImportDestination;
+  /** The app's state after the import — unchanged when it went to the archive. */
+  state: PersistedTimetable;
+  /** The local id the imported timetable was given. Never the file's. */
+  timetableId: string;
+}
+
+/**
+ * Adds a validated snapshot to this device as a new local timetable.
+ *
+ * Three things make this safe to point at a file a stranger sent:
+ *
+ *  - **It is only ever handed a validated snapshot.** Parsing and validating a
+ *    `.temelo` happens in `storage/timetableFile`, before this is called and
+ *    before the user has confirmed anything, so a malformed file never reaches
+ *    a transaction at all — it is declined with nothing written, which is a
+ *    stronger promise than "it would have rolled back".
+ *  - **Every id is replaced before the transaction opens.** See
+ *    `cloneSnapshotWithFreshIds`: the clone is a pure value, computed outside
+ *    the write, so the transaction's job is reduced to putting one finished
+ *    thing in one place.
+ *  - **It is one transaction, and it is the same one everything else here
+ *    uses.** The archive path is a single `INSERT`. The activate path is the
+ *    clear-and-write pair `restoreArchivedTimetable` performs, in the same
+ *    order, with the same read-back — so "half an active timetable" is not a
+ *    state this can produce any more than a restore can.
+ *
+ * `now` becomes the archive's `archived_at` (the imported-on date the list
+ * shows) and the local timetable's `updatedAt`. `createdAt` is the file's:
+ * a backup of a timetable made last September is a timetable made last
+ * September, and rewriting that would be the app editing the user's history to
+ * record its own filing.
+ */
+export async function importTimetableSnapshot(
+  db: SQLiteDatabase,
+  current: PersistedTimetable,
+  snapshot: TimetableSnapshot,
+  now: string,
+): Promise<ImportTimetableResult> {
+  /*
+   * A local copy, with every id in the file replaced by one generated here.
+   *
+   * Outside the transaction on purpose. It cannot fail in a way the database
+   * would care about, and doing it inside would hold a write lock for the
+   * length of a map over every record for no benefit.
+   */
+  const local = cloneSnapshotWithFreshIds(snapshot, now);
+
+  /*
+   * The name is taken from the file exactly as it was validated, and is *not*
+   * made unique. Two timetables called "Timetable1" — a friend's and mine — is
+   * a thing the Timetables screen has always been able to draw, and renaming
+   * somebody's timetable because a name was taken would be a worse answer to a
+   * problem the user does not have. `nextDefaultTimetableName` exists for the
+   * one case that genuinely needs a free number: a *blank* name at creation.
+   */
+  const name = normalizeTimetableName(local.timetable.name) ?? local.timetable.name;
+  const timetable: Timetable = { ...local.timetable, name };
+
+  if (current.timetable) {
+    const state = await withTransaction(db, async () => {
+      await db.runAsync(
+        `INSERT INTO archived_timetables (id, name, archived_at, created_at, format_version, snapshot)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        timetable.id,
+        timetable.name,
+        now,
+        timetable.createdAt,
+        local.formatVersion,
+        serializeTimetableSnapshot({ ...local, timetable }),
+      );
+      // Read back inside the transaction, exactly as every other operation
+      // here does. The active timetable is untouched, and this is what proves
+      // it rather than assumes it.
+      return readBackWithin(db);
+    });
+
+    return { destination: "archive", state, timetableId: timetable.id };
+  }
+
+  const settings: Settings = {
+    ...settingsWithTimetableSettings(current.settings, local.settings),
+    /*
+     * Importing a timetable into an app that has none *is* setting the app up,
+     * so the same flag `createTimetable` sets is set here. Without it a user
+     * who restored a backup would be sent back into the creation flow on the
+     * next launch, with their imported timetable sitting behind it — the one
+     * outcome a restore must not produce.
+     */
+    onboardingCompleted: true,
+  };
+
+  const state = await withTransaction(db, async () => {
+    // `clearActiveWithin` with nothing active is four empty DELETEs; it is here
+    // so that this path is literally the restore path and cannot drift from it.
+    await clearActiveWithin(db);
+    await writeActiveWithin(
+      db,
+      timetable,
+      settings,
+      local.timeSlots,
+      local.courses,
+      local.placements,
+      local.exceptions,
+    );
+    return readBackWithin(db);
+  });
+
+  return { destination: "active", state, timetableId: timetable.id };
 }

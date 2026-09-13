@@ -11,6 +11,7 @@ import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
 import type { DomainError } from "@/domain/errors";
 import { daysLabel, hoursLabel } from "@/features/timetables/summary";
+import { useShareTimetable } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { MAX_TIMETABLE_NAME_LENGTH, type ArchivedTimetableSummary } from "@/storage/timetableLifecycle";
@@ -36,8 +37,16 @@ export default function ArchivedTimetableScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
   const { state, readArchivedTimetables, restoreTimetable, renameArchive, deleteArchive } = useAppState();
-  const params = useLocalSearchParams<{ id?: string }>();
+  const params = useLocalSearchParams<{ id?: string; imported?: string }>();
   const archiveId = typeof params.id === "string" ? params.id : "";
+  /*
+   * Set only by the import flow, which navigates straight here so the user can
+   * see where their file landed. A route parameter rather than state, because
+   * the thing it is about happened on the previous screen — and it survives the
+   * focus re-read below, which would discard anything held here.
+   */
+  const justImported = params.imported === "1";
+  const sharing = useShareTimetable();
 
   const [entry, setEntry] = useState<ArchivedTimetableSummary | null | undefined>(undefined);
   const [name, setName] = useState<string | null>(null);
@@ -170,6 +179,16 @@ export default function ArchivedTimetableScreen() {
   return (
     <View style={{ flex: 1 }}>
       <ScreenContainer header={header}>
+        {/* Arriving straight from an import, the first thing on the screen says
+            so — and says what to do next, because the timetable is here but is
+            not in use, which is the one thing a user could mistake for the
+            import having half worked. */}
+        {justImported ? (
+          <Text style={[typography.body, { color: colors.accentStrong, marginBottom: spacing.sm }]}>
+            {t("transfer.importedNotice")}
+          </Text>
+        ) : null}
+
         {/* When it was archived, as a line rather than a row: it is context for
             everything below, not one of the things this screen can change. */}
         <Text style={[typography.caption, { color: colors.textMuted }]}>
@@ -224,6 +243,25 @@ export default function ArchivedTimetableScreen() {
             {t("timetables.damaged")}
           </Text>
         )}
+
+        {/* Sharing an archive is reading it, so it is offered whatever else is
+            on the screen — including for a snapshot too damaged to restore,
+            where the attempt simply reports that it could not be read. It sits
+            above the divider because it changes nothing; Delete is below it,
+            alone, because it cannot be taken back. */}
+        <View style={{ marginTop: spacing.lg }}>
+          <Button
+            label={t("transfer.shareAction")}
+            variant="secondary"
+            onPress={() => sharing.shareArchive(archiveId)}
+            disabled={busy || sharing.sharing}
+          />
+          {sharing.error ? (
+            <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
+              {t(sharing.error.key, sharing.error.params)}
+            </Text>
+          ) : null}
+        </View>
 
         <View
           style={{

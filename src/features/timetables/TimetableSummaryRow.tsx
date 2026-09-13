@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 
 interface TimetableSummaryRowProps {
@@ -16,6 +17,24 @@ interface TimetableSummaryRowProps {
   /** A subtle status beside the chevron — "Current". */
   status?: string;
   onPress: () => void;
+  /**
+   * A long press on the row, when the screen offers contextual actions for it.
+   *
+   * Optional, and absent on the screens that do not — Settings shows the
+   * current timetable as a way in and has nothing to offer about it. Where it
+   * is given, a normal tap still does exactly what it did: the long press adds
+   * a shortcut and takes nothing away, which is the only way a hidden gesture
+   * is acceptable.
+   */
+  onLongPress?: () => void;
+  /**
+   * Whether this row is the one the contextual actions are about.
+   *
+   * Drawn as a tinted background, the same accent wash a selected choice uses
+   * elsewhere — enough to be unmistakable while the sheet is up, and not a
+   * second kind of highlight for the eye to learn.
+   */
+  selected?: boolean;
   /** Drawn inside a `ListGroup`, so inset from the group's edges. */
   grouped?: boolean;
   /** The last row of a group, where the group's own edge is the separator. */
@@ -45,17 +64,33 @@ export function TimetableSummaryRow({
   context,
   status,
   onPress,
+  onLongPress,
+  selected = false,
   grouped = false,
   last = false,
 }: TimetableSummaryRowProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  const { t } = useI18n();
   const spoken = [context, name, summary, status].filter(Boolean).join(", ");
+  const actionsLabel = t("transfer.selectionActions", { name });
 
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="button"
       accessibilityLabel={spoken}
+      /*
+       * The long press is a shortcut, so it is announced as one rather than
+       * being invisible to a screen reader — which is the difference between a
+       * hidden gesture and an undiscoverable feature. Every action it offers is
+       * also a button on the timetable's own screen, so nobody depends on it.
+       */
+      accessibilityActions={onLongPress ? [{ name: "longpress", label: actionsLabel }] : undefined}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "longpress") onLongPress?.();
+      }}
+      accessibilityState={{ selected }}
       // The same tolerance every row in the app has: a finger that drifts a few
       // points while pressing has not changed its mind.
       pressRetentionOffset={{ top: 12, bottom: 12, left: 16, right: 16 }}
@@ -67,7 +102,7 @@ export function TimetableSummaryRow({
           gap: spacing.md,
           borderBottomWidth: last ? 0 : borderWidth.thin,
           borderColor: colors.divider,
-          backgroundColor: pressed ? colors.surfaceMuted : "transparent",
+          backgroundColor: selected ? colors.accentSubtle : pressed ? colors.surfaceMuted : "transparent",
         },
       ]}
     >

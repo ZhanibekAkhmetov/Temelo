@@ -145,10 +145,23 @@ current implementation status.
     Users can export their timetable data to a file and re-import it.
     *Done when:* a backup file produced by export fully reconstructs the
     timetable state when imported on the same or another device.
-    *Status: not started, but unblocked.* Milestone 15 introduced the
-    validated, versioned `TimetableSnapshot` that archiving already uses, and
-    it was designed so that a file is simply another place to put one. Nothing
-    in this branch reads or writes a file.
+    *Status: done.* Any timetable — the active one or an archived one — exports
+    to a `.temelo` file (UTF-8 JSON: a versioned envelope around the
+    `TimetableSnapshot` milestone 15 built) and is handed to the Android share
+    sheet, so the same action covers keeping a backup and sending a timetable to
+    a friend. Import is started inside Temelo with the system document picker,
+    validates the file completely before anything is written, and shows a
+    preview the user has to confirm; a malformed, foreign or newer-format file
+    produces a normal error and zero database changes. Every import creates a
+    *new local copy* with fresh device-generated ids, so importing your own
+    backup beside the original, or the same file twice, is safe and cannot
+    inherit a scheduled reminder's identity. With a timetable active the import
+    joins the archived ones and the current timetable is untouched; with none it
+    becomes the active timetable. Reminder lead times travel; the reminder
+    ledger, OS notification identifiers and every app-global preference do not.
+    Sharing a timetable is also offered by a long press on any row of the
+    Timetables screen. Not covered here: Android's "Open with Temelo" intent for
+    a `.temelo` chosen outside the app.
 
 13. **Calendar export**
     Timetable data can be exported in a format consumable by external
@@ -204,9 +217,10 @@ implemented and are described in the README:
 
 ## Next milestone
 
-Milestone 12, backup and restore: writing a `TimetableSnapshot` to a Temelo
-file and reading one back. Milestone 15 built and validated that snapshot for
-archiving, so this is the file layer on top of it and nothing more.
+Milestone 13, calendar export. Sharing already exists as a single action on a
+timetable, and this turns it into a choice between sending the timetable as a
+Temelo file and exporting it to a calendar — which is why milestone 12
+deliberately shipped no chooser: a menu with one item in it says nothing.
 
 Stabilization and a standalone, offline Android build (`preview` profile in
 [eas.json](../eas.json)) that a tester can install without a development
