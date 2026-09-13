@@ -5,6 +5,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { BootGate } from "@/components/BootGate";
 import { ClassReminderScheduler } from "@/features/reminders/ClassReminderScheduler";
+import { ShareReceiver } from "@/features/timetables/ShareReceiver";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { AppStateProvider } from "@/state/AppStateContext";
 import { ThemeProvider } from "@/theme/ThemeProvider";
@@ -42,6 +43,21 @@ export default function RootLayout() {
                     sees the persisted timetable. */}
                 <ClassReminderScheduler />
                 <AppStack />
+                {/* A `.temelo` another app shared into Temelo. Draws nothing at
+                    all until one arrives, and then draws the whole of what
+                    happens to it over the top of whatever is on screen.
+
+                    Beside the navigator rather than inside it, and with no
+                    route of its own, because a shared file changes what is
+                    *drawn* and never where the app *is*. That is not a
+                    stylistic choice — it is the fix for this feature's one
+                    recurring failure, which was always a navigation dispatched
+                    into a stack that was not there to receive it. As an overlay
+                    there is no stack to build, so nothing about launch order,
+                    hydration timing or `BootGate` can make it unsafe, and none
+                    of those had to change to accommodate it. See
+                    `ShareReceiver` and `domain/incomingShare`. */}
+                <ShareReceiver />
               </BootGate>
             </I18nProvider>
           </ThemeProvider>

@@ -43,10 +43,10 @@ src/
                   dev-only diagnostics)
   i18n/           Translations, locale resolution, formatting
   state/          App state provider and defaults
-  storage/        Persistence / repository boundary
+  storage/        Persistence / repository boundary, and the `.temelo` format
   theme/          Design tokens, appearance preference, class colours
   types/          Shared model types
-  util/           Native-module wrappers (notifications, haptics)
+  util/           Native-module wrappers (notifications, haptics, files)
 ```
 
 New directories are added when real code needs them — empty directories are
@@ -166,8 +166,123 @@ active timetable still active.
 
 The snapshot format carries its own `formatVersion`, separate from the
 database's `user_version`, because it is a value that outlives the schema
-that produced it — and because the next feature writes it to a file the user
-keeps. File export and import are not implemented.
+that produced it — and because it is also what a `.temelo` file carries.
+
+## Export and import: the `.temelo` file
+
+A timetable file is a `TimetableSnapshot` inside a small versioned envelope
+(`storage/timetableFile`):
+
+```
+{ type: "temelo-timetable", formatVersion: 1, exportedAt: <ISO>, timetable: <snapshot> }
+```
+
+UTF-8 JSON, extension `.temelo`. The envelope is versioned separately from the
+snapshot because the two change for different reasons — the snapshot's version
+moves when what a timetable *is* changes, the envelope's when how a file is laid
+out does.
+
+Three rules govern it:
+
+- **One representation.** Export writes the same snapshot an archive holds, and
+  import validates it with the same `parseTimetableSnapshotValue` a restore uses.
+  There is no second model of a timetable for files. Export also parses back
+  what it just wrote before sharing it, so a timetable that could not be
+  imported is caught here rather than on the recipient's device.
+- **A file is untrusted input.** The magic, the envelope version, the snapshot
+  version, a length bound before `JSON.parse`, a record-count bound before
+  per-record validation, then every field and every reference. `JSON.parse`'s
+  result never becomes application state. Nothing is written to the database
+  until the user has confirmed a preview, so a malformed file is *declined*
+  rather than rolled back.
+- **Import clones.** Every id in the file is replaced by a device-generated one
+  before the transaction opens, with references remapped consistently
+  (`cloneSnapshotWithFreshIds`). A file may come from this very installation, so
+  keeping its ids would collide on a primary key — and, worse, would let two
+  copies of a class share a reminder identity, which is derived from the
+  placement id and occurrence date. Importing the same file twice therefore
+  produces two independent timetables.
+
+The file carries the timetable and nothing else: the app-global settings
+(appearance, language, default reminder, grid orientation) are excluded by
+construction, because the file carries a `TimetableSnapshot` and that is already
+bounded by `TIMETABLE_SETTING_KEYS`. The reminder ledger, OS notification
+identifiers and SQLite metadata are not in the snapshot and so cannot be in the
+file. Per-class and per-occurrence reminder *settings* do travel; reminder
+*history* does not.
+
+Importing reuses the lifecycle's transactions: with a timetable active it is one
+insert into `archived_timetables`, with none it is the same clear-and-write a
+restore performs. An import never displaces the active timetable.
+
+The imported copy is named after the file, with the lowest free `(n)` appended
+when the device already has a timetable of that name — "SoSe26 (1)", "SoSe26
+(2)". This is the *only* place a name is made unique: a name the user typed is
+theirs, and two timetables called "SoSe26" is a choice the app does not overrule.
+An import is the one case where the name was nobody's choice, and where the same
+file tapped twice in a chat would otherwise produce list rows nothing can tell
+apart. The number is chosen inside the import's transaction; the preview
+predicts it beforehand so the final name is on screen before the user agrees to
+it. The `.temelo` itself is never modified.
+
+Platform access is confined to `util/timetableFiles`, which owns
+`expo-file-system` and `expo-sharing` and knows nothing about timetables —
+exactly the line `util/notifications` and `util/haptics` already draw. That is
+what lets the whole format be exercised by the Node harness, which has no native
+modules.
+
+## Receiving a share: a transient receiver, not a screen
+
+On Android, another app's share sheet can send a `.temelo` to Temelo. The
+receiving experience is deliberately **not** the app:
+
+```
+Telegram → Share → Temelo → preview → Import → "Timetable imported" → Done
+```
+
+and Done leaves. The imported timetable is seen the way every other timetable is
+seen: by opening Temelo.
+
+- **`expo-sharing`'s config plugin registers the intent filter**, on
+  `MainActivity`, for `ACTION_SEND` of `application/octet-stream` — the type
+  Temelo writes and the type every messenger reports for an extension Android
+  has no mapping for. There is no `ACTION_VIEW` registration: "open a `.temelo`
+  with Temelo" is best-effort at the mercy of whichever provider is in the
+  middle, and Share → Temelo is the supported entry.
+- **`app/+native-intent.ts` stops a navigation rather than starting one.** A
+  send carries no URI, so `expo-sharing` fabricates the deep link
+  `temelo://expo-sharing` for the benefit of navigation libraries. Expo Router
+  would resolve that to `+not-found`. `redirectSystemPath` recognises it and
+  answers with the app's ordinary entry path on a cold launch and with the empty
+  string — Expo Router's "do not navigate" — on a warm one. See
+  `domain/incomingShare`.
+- **`features/timetables/ShareReceiver` draws the whole errand as an overlay.**
+  It is mounted once by the root layout beside the navigator, imports no router,
+  and has six states. It finds its payload by asking `expo-sharing` on mount and
+  on every return to the foreground, rather than by being told.
+- **Done, Close and Cancel all call `BackHandler.exitApp()`**, which is the
+  activity's default back behaviour: at the root of a task entered from another
+  app that finishes the task and reveals the sender. It also means no Temelo
+  task is left holding a consumed share.
+
+The rule this encodes, and the reason it is written down: **an arrival changes
+what is drawn, never where the app is.** Earlier attempts made the incoming file
+a route, and every failure was the same one — a `push`/`replace` resolved
+against a navigation state whose `<Stack>` had not mounted is built with
+`target: undefined` and reaches only Expo Router's internal slot navigator,
+producing "the action ... was not handled by any navigator". `navigationRef.isReady()` is already
+true when that happens, so no readiness check catches it.
+Removing the navigation removes the failure; `harness/architecture.mjs` asserts
+that the receiver still has no router to call.
+
+The payload is read into memory and cleared from the native singleton as soon as
+the bytes arrive, before the user answers — so an import never depends on a
+`content://` grant Android may revoke in the meantime, and a redelivered intent
+(Android redelivers the launching intent when a reclaimed task is resumed)
+cannot present the same file twice.
+
+None of this can be proven off-device. The harness proves the decisions and the
+sequencing; task and activity behaviour is a device checklist.
 
 ## Local persistence
 
@@ -216,6 +331,16 @@ into a corner:
   edge cases (slot generation, recurrence, date math).
 - UI/component testing is a lower near-term priority than domain logic
   coverage, given the current project stage.
+- `harness/architecture.mjs` is the one suite that reads source files rather
+  than exercising modules. It guards design properties whose violation would
+  only show up on a physical device — today, that the share receiver has no
+  router to call. Keep it small: a check belongs there only when the failure it
+  prevents cannot be reproduced in Node at all.
+- **Nothing in the harness can prove Android task or activity behaviour.**
+  Which task a share-launched activity lands in, whether Done returns the user
+  to the sending app, and what the Expo dev client does to the task on the way
+  are device questions. They are verified with `adb shell dumpsys activity
+  activities` and a physical phone, not here.
 - Adding a test runner (e.g. Jest, per Expo's own guide) should happen when
   there is domain logic worth testing, not preemptively.
 
@@ -235,7 +360,6 @@ The following are recognized as open questions, deliberately not decided
 yet:
 
 - Test runner choice and configuration.
-- Backup/restore file format.
 - Calendar export format/integration mechanism per target platform.
 - Synchronization protocol and any future account model.
 

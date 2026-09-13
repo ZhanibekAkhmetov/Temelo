@@ -14,6 +14,7 @@ import { TextField } from "@/components/TextField";
 import type { DomainError } from "@/domain/errors";
 import { ALL_WEEKEND_MODES } from "@/domain/week";
 import { hoursLabel, shapeOfActive } from "@/features/timetables/summary";
+import { useShareTimetable } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { WEEKEND_MODE_LABEL_KEY } from "@/i18n/weekendMode";
 import { useAppState } from "@/state/AppStateContext";
@@ -44,6 +45,12 @@ export default function CurrentTimetableScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t } = useI18n();
   const { state, renameActiveTimetable, setTimetableStartDate, archiveCurrentTimetable, setWeekendMode } = useAppState();
+  /*
+   * Share is here as well as behind the long press on the Timetables list,
+   * because a shortcut nobody finds is not a feature. This is the screen a user
+   * reaches by tapping their timetable, so it is where they will look.
+   */
+  const sharing = useShareTimetable();
 
   const { timetable } = state;
   const [name, setName] = useState(timetable?.name ?? "");
@@ -162,6 +169,23 @@ export default function CurrentTimetableScreen() {
           onPress={() => router.push("/timetables/academic-day")}
         />
       </FormSection>
+
+      {/* Above the divider, not below it: sharing changes nothing about the
+          timetable, and grouping it with Archive would put a harmless action in
+          the section reserved for the one with a consequence. */}
+      <View style={{ marginTop: spacing.lg }}>
+        <Button
+          label={t("transfer.shareAction")}
+          variant="secondary"
+          onPress={sharing.shareActive}
+          disabled={busy || sharing.sharing}
+        />
+        {sharing.error ? (
+          <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
+            {t(sharing.error.key, sharing.error.params)}
+          </Text>
+        ) : null}
+      </View>
 
       <View
         style={{

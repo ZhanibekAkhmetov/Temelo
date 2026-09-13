@@ -19,7 +19,7 @@ development build, not Expo Go.
 - `npx expo start --dev-client` — run the app (phone and computer must share
   a local network)
 - `npm run lint` — lint (`expo lint`); run after code changes
-- `npm run harness` — the geometry, storage and lifecycle harnesses
+- `npm run harness` — the geometry, storage, lifecycle and transfer harnesses
   (`harness/`), run against Node's own SQLite. There is no test runner; this
   is the substitute, and it must stay green.
 
@@ -42,8 +42,18 @@ development build, not Expo Go.
   picked in the editor). Otherwise the series reaches back as far as the
   timetable does — see `seriesLowerBound` in `domain/recurrence`.
 - One active timetable lives in the normalised working tables; archived ones
-  are versioned JSON snapshots in `archived_timetables`. Archive, restore
-  and create-new are atomic swaps in `storage/timetableLifecycle`.
+  are versioned JSON snapshots in `archived_timetables`. Archive, restore,
+  create-new and import are atomic swaps in `storage/timetableLifecycle`.
+- A `.temelo` file is a `TimetableSnapshot` in a versioned envelope
+  (`storage/timetableFile`) — never a second representation of a timetable.
+  Validate an incoming one with the same snapshot validator a restore uses,
+  and never write anything before the user has confirmed the preview.
+- Importing always clones: every id is replaced with a device-generated one
+  and references remapped, because a file may come from this very device and
+  a shared placement id would also mean a shared reminder identity.
+- `expo-file-system` and `expo-sharing` are reached only through
+  `src/util/timetableFiles.ts`; nothing above it names a native file module,
+  and nothing in it knows what a timetable is.
 - Records intended to be future-sync-able use device-generated string IDs
   plus `createdAt`/`updatedAt`/`deletedAt`.
 

@@ -44,7 +44,16 @@
           "color": "#208AEF"
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": ["application/octet-stream"]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -162,6 +162,29 @@ The first implementation milestone covers:
 - Creating a class in an empty slot with the minimal flow described above.
 - Local, on-device persistence of everything above.
 
+## Receiving a timetable from another app
+
+A `.temelo` arriving in Telegram, WhatsApp, mail or Drive is imported with
+**Share → Temelo**, and that is a separate, deliberately small experience:
+
+```
+Share → Temelo → what is in the file → Import → "Timetable imported" → Done
+```
+
+- It is **not** the app. There is no navigation out of it — no Today, no
+  Settings, no Timetables — because it is an errand, not a visit. Done returns
+  the user to whatever app they shared from.
+- It shows the same preview the Import button shows, including the name the
+  local copy will actually be created under, and nothing is written until the
+  user confirms.
+- The imported timetable is seen by opening Temelo normally. Where it landed
+  follows the ordinary rule: with a timetable already active it joins the
+  archived ones, and with none it becomes the timetable.
+- Cancelling, and a file that is not a Temelo timetable, write nothing at all.
+
+The Import button inside Temelo stays, and says so in one line: "Choose a
+.temelo file, or share one to Temelo from another app."
+
 ## Non-goals (current)
 
 The following are explicitly out of scope for the current implementation
@@ -172,7 +195,11 @@ effort:
 - No cloud synchronization between devices.
 - No calendar export (Google/Apple/Samsung Calendar or others).
 - No direct device-calendar integration.
-- No timetable backup/restore feature yet.
+- No "Open with Temelo" for a `.temelo` file *tapped* in a file manager or a
+  chat. Android reports an unknown extension as whatever the provider in the
+  middle guesses, so registering for that would be unreliable in exactly the
+  place it would be used. Sharing a file *to* Temelo is supported and is the
+  documented route — see the share receiver below.
 - No duplicate, copy, or undo of a placement. (Move and the
   single-occurrence-vs-recurring edit question, listed as future behaviour
   when this document was written, are now implemented — see
@@ -189,8 +216,10 @@ current build:
 - Calendar export to Google Calendar, Apple Calendar, Samsung Calendar, and
   similar applications.
 - Direct integration with the device's native calendar.
-- Timetable export to and import from a file (archiving and restoring on the
-  same device is implemented; moving a timetable between devices is not).
+- Opening a `.temelo` file by *tapping* it outside Temelo — the Android "Open
+  with" intent. (Exporting a timetable, sharing it, importing one from inside
+  Temelo, and receiving one through another app's share sheet are all
+  implemented.)
 
 ## Terminology
 
@@ -202,6 +231,13 @@ current build:
 - **Archived timetable** — A timetable the user has put away. It is preserved
   exactly, is not editable while archived, schedules no reminders, and can be
   restored, renamed or deleted permanently.
+- **Temelo file** — A single timetable written to a `.temelo` file, for
+  keeping as a backup or sending to somebody else. It holds the timetable and
+  nothing about the person: no appearance or language preference, and no
+  reminder history. Importing one always creates a *new copy* on the device, so
+  importing your own backup — or the same file twice — is safe. A copy whose
+  name is already taken gets the lowest free number after it ("SoSe26 (1)"), so
+  two copies are two rows a person can tell apart.
 - **Time slot** — A recurring position in the academic-day structure,
   defined by a weekday and a local start/end time, generated from the
   academic-day configuration and individually editable afterward.

@@ -18,17 +18,22 @@ import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
 import { createSampleTimetable } from "@/state/sampleTimetable";
 import { bootstrapStorage } from "@/storage/bootstrap";
 import { readStorageReport as readStorageReport_, type StorageReport } from "@/storage/diagnostics";
+import { buildTimetableSnapshot, timetableSettingsOf, type TimetableSnapshot } from "@/storage/snapshot";
 import {
   archiveActiveTimetable,
   countArchivedTimetables,
   createTimetable,
   deleteAllTimetableData,
   deleteArchivedTimetable,
+  importTimetableSnapshot,
   listArchivedTimetables,
+  listTimetableNames,
   normalizeTimetableName,
+  readArchivedSnapshotRow,
   renameArchivedTimetable,
   restoreArchivedTimetable,
   type ArchivedTimetableSummary,
+  type ImportDestination,
   type LifecycleFailure,
   type NewTimetableInput,
 } from "@/storage/timetableLifecycle";
@@ -73,6 +78,40 @@ export type ActionResult = { ok: true } | { ok: false; error: DomainError };
  * the app has languages.
  */
 export type LifecycleActionResult = ActionResult;
+
+/**
+ * A lifecycle operation's result: `ActionResult` with whatever the successful
+ * branch has to say for itself.
+ *
+ * Almost every one of them says nothing — archiving, restoring and deleting
+ * either happened or did not, and the app reads the new state from `state`
+ * rather than from a return value. Import is the exception: the caller has to
+ * navigate somewhere, and *where* depends on whether the timetable became the
+ * active one or joined the archive, which only the transaction knows. So the
+ * payload is a type parameter rather than a second result type, and the
+ * failure branch stays identical across all of them.
+ */
+export type LifecycleOutcome<T extends object = object> =
+  | ({ ok: true } & T)
+  | { ok: false; error: DomainError };
+
+/**
+ * A snapshot asked for by a screen that is about to write it to a file.
+ *
+ * The snapshot rather than the file: this layer owns the database and the app's
+ * state, and `storage/timetableFile` owns what a `.temelo` looks like. Keeping
+ * the two apart is what stops a second idea of the format growing here.
+ */
+export type SnapshotResult =
+  | { ok: true; snapshot: TimetableSnapshot }
+  | { ok: false; error: DomainError };
+
+/** Where an imported timetable landed, or why it did not land at all. */
+export type ImportActionResult = LifecycleOutcome<{
+  destination: ImportDestination;
+  /** The local id it was given — never the one the file carried. */
+  timetableId: string;
+}>;
 
 /**
  * Whether what the user is looking at has actually reached the disk.
@@ -249,6 +288,38 @@ interface AppStateContextValue {
   deleteArchive: (archiveId: string) => Promise<LifecycleActionResult>;
   /** The archived timetables, freshly read. Not held in state — see below. */
   readArchivedTimetables: () => Promise<ArchivedTimetableSummary[]>;
+  /**
+   * Every timetable name on the device — the active one's and each archive's.
+   *
+   * Read on demand rather than held, for the same reason the archived
+   * timetables are. The one caller is the import preview, which needs it to
+   * predict what the imported copy will be called; the name that is actually
+   * used is chosen inside the import's own transaction, so this is allowed to
+   * be a prediction and must not become the decision.
+   */
+  timetableNames: () => Promise<string[]>;
+  /**
+   * The active timetable as a snapshot, ready to be written to a file.
+   *
+   * Built from app state rather than re-read from the database, because app
+   * state *is* what has been persisted — every successful action is written
+   * back before it is shown — and re-reading would introduce a second answer to
+   * a question that already has one. It is a pure read of what is on screen, so
+   * it takes no transaction, changes nothing, and cannot interleave with a save.
+   */
+  activeTimetableSnapshot: () => SnapshotResult;
+  /** One archived timetable's snapshot, validated, for the same purpose. */
+  readArchivedSnapshot: (archiveId: string) => Promise<SnapshotResult>;
+  /**
+   * Adds a validated snapshot to this device as a *new local copy*, with fresh
+   * ids throughout.
+   *
+   * It becomes the active timetable when there is none, and an archived one
+   * otherwise — an import never displaces the timetable the user is using. The
+   * snapshot must already have been validated by `storage/timetableFile`; this
+   * writes, and does not judge.
+   */
+  importTimetable: (snapshot: TimetableSnapshot) => Promise<ImportActionResult>;
   /**
    * How many archived timetables there are, as of hydration.
    *
@@ -708,9 +779,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      * is what makes "one transaction" mean something at the app's level and
      * not only at SQLite's.
      */
-    const runLifecycle = (
-      operation: (db: SQLiteDatabase, current: PersistedTimetable) => Promise<LifecycleActionResult>,
-    ): Promise<LifecycleActionResult> => {
+    const runLifecycle = <T extends object = object>(
+      operation: (db: SQLiteDatabase, current: PersistedTimetable) => Promise<LifecycleOutcome<T>>,
+    ): Promise<LifecycleOutcome<T>> => {
       const db = databaseRef.current;
       if (!db) return Promise.resolve({ ok: false, error: domainError("errors.storageWriteFailed") });
 
@@ -734,7 +805,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           // it — but the baseline is cleared so the next ordinary save is a
           // full write rather than a diff against an assumption.
           persistedRef.current = null;
-          return { ok: false, error: domainError("errors.storageWriteFailed") } as LifecycleActionResult;
+          return { ok: false, error: domainError("errors.storageWriteFailed") };
         }
       });
 
@@ -830,6 +901,60 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!db) return [];
       return listArchivedTimetables(db);
     };
+
+    const timetableNames: AppStateContextValue["timetableNames"] = async () => {
+      const db = databaseRef.current;
+      // The one name that is knowable without the database is still worth
+      // giving: without it a preview drawn before storage opened would offer a
+      // name that collides with the timetable on screen.
+      const current = latestStateRef.current;
+      if (!db) return current.timetable ? [current.timetable.name] : [];
+      return listTimetableNames(db, current);
+    };
+
+    const activeTimetableSnapshot: AppStateContextValue["activeTimetableSnapshot"] = () => {
+      const timetable = state.timetable;
+      if (!timetable) return { ok: false, error: domainError("errors.noActiveTimetable") };
+      return {
+        ok: true,
+        snapshot: buildTimetableSnapshot({
+          timetable,
+          // The timetable's half of settings and no more: appearance, language
+          // and the default reminder are the user's, not the timetable's, and
+          // must not travel to somebody else's phone. The line is
+          // `TIMETABLE_SETTING_KEYS`, drawn once, in `types/models`.
+          settings: timetableSettingsOf(state.settings),
+          timeSlots: state.timeSlots,
+          courses: state.courses,
+          placements: state.placements,
+          exceptions: state.exceptions,
+        }),
+      };
+    };
+
+    const readArchivedSnapshot: AppStateContextValue["readArchivedSnapshot"] = async (archiveId) => {
+      const db = databaseRef.current;
+      if (!db) return { ok: false, error: domainError("errors.archiveGone") };
+      const result = await readArchivedSnapshotRow(db, archiveId);
+      if (result.ok) return { ok: true, snapshot: result.snapshot };
+      const failure = lifecycleError(result.reason);
+      return failure.ok ? { ok: false, error: domainError("errors.archiveGone") } : failure;
+    };
+
+    const importTimetable: AppStateContextValue["importTimetable"] = (snapshot) =>
+      runLifecycle(async (db, current) => {
+        const result = await importTimetableSnapshot(db, current, snapshot, new Date().toISOString());
+        /*
+         * Only the activate path changed app state; the archive path wrote one
+         * row and left the working tables alone. `settleLifecycle` is correct
+         * for both — it is handed the state read back from inside the
+         * transaction either way — and running it unconditionally is what keeps
+         * the diff baseline honest rather than depending on which branch ran.
+         */
+        settleLifecycle(result.state);
+        await refreshArchivedCount(db);
+        return { ok: true, destination: result.destination, timetableId: result.timetableId };
+      });
 
     const upsertPlacement: AppStateContextValue["upsertPlacement"] = (input) => {
       // A class has to belong to a timetable. Nothing can reach here without
@@ -1143,6 +1268,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       renameArchive,
       deleteArchive,
       readArchivedTimetables,
+      timetableNames,
+      activeTimetableSnapshot,
+      readArchivedSnapshot,
+      importTimetable,
       upsertPlacement,
       movePlacement,
       checkPlacement,

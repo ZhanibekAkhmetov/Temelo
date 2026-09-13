@@ -40,8 +40,12 @@
  * able to *decline* — leaving the active timetable exactly where it was —
  * rather than throw halfway through replacing it.
  *
- * File export and import are the next branch. Nothing here writes or reads a
- * file, and nothing here should grow to.
+ * File export and import are now built on exactly this. `storage/timetableFile`
+ * wraps a snapshot in a `.temelo` envelope and validates an incoming one with
+ * `parseTimetableSnapshotValue` below — the same validator a restore uses, so
+ * there is one definition of what a timetable is and not two. Nothing here
+ * writes or reads a file, and nothing here should grow to: this module is the
+ * format, and the file layer is a caller.
  */
 
 import { normalizeClassColorId } from "@/domain/classColor";
@@ -96,7 +100,21 @@ export interface TimetableContents {
 
 export type SnapshotParseResult =
   | { ok: true; snapshot: TimetableSnapshot }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      /**
+       * True when the only thing wrong is that the snapshot is *newer* than
+       * this build understands.
+       *
+       * A restore does not care — a damaged archive and a future one are both
+       * "cannot be restored" — but the file layer does, because those are two
+       * different sentences to put in front of a user: one says the file is
+       * broken, the other says Temelo is out of date. Optional rather than a
+       * discriminant so that every existing `reason` reader is untouched.
+       */
+      unsupportedVersion?: boolean;
+    };
 
 /**
  * The timetable-specific half of a full settings object.
@@ -435,27 +453,66 @@ function assertCoherent(snapshot: TimetableSnapshot): void {
 }
 
 /**
- * A stored snapshot, validated.
+ * How many classes a snapshot describes, and the shape of its day.
  *
- * Never throws. A restore must be able to decline and leave everything as it
- * was, so the failure is a value with a reason in it.
+ * The one-line description of a timetable nobody has opened yet — what the
+ * archived list already shows, and what an import preview has to show about a
+ * file that is not in the database at all. Derived here, next to the format it
+ * reads, so the two screens cannot drift into two different answers.
+ *
+ * `classCount` counts live placements: series, not occurrences, and not
+ * courses. It is the only number in it, it is offered rather than imposed, and
+ * the archived screens deliberately do not draw it — see the note there. An
+ * import preview does, because a file is the one timetable a user is being
+ * asked to accept without having seen it.
  */
-export function parseTimetableSnapshot(text: string): SnapshotParseResult {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: "the archive is not valid JSON" };
-  }
+export interface TimetableSnapshotSummary {
+  /** The timetable's start date, exactly as it was written. */
+  startDate: string;
+  weekendMode: WeekendMode;
+  slotCount: number;
+  /** First period's start and last period's end, or null with no periods. */
+  dayStart: string | null;
+  dayEnd: string | null;
+  classCount: number;
+}
 
-  if (!isObject(raw)) return { ok: false, reason: "the archive is not an object" };
+export function summarizeTimetableSnapshot(snapshot: TimetableSnapshot): TimetableSnapshotSummary {
+  const ordered = [...snapshot.timeSlots].sort((a, b) => a.position - b.position);
+  return {
+    startDate: snapshot.timetable.anchorDate,
+    weekendMode: snapshot.settings.weekendMode,
+    slotCount: snapshot.settings.slotCount,
+    dayStart: ordered[0]?.startTime ?? null,
+    dayEnd: ordered[ordered.length - 1]?.endTime ?? null,
+    classCount: snapshot.placements.filter((placement) => placement.deletedAt === null).length,
+  };
+}
+
+/**
+ * A snapshot that has already been through `JSON.parse`, validated.
+ *
+ * The whole of the validation lives here rather than in the text entry point
+ * below, because an imported `.temelo` file carries its snapshot as a *field*
+ * of a larger document — it has been parsed once already, and re-serializing
+ * it only to re-parse it would be a round trip whose only purpose was to reach
+ * this function. One validator, two ways in.
+ *
+ * `raw` is `unknown` and is treated as such: nothing below reads a field
+ * without checking it, and a stored archive gets exactly the same scrutiny a
+ * file from a stranger does.
+ */
+export function parseTimetableSnapshotValue(raw: unknown): SnapshotParseResult {
+  if (!isObject(raw)) return { ok: false, reason: "the snapshot is not an object" };
 
   const formatVersion = int(raw, "formatVersion");
-  if (formatVersion === null) return { ok: false, reason: "the archive has no format version" };
+  if (formatVersion === null) return { ok: false, reason: "the snapshot has no format version" };
+  if (formatVersion < 1) return { ok: false, reason: `the snapshot's format version is ${formatVersion}` };
   if (formatVersion > SNAPSHOT_FORMAT_VERSION) {
     return {
       ok: false,
-      reason: `the archive was written in format ${formatVersion}, which this version of Temelo cannot read`,
+      unsupportedVersion: true,
+      reason: `the snapshot was written in format ${formatVersion}, which this version of Temelo cannot read`,
     };
   }
 
@@ -482,4 +539,20 @@ export function parseTimetableSnapshot(text: string): SnapshotParseResult {
     if (error instanceof Invalid) return { ok: false, reason: error.message };
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * A stored snapshot, as the text an archive row holds, validated.
+ *
+ * Never throws. A restore must be able to decline and leave everything as it
+ * was, so the failure is a value with a reason in it.
+ */
+export function parseTimetableSnapshot(text: string): SnapshotParseResult {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: "the archive is not valid JSON" };
+  }
+  return parseTimetableSnapshotValue(raw);
 }

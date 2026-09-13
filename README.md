@@ -93,6 +93,23 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
   best-effort: these are ordinary local notifications, subject to permission
   and to the platform's own delivery behaviour.
 
+**Sharing and backup**
+
+- Any timetable — the current one or an archived one — exports to a `.temelo`
+  file through the Android share sheet, so it can be sent by message, mail,
+  Drive or Quick Share, or simply kept as a backup.
+- Importing one is the reverse, and starts inside Temelo: pick the file, read a
+  preview of what is in it, confirm. Nothing is written before that, so a file
+  that is not a Temelo timetable changes nothing.
+- An import is always a **new local copy** with fresh ids. Importing your own
+  backup while the original is still on the device is safe, and so is importing
+  the same file twice — you get two timetables, not a collision. Reminder lead
+  times travel; reminder history and notification identity deliberately do not.
+- The file carries the timetable and nothing else: not your appearance,
+  language or default reminder, not reminder history, and no SQLite metadata.
+- An import never displaces what you are using. With a timetable active it
+  joins the archived ones; with none, it becomes the active timetable.
+
 **Persistence and preferences**
 
 - SQLite (`expo-sqlite`) as the source of truth, with ordered migrations keyed
@@ -103,7 +120,8 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
   languages by default, with a manual override.
 
 Not yet implemented: picking an existing course when creating a second
-placement, backup/restore, calendar export, synchronization, and accounts.
+placement, calendar export, opening a `.temelo` from outside the app
+("Open with Temelo"), synchronization, and accounts.
 
 ## Technology
 
@@ -113,6 +131,9 @@ Versions are read from [package.json](package.json):
 - React Native `0.86.2`, React `19.2.3`, React Compiler enabled
 - TypeScript `~6.0.3` in strict mode
 - `expo-sqlite` `~57.0.2` for persistence
+- `expo-file-system` `~57.0.7` for reading and writing `.temelo` files, and for
+  its own native document picker
+- `expo-sharing` `~57.0.19` for the Android share sheet
 - `react-native-gesture-handler` `~2.32.0` and `react-native-reanimated`
   `4.5.1` for the timetable surface
 - `expo-notifications` `~57.0.9` for class reminders
@@ -146,6 +167,11 @@ Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the short version:
   app had to learn about multiple timetables; an archived one is a single
   validated, versioned JSON snapshot, and archiving or restoring is one atomic
   swap between the two.
+- **A file is another place to put a snapshot.** Export wraps the very same
+  validated `TimetableSnapshot` an archive holds in a small versioned envelope;
+  import validates it with the same validator a restore uses, and only then
+  re-identifies every record. There is one definition of what a timetable is,
+  not a second one for files.
 - **Sync-ready records.** Device-generated string IDs plus
   `createdAt`/`updatedAt`/`deletedAt`, so a future sync layer has what it needs
   without a data migration.
@@ -229,14 +255,15 @@ The full milestone history is in [docs/ROADMAP.md](docs/ROADMAP.md).
 **Done** — onboarding and generated periods; the weekly grid with gestures,
 pinch zoom and week paging; quick class creation and editing; weekly, biweekly
 and one-time recurrence with edit scopes and occurrence exceptions; SQLite
-persistence with migrations; local class reminders; themes; English, Russian
-and German localization.
+persistence with migrations; the timetable lifecycle (one active timetable plus
+archived ones); `.temelo` export, sharing and import; local class reminders;
+themes; English, Russian and German localization.
 
 **Next** — stabilization and a standalone offline Android release.
 
 **Later, not committed to** — reusing an existing course across placements,
-backup and restore, calendar export, a web version, optional account-based
-synchronization, and possible store distribution.
+calendar export, a web version, optional account-based synchronization, and
+possible store distribution.
 
 ## Repository structure
 
@@ -250,10 +277,11 @@ src/
                 dev-only diagnostics
   i18n/         Translations (en/ru/de), locale detection, formatting
   state/        App state provider and defaults
-  storage/      SQLite: database, schema, migrations, repository
+  storage/      SQLite: database, schema, migrations, repository, and the
+                `.temelo` file format
   theme/        Design tokens, appearance preference, class colours
   types/        Shared model types
-  util/         Native-module wrappers (notifications, haptics)
+  util/         Native-module wrappers (notifications, haptics, files)
 docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md
 harness/        Node-based domain and storage checks
 assets/         App icons and splash images
