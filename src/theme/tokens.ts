@@ -12,12 +12,16 @@
  * `theme/classColors`.
  *
  * The accent is the one colour that is not chosen for the chrome at all: it
- * is Temelo's own blue, taken from the frame of the mark in
- * `assets/branding/temelo-logo.png` (#0053C1) and lightened just enough to
- * carry white text at 5.6:1. The dark scheme answers it with the pale blue a
- * dark ground needs, and `accentSubtle` in both schemes is a tint of that
- * same blue rather than a neutral — so a selected day, a primary button and
- * the app icon are recognisably one colour.
+ * is Temelo's own blue, the one the T in `assets/branding/temelo-logo.png`
+ * is drawn in — #89B4F8, hue 217°. The dark scheme sits at that hue and that
+ * lightness, so the app and its icon read as one colour.
+ *
+ * Light cannot simply reuse it: #89B4F8 on white is 2.1:1, which carries no
+ * text and draws no line. So light keeps the hue and darkens it until white
+ * text on it clears 5.6:1. `accentSubtle` in both schemes is a tint of the
+ * same blue rather than a neutral, which is what keeps a selected day, a
+ * primary button and the mark recognisably related rather than merely
+ * adjacent.
  *
  * Nothing in this file affects layout. Every value is a colour, and every
  * dimension the timetable measures itself with lives in
