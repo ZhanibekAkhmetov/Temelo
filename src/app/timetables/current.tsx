@@ -161,9 +161,18 @@ export default function CurrentTimetableScreen() {
         />
         {/* Which days this timetable has classes on is edited here and only
             here. It is a single choice, so it commits on tap, the way every
-            other single choice in the app does. */}
+            other single choice in the app does.
+
+            Labelled by what the *value* names. Every weekend mode is named
+            after the days it takes away — "Sat & Sun", "Sun only", "Show
+            all" — so under a "Days shown" label the row read as its own
+            opposite: a Mon-Fri timetable said "Days shown: Sat & Sun". The
+            sheet this opens was already titled "Days without classes", and so
+            is the same choice during setup; this row was the one place that
+            disagreed. Where the value really is a range of shown days — an
+            archive, an import preview — "Days shown" stays. */}
         <ChoiceRowField
-          label={t("timetables.days")}
+          label={t("settings.daysWithoutClasses")}
           value={state.settings.weekendMode}
           options={ALL_WEEKEND_MODES.map((mode) => ({ value: mode, label: t(WEEKEND_MODE_LABEL_KEY[mode]) }))}
           onChange={(weekendMode) => setWeekendMode({ weekendMode })}
@@ -209,9 +218,15 @@ export default function CurrentTimetableScreen() {
           paddingTop: spacing.lg,
         }}
       >
+        {/* Set apart by the divider above it, but not painted as a
+            deletion. Archiving keeps every class and is undone by Restore —
+            the confirmation below deliberately says so in those words, and a
+            `danger`-filled button contradicted it before the dialog ever
+            opened. `destructive` is reserved here for what cannot be taken
+            back: Delete permanently, and Delete all data. */}
         <Button
           label={t("timetables.archiveAction")}
-          variant="destructive"
+          variant="secondary"
           onPress={() => setArchiveConfirmOpen(true)}
           disabled={busy}
         />

@@ -58,6 +58,18 @@ export function ClassReminderScheduler() {
   // What the foreground listener should re-send; it is registered once and
   // must not close over the timetable as it was at mount.
   const latestInput = useRef<ReminderSyncInput | null>(null);
+  /*
+   * Whether this effect has run before.
+   *
+   * Only the runs after the first one may raise the permission prompt. The
+   * first run is the app opening — the timetable it reconciles is the one
+   * that was already stored, so wanting to deliver a reminder says nothing
+   * about what the user has just decided. Every later run is a change to
+   * that timetable, which is to say something the user did: saving a class
+   * with a reminder on it, or changing the default in Settings. That is the
+   * moment the prompt means something, and it is the only moment it appears.
+   */
+  const hasSynced = useRef(false);
 
   useEffect(() => {
     const input: ReminderSyncInput = {
@@ -69,7 +81,9 @@ export function ClassReminderScheduler() {
       fromDate: windowStart,
       text,
       channelText,
+      mayRequestPermission: hasSynced.current,
     };
+    hasSynced.current = true;
     latestInput.current = input;
     syncClassReminders(input);
   }, [state, windowStart, text, channelText]);
@@ -80,8 +94,11 @@ export function ClassReminderScheduler() {
       const today = todayIsoDate();
       setWindowStart(today);
       // Not left to the state change above: the window may not have moved,
-      // and a return to the foreground is a refresh in its own right.
-      if (latestInput.current) syncClassReminders({ ...latestInput.current, fromDate: today });
+      // and a return to the foreground is a refresh in its own right. It is
+      // not a decision about reminders, though, so it never asks.
+      if (latestInput.current) {
+        syncClassReminders({ ...latestInput.current, fromDate: today, mayRequestPermission: false });
+      }
     });
     return () => subscription.remove();
   }, []);

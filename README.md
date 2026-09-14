@@ -1,4 +1,13 @@
-# Temelo
+<p align="center">
+  <img src="assets/branding/temelo-logo.png" width="128" alt="Temelo">
+</p>
+
+<h1 align="center">Temelo</h1>
+
+<p align="center">
+  A local-first mobile timetable app for students.<br>
+  <sub>Android · Expo / React Native · offline, no account</sub>
+</p>
 
 Temelo is a mobile-first, local-first timetable app for school and university
 students.
@@ -15,14 +24,42 @@ standalone mobile application and a portfolio piece.
 
 ## Current status
 
-Working and actively developed. The app has a functional onboarding flow and
-weekly timetable, SQLite persistence with versioned migrations, editing of
-recurring classes with occurrence-level exceptions, local class reminders,
-light/dark themes, and English, Russian and German localization.
+**Beta 1 (version 0.1.0).** Feature-complete for its first release: onboarding
+and generated periods, the weekly timetable, SQLite persistence with versioned
+migrations, recurring classes with occurrence-level exceptions, one active
+timetable plus archived ones, local class reminders, `.temelo` backup and
+transfer, one-way `.ics` calendar export, light/dark themes, and English,
+Russian and German localization.
 
-It is still being polished. Android is the platform it is developed and tested
-on, via Expo development builds; it has **not** been released to Google Play or
-the App Store, and there is no web version, cloud sync, or account system.
+Android is the platform it is developed and tested on. It has **not** been
+released to Google Play or the App Store, and there is no web version, cloud
+sync, or account system. See
+[docs/BETA1_RELEASE_NOTES.md](docs/BETA1_RELEASE_NOTES.md) for what Beta 1
+contains and what it deliberately does not.
+
+## Try Temelo Beta 1
+
+<!-- RELEASE LINK: replace the line below with the GitHub Release download URL
+     once the release exists, e.g.
+     Download **[Temelo-Beta-1.apk](https://github.com/ZhanibekAkhmetov/Temelo/releases/download/v0.1.0-beta.1/Temelo-Beta-1.apk)**
+     Nothing else in this section needs to change. -->
+
+The Beta 1 APK will be attached to the
+[GitHub Releases](https://github.com/ZhanibekAkhmetov/Temelo/releases) page —
+_the download link goes here once that release is published._
+
+To install it on an Android phone:
+
+1. Download `Temelo-Beta-1.apk`.
+2. Open the file. Android will ask whether to allow installing apps from
+   whichever browser or files app you downloaded it with; allow it there, then
+   continue.
+3. Installing over an earlier Temelo build keeps your timetables.
+
+This is a **test build distributed as a file, not a Play Store release**, which
+is why Android asks. It needs no account and no network connection. Uninstalling
+removes its data, so export a `.temelo` file first if you want to keep a
+timetable.
 
 ## Screenshots
 
@@ -243,18 +280,25 @@ Build profiles are defined in [eas.json](eas.json):
 | Profile | Purpose |
 | --- | --- |
 | `development` | Development client — requires a running Metro server |
-| `preview` | Internal distribution — an installable build that runs on its own |
-| `production` | Store-oriented build, with remote version auto-increment |
+| `preview` | Internal distribution — a standalone installable **APK** |
+| `production` | Store-oriented build (AAB), with remote version auto-increment |
 
 ```bash
 eas build --profile development --platform android   # dev client
-eas build --profile preview --platform android       # standalone, internal
+eas build --profile preview --platform android       # standalone APK
 ```
 
 A development-client build is not usable on its own: it loads its JavaScript
 from Metro. The `preview` profile is the one that produces a build a tester can
-install and open without a development machine. No standalone build has been
-published yet — a stable offline Android release is the current milestone.
+install and open without a development machine — it sets
+`android.buildType: "apk"` explicitly, because the file attached to a GitHub
+Release has to be something a phone can open, not an app bundle.
+
+Versions: `app.json` holds the user-facing `version` (`versionName` on
+Android). The Android `versionCode` is **not** in the repository —
+`eas.json` sets `appVersionSource: "remote"`, so EAS keeps it, and both
+`preview` and `production` auto-increment it. That is what makes each build
+install over the last one.
 
 ## Roadmap
 
@@ -268,7 +312,8 @@ archived ones); `.temelo` export, sharing and import; one-way `.ics` calendar
 export over a chosen date range; local class reminders; themes; English,
 Russian and German localization.
 
-**Next** — stabilization and a standalone offline Android release.
+**Next** — Beta 1: a standalone offline Android release, its branding, and
+acceptance on a physical device.
 
 **Later, not committed to** — reusing an existing course across placements,
 two-way calendar synchronization, a web version, optional account-based
@@ -291,13 +336,13 @@ src/
   theme/        Design tokens, appearance preference, class colours
   types/        Shared model types
   util/         Native-module wrappers (notifications, haptics, files)
-docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md
+docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md,
+                BETA1_RELEASE_NOTES.md
 harness/        Node-based domain and storage checks
-assets/         App icons and splash images
+assets/         branding/ holds the Temelo mark and the icon, adaptive-icon,
+                monochrome, notification and splash assets derived from it
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Note that the file still carries the copyright
-notice from the Expo template this project was generated from; it has not been
-updated to the project's own copyright holder.
+MIT — see [LICENSE](LICENSE).

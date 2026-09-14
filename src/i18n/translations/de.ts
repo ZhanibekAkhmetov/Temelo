@@ -134,6 +134,8 @@ export const de: Translations = {
   "reminders.notificationRoom": "Raum {room}",
   "reminders.channelName": "Kurserinnerungen",
   "reminders.channelDescription": "Lautlose Erinnerungen mit kurzer Vibration vor Kursbeginn.",
+  "reminders.permissionExplainer":
+    "Temelo fragt nach der Benachrichtigungsberechtigung, wenn du eine Erinnerung einstellst. Alles andere funktioniert auch ohne.",
 
   "settings.title": "Einstellungen",
   "settings.appearance": "Darstellung",
@@ -166,6 +168,13 @@ export const de: Translations = {
   "settings.loadSampleMessage":
     "Nur für die Entwicklung. Ersetzt Stunden und Kurse des aktuellen Stundenplans durch Beispielkurse zum Testen der Gesten.",
   "settings.loadSampleConfirm": "Laden",
+
+  "about.title": "Über Temelo",
+  "about.version": "Version {version} · Beta 1",
+  "about.storage": "Deine Stundenpläne liegen auf diesem Gerät. Temelo braucht kein Konto und funktioniert offline.",
+  "about.backup": "Teile eine .temelo-Datei, um ein Backup zu behalten oder einen Stundenplan auf ein anderes Gerät zu übertragen.",
+  "about.calendar": "Der Kalenderexport erstellt eine einmalige Kopie. Spätere Änderungen in Temelo erreichen sie nicht.",
+  "about.project": "Projekt auf GitHub",
 
   "week.weekend": "Wochenende",
   "week.weekendSaturdaySunday": "Sa & So",

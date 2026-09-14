@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Alert, Text } from "react-native";
+import { Text, View } from "react-native";
 import { router } from "expo-router";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { AcademicDayFields, isUsableAcademicDay } from "@/features/timetables/AcademicDayFields";
@@ -38,8 +39,10 @@ export default function AcademicDayScreen() {
   });
 
   const hasActivePlacements = state.placements.some((placement) => !placement.deletedAt);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   function save() {
+    setConfirmOpen(false);
     const result = setAcademicDayConfig(academicDay);
     if (!result.ok) return;
     router.back();
@@ -48,16 +51,14 @@ export default function AcademicDayScreen() {
   function handleSave() {
     if (!isUsableAcademicDay(academicDay)) return;
     if (hasActivePlacements) {
-      Alert.alert(t("onboarding.regenerateTitle"), t("onboarding.regenerateMessage"), [
-        { text: t("common.cancel"), style: "cancel" },
-        { text: t("common.continue"), style: "destructive", onPress: save },
-      ]);
+      setConfirmOpen(true);
       return;
     }
     save();
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <ScreenContainer
       header={
         // Save in the header's trailing slot, where the current timetable's
@@ -81,5 +82,25 @@ export default function AcademicDayScreen() {
 
       <AcademicDayFields value={academicDay} onChange={setAcademicDay} />
     </ScreenContainer>
+
+      {/* The same themed confirmation the rest of the app asks its serious
+          questions with, and it belongs here more than anywhere: this is the
+          one screen that deletes every class in the timetable, and the setup
+          flow next door already asked its milder version of this question
+          through `ConfirmDialog`. A grey platform alert at exactly this
+          moment was the app looking least like itself. Destructive in tone —
+          the periods the classes stand on are regenerated, and nothing brings
+          them back. */}
+      {confirmOpen ? (
+        <ConfirmDialog
+          destructive
+          title={t("onboarding.regenerateTitle")}
+          message={t("onboarding.regenerateMessage")}
+          confirmLabel={t("common.continue")}
+          onConfirm={save}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      ) : null}
+    </View>
   );
 }

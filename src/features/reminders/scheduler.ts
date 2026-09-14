@@ -91,6 +91,23 @@ export interface ReminderSyncInput {
   text: ReminderTextFormat;
   /** The channel's name and description, for Android's own settings screen. */
   channelText: { name: string; description: string };
+  /**
+   * Whether this refresh is allowed to raise the OS permission prompt.
+   *
+   * False for every refresh the user did not cause — the first run after
+   * launch, a return to the foreground, the midnight roll. A refresh still
+   * happens; it simply reads the permission instead of asking for it.
+   *
+   * This exists because "there is work to do" is not the same question as
+   * "has the user just asked for a reminder". Anyone opening the app with
+   * reminder-bearing classes already stored has work to do on the very
+   * first sync, so asking on work alone put the system dialog over the
+   * timetable at launch, before they had touched anything — and on Android
+   * that dialog opens as an activity inside this task, which re-lays-out
+   * the grid underneath it and could leave it collapsed until the next
+   * restart. See `ClassReminderScheduler` for which trigger passes what.
+   */
+  mayRequestPermission?: boolean;
 }
 
 export interface ReminderStatus {
@@ -189,15 +206,19 @@ function stillCorrect(wanted: PlannedReminder, scheduled: ScheduledReminder): bo
 }
 
 /**
- * Permission is asked for at most once per launch, and only when there is a
- * reminder that would otherwise go undelivered — never on a cold start with
- * an empty timetable, and never again once the user has answered.
+ * Permission is asked for at most once per launch, and only when all three
+ * are true: the user has just done something that wants a reminder delivered,
+ * there is a reminder that would otherwise go undelivered, and the OS has not
+ * already been answered.
+ *
+ * The first of those is `mayRequestPermission`, and it is what keeps the
+ * prompt out of a cold start — see its note on `ReminderSyncInput`.
  */
 let permissionAsked = false;
 
-async function resolvePermission(hasWork: boolean): Promise<ReminderPermission> {
+async function resolvePermission(hasWork: boolean, mayRequest: boolean): Promise<ReminderPermission> {
   const current = await getReminderPermissionAsync();
-  if (current !== "undetermined" || !hasWork || permissionAsked) return current;
+  if (current !== "undetermined" || !hasWork || !mayRequest || permissionAsked) return current;
   permissionAsked = true;
   return requestReminderPermissionAsync();
 }
@@ -231,7 +252,7 @@ async function runSync(input: ReminderSyncInput): Promise<void> {
     .filter((entry) => entry.state === "scheduled" && !inPlan.has(entry.key))
     .map((entry) => entry.key);
 
-  const permission = await resolvePermission(wanted.length > 0 || due.length > 0);
+  const permission = await resolvePermission(wanted.length > 0 || due.length > 0, input.mayRequestPermission === true);
   if (permission !== "granted") {
     const cancelled = await cancelAllOursAsync();
     // Everything queued has just been cancelled, so no `scheduled` row may

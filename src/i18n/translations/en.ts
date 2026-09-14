@@ -133,6 +133,13 @@ export const en = {
   "reminders.notificationRoom": "Room {room}",
   "reminders.channelName": "Class reminders",
   "reminders.channelDescription": "Silent reminders with a short vibration before a class starts.",
+  /**
+   * Shown while the OS has not been asked yet — which is deliberate: the
+   * prompt is raised by setting a reminder rather than by opening the app, so
+   * without this line the only sign of it is a dialog with no lead-up.
+   */
+  "reminders.permissionExplainer":
+    "Temelo asks for notification permission when you set a reminder. Everything else works without it.",
 
   // -------------------------------------------------------------- settings
   "settings.title": "Settings",
@@ -174,6 +181,14 @@ export const en = {
   "settings.loadSampleMessage":
     "Development only. This replaces the current timetable's periods and classes with placeholder classes for testing gestures.",
   "settings.loadSampleConfirm": "Load",
+
+  // ----------------------------------------------------------------- about
+  "about.title": "About",
+  "about.version": "Version {version} · Beta 1",
+  "about.storage": "Your timetables are stored on this device. Temelo has no account and works offline.",
+  "about.backup": "Share a .temelo file to keep a backup or move a timetable to another device.",
+  "about.calendar": "Exporting to a calendar sends a one-time copy. Later changes in Temelo won’t reach it.",
+  "about.project": "Project on GitHub",
 
   // ------------------------------------------------------------------ week
   "week.weekend": "Weekend",

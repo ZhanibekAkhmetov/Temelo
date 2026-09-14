@@ -342,7 +342,7 @@ interface AppStateContextValue {
   deletePlacement: (placementId: string) => void;
   /** Development only; see `createSampleTimetable`. No-op in a release build. */
   loadSampleTimetable: () => void;
-  resetPrototype: () => void;
+  deleteAllData: () => void;
 }
 
 /**
@@ -1234,7 +1234,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      * With no database at all the app is running in memory, and clearing the
      * state is the whole of what "delete everything" can mean.
      */
-    const resetPrototype: AppStateContextValue["resetPrototype"] = () => {
+    const deleteAllData: AppStateContextValue["deleteAllData"] = () => {
       if (!databaseRef.current) {
         setState(buildEmptyState());
         return;
@@ -1279,7 +1279,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       applyClassEdit,
       deletePlacement,
       loadSampleTimetable,
-      resetPrototype,
+      deleteAllData,
     };
   }, [state, hydrated, storageError, persistence, archivedCount]);
 

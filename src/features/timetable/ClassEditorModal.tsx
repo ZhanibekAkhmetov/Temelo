@@ -197,6 +197,13 @@ function ClassEditorForm({
    */
   const reminderDiffersFromDefault = reminderMinutes !== defaultReminderMinutes;
   const remindersBlocked = reminderStatus.permission === "denied";
+  /*
+   * Why the OS has not asked yet, said at the one moment it is worth
+   * knowing: the user has just chosen a lead time and nothing visible
+   * happened. Only while a reminder is actually set — on a class with no
+   * reminder there is nothing to explain.
+   */
+  const remindersUnasked = reminderStatus.permission === "undetermined" && reminderMinutes !== null;
 
   /*
    * "One time on 3 Nov" / "Repeats every week" / "Repeats every two weeks".
@@ -442,7 +449,13 @@ function ClassEditorForm({
             label={t("classEditor.reminder")}
             value={reminderMinutes}
             onChange={setReminderMinutes}
-            helperText={remindersBlocked ? t("classEditor.remindersBlocked") : undefined}
+            helperText={
+              remindersBlocked
+                ? t("classEditor.remindersBlocked")
+                : remindersUnasked
+                  ? t("reminders.permissionExplainer")
+                  : undefined
+            }
           />
 
           {/* Inside the group, not after it: it is a row about the row above
