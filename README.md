@@ -39,27 +39,18 @@ contains and what it deliberately does not.
 
 ## Try Temelo Beta 1
 
-<!-- RELEASE LINK: replace the line below with the GitHub Release download URL
-     once the release exists, e.g.
-     Download **[Temelo-Beta-1.apk](https://github.com/ZhanibekAkhmetov/Temelo/releases/download/v0.1.0-beta.1/Temelo-Beta-1.apk)**
-     Nothing else in this section needs to change. -->
+Download **[Temelo-Beta-1.apk](https://github.com/ZhanibekAkhmetov/Temelo/releases/download/v0.1.0-beta.2/Temelo-Beta-1.apk)**
 
-The Beta 1 APK will be attached to the
-[GitHub Releases](https://github.com/ZhanibekAkhmetov/Temelo/releases) page —
-_the download link goes here once that release is published._
+Release notes: [Temelo Beta 1](https://github.com/ZhanibekAkhmetov/Temelo/releases/tag/v0.1.0-beta.2)
 
 To install it on an Android phone:
 
 1. Download `Temelo-Beta-1.apk`.
-2. Open the file. Android will ask whether to allow installing apps from
-   whichever browser or files app you downloaded it with; allow it there, then
-   continue.
+2. Open the file. Android will ask whether to allow installing apps from whichever browser or files app you downloaded it with; allow it there, then continue.
 3. Installing over an earlier Temelo build keeps your timetables.
 
-This is a **test build distributed as a file, not a Play Store release**, which
-is why Android asks. It needs no account and no network connection. Uninstalling
-removes its data, so export a `.temelo` file first if you want to keep a
-timetable.
+This is a **test build distributed as a file, not a Play Store release**, which is why Android asks. It needs no account and no network connection. Uninstalling removes its data, so export a `.temelo` file first if you want to keep a timetable.
+
 
 ## Screenshots
 
