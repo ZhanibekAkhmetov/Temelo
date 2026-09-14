@@ -13,6 +13,7 @@ import { HapticsDiagnostics } from "@/features/diagnostics/HapticsDiagnostics";
 import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostics";
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
+import { AboutSection } from "@/features/settings/AboutSection";
 import { shapeOfActive, timetableSummary } from "@/features/timetables/summary";
 import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
 import { useI18n } from "@/i18n/I18nProvider";
@@ -84,7 +85,7 @@ export default function SettingsScreen() {
     setLanguagePreference,
     setDefaultReminder,
     loadSampleTimetable,
-    resetPrototype,
+    deleteAllData,
   } = useAppState();
   const reminderStatus = useReminderStatus();
   /** Which of this screen's two whole-app confirmations is open, if either. */
@@ -123,7 +124,7 @@ export default function SettingsScreen() {
 
   function confirmReset() {
     setConfirming(null);
-    resetPrototype();
+    deleteAllData();
     // Settings sits on top of timetable in the stack; drop back to timetable
     // first, then replace it, so no stale screen is left underneath the fresh
     // onboarding flow.
@@ -228,14 +229,26 @@ export default function SettingsScreen() {
           label={t("reminders.defaultForNewClasses")}
           value={state.settings.defaultReminderMinutes}
           onChange={(reminderMinutes) => setDefaultReminder({ reminderMinutes })}
+          /* Three answers, not two. "Denied" is the only one that is a
+             problem; "undetermined" is the ordinary first-run state, and
+             saying when the prompt will come is the whole of the rationale
+             this screen owes the user — the OS asks at the moment a reminder
+             is first due, not here. */
           helperText={
             reminderStatus.permission === "denied"
               ? t("reminders.permissionDenied")
-              : t("reminders.existingKeepTheirOwn")
+              : reminderStatus.permission === "undetermined"
+                ? t("reminders.permissionExplainer")
+                : t("reminders.existingKeepTheirOwn")
           }
         />
       </FormSection>
 
+      <AboutSection />
+
+      {/* Last on the page, and the only thing on it that cannot be taken
+          back. It keeps its distance from the rows above precisely because
+          every one of those commits on tap. */}
       <View style={{ marginTop: spacing.xl }}>
         <Button label={t("settings.reset")} variant="destructive" onPress={() => setConfirming("reset")} />
       </View>

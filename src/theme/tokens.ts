@@ -11,6 +11,14 @@
  * than to the chrome, are the same in both schemes, and live in
  * `theme/classColors`.
  *
+ * The accent is the one colour that is not chosen for the chrome at all: it
+ * is Temelo's own blue, taken from the frame of the mark in
+ * `assets/branding/temelo-logo.png` (#0053C1) and lightened just enough to
+ * carry white text at 5.6:1. The dark scheme answers it with the pale blue a
+ * dark ground needs, and `accentSubtle` in both schemes is a tint of that
+ * same blue rather than a neutral — so a selected day, a primary button and
+ * the app icon are recognisably one colour.
+ *
  * Nothing in this file affects layout. Every value is a colour, and every
  * dimension the timetable measures itself with lives in
  * `features/timetable/geometry`.
@@ -139,14 +147,14 @@ export const lightColors: ColorTokens = {
   gridMajor: "#DADCE0",
   gridColumnRule: "#E0E3E7",
 
-  accent: "#1A73E8",
-  accentSubtle: "#E8F0FE",
-  accentStrong: "#1967D2",
-  currentTime: "#1A73E8",
+  accent: "#0B62D6",
+  accentSubtle: "#E5EEFF",
+  accentStrong: "#0B57C7",
+  currentTime: "#0B62D6",
 
   selectionBorder: "#202124",
   selectionHandle: "#FFFFFF",
-  provisionalFill: "#1A73E81F",
+  provisionalFill: "#0B62D61F",
 
   danger: "#D93025",
   dangerSurface: "#FCE8E6",
@@ -187,14 +195,14 @@ export const darkColors: ColorTokens = {
   gridMajor: "#3C4043",
   gridColumnRule: "#34373B",
 
-  accent: "#8AB4F8",
-  accentSubtle: "#29344A",
-  accentStrong: "#8AB4F8",
-  currentTime: "#8AB4F8",
+  accent: "#8CBDFF",
+  accentSubtle: "#1B3157",
+  accentStrong: "#8CBDFF",
+  currentTime: "#8CBDFF",
 
   selectionBorder: "#F1F3F4",
   selectionHandle: "#303134",
-  provisionalFill: "#8AB4F826",
+  provisionalFill: "#8CBDFF26",
 
   danger: "#F28B82",
   dangerSurface: "#3B2422",

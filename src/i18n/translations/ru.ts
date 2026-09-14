@@ -133,6 +133,8 @@ export const ru: Translations = {
   "reminders.notificationRoom": "Ауд. {room}",
   "reminders.channelName": "Напоминания о занятиях",
   "reminders.channelDescription": "Беззвучные напоминания с короткой вибрацией перед началом занятия.",
+  "reminders.permissionExplainer":
+    "Temelo запросит разрешение на уведомления, когда вы настроите напоминание. Всё остальное работает и без него.",
 
   "settings.title": "Настройки",
   "settings.appearance": "Тема",
@@ -165,6 +167,13 @@ export const ru: Translations = {
   "settings.loadSampleMessage":
     "Только для разработки. Учебный день и занятия текущего расписания будут заменены тестовыми — для проверки жестов.",
   "settings.loadSampleConfirm": "Загрузить",
+
+  "about.title": "О приложении",
+  "about.version": "Версия {version} · Бета 1",
+  "about.storage": "Расписания хранятся на этом устройстве. Temelo работает без аккаунта и без интернета.",
+  "about.backup": "Отправьте файл .temelo, чтобы сохранить резервную копию или перенести расписание на другое устройство.",
+  "about.calendar": "Экспорт в календарь создаёт разовую копию. Последующие изменения в Temelo в неё не попадут.",
+  "about.project": "Проект на GitHub",
 
   "week.weekend": "Выходные",
   "week.weekendSaturdaySunday": "Сб и вс",
