@@ -1904,6 +1904,92 @@ async function testTimetableStartExtendsPattern() {
   );
   equal("H. not one series or exception was rewritten along the way", JSON.stringify({ placements: state.placements, exceptions: state.exceptions }), recurrenceBefore);
 
+  /*
+   * I. The same round trip in the order a device report described it: from the
+   * start the timetable already had, four weeks *earlier*, and then back.
+   *
+   * H moves forward first and comes back; this moves back first and returns,
+   * which is the sequence that was reported as leaving the newly exposed weeks
+   * on screen. The two are not the same walk even though the resolver is
+   * stateless, because what is being checked is that *returning* to a start is
+   * indistinguishable from never having left it — the same dates, the same
+   * fortnight, the same stored rows — and that is a claim about the round trip
+   * rather than about either direction.
+   *
+   * Every move goes through `saveTimetable`, so the anchor really is written,
+   * and the last assertion re-reads every row back out of SQLite: if moving the
+   * start were quietly rewriting recurrence, or if the hiding lived in state
+   * rather than in the stored timetable, this is where it would show.
+   */
+  const ROUND_D = state.timetable.anchorDate;
+  const ROUND_BACK = addDaysIso(ROUND_D, -28);
+  const FROM = "2026-07-01";
+  const UNTIL = "2026-09-14";
+  const rowsBefore = JSON.stringify({ placements: state.placements, exceptions: state.exceptions });
+
+  const setStart = async (start) => {
+    const next = { ...state, timetable: { ...state.timetable, anchorDate: start, updatedAt: NOW } };
+    await saveTimetable(relaunched.db, next, state);
+    state = next;
+  };
+
+  /*
+   * Both sides of the round trip are written out as literal dates rather than
+   * captured from the first reading and compared with the third. A captured
+   * baseline would move with the very defect this is here to catch — if the
+   * bound stopped being applied, "before" and "after" would both gain the four
+   * weeks and still match each other perfectly.
+   */
+  const WEEKLY_AT_D = "2026-08-24,2026-08-31,2026-09-07,2026-09-14";
+  const WEEKLY_AT_D_MINUS_28 = `2026-07-27,2026-08-03,2026-08-10,2026-08-17,${WEEKLY_AT_D}`;
+  const BIWEEKLY_AT_D = "2026-09-01";
+  const BIWEEKLY_AT_D_MINUS_28 = "2026-08-04,2026-08-18,2026-09-01";
+
+  // 1, 2. A weekly series that follows the timetable, at the start it has.
+  const weeklyAtD = drawnDates(at(ROUND_D), "p-maths", FROM, UNTIL);
+  equal("I. at D the weekly class meets from D onward", weeklyAtD.join(","), WEEKLY_AT_D);
+  equal("I. ...and nothing of it is drawn before D", weeklyAtD.every((date) => date >= ROUND_D), true);
+  equal("I. at D the alternating class meets once in the window", drawnDates(at(ROUND_D), "p-history", FROM, UNTIL).join(","), BIWEEKLY_AT_D);
+
+  // 3. Four weeks earlier: exactly the four Mondays in between, and no more.
+  await setStart(ROUND_BACK);
+  equal("I. moved to D-28 the four newly included Mondays appear", drawnDates(at(ROUND_BACK), "p-maths", FROM, UNTIL).join(","), WEEKLY_AT_D_MINUS_28);
+
+  // 5. Parity is the series' own, counted from its anchor — not the timetable's.
+  const biweeklyEarlier = drawnDates(at(ROUND_BACK), "p-history", FROM, UNTIL);
+  equal("I. the alternating class gains only its own fortnight", biweeklyEarlier.join(","), BIWEEKLY_AT_D_MINUS_28);
+  check(
+    "I. ...every one of those is a whole number of fortnights from its anchor",
+    biweeklyEarlier.every((date) => (Date.parse(date) - Date.parse("2026-09-15")) / 86400000 % 14 === 0),
+    biweeklyEarlier.join(","),
+  );
+
+  // 6. A split's later half has a boundary of its own and must not reach back.
+  equal(
+    "I. the split's later half still begins on its split date, not earlier",
+    drawnDates(at(ROUND_BACK), "p-physics-new", "2026-08-01", "2026-12-31")[0],
+    "2026-10-22",
+  );
+
+  // 4. Back to D: the four weeks go away again. This is the reported failure.
+  await setStart(ROUND_D);
+  equal("I. back at D the four exposed Mondays are hidden again", drawnDates(at(ROUND_D), "p-maths", FROM, UNTIL).join(","), WEEKLY_AT_D);
+  equal("I. ...and the alternating class is back to the one it had", drawnDates(at(ROUND_D), "p-history", FROM, UNTIL).join(","), BIWEEKLY_AT_D);
+  equal("I. ...and the split's later half never moved", drawnDates(at(ROUND_D), "p-physics-new", "2026-08-01", "2026-12-31")[0], "2026-10-22");
+
+  // 7. The whole round trip wrote one column: the timetable's own anchor.
+  equal("I. no placement or exception was rewritten by either move", JSON.stringify({ placements: state.placements, exceptions: state.exceptions }), rowsBefore);
+
+  // Persistence: the rows themselves, read back out of the database.
+  const reread = await loadTimetable(relaunched.db);
+  equal("I. the stored timetable starts on D", reread.timetable.anchorDate, ROUND_D);
+  equal("I. ...the stored series are untouched", JSON.stringify({ placements: reread.placements, exceptions: reread.exceptions }), rowsBefore);
+  equal(
+    "I. ...and resolving from the stored rows hides the four weeks too",
+    drawnDates({ ...reread, timetableStart: reread.timetable.anchorDate }, "p-maths", FROM, UNTIL).join(","),
+    WEEKLY_AT_D,
+  );
+
   // An archive written before v7 carries no flag; restoring it infers the same answer.
   const flagsOf = (snapshotState) => snapshotState.placements.map((p) => `${p.id}:${p.startsWithTimetable}`).sort().join(",");
   const expectedFlags = flagsOf(state);

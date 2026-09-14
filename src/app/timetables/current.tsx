@@ -11,10 +11,13 @@ import { FormSection, NavigationRow } from "@/components/FormSection";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
+import { todayIsoDate } from "@/domain/date";
 import type { DomainError } from "@/domain/errors";
 import { ALL_WEEKEND_MODES } from "@/domain/week";
+import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
 import { hoursLabel, shapeOfActive } from "@/features/timetables/summary";
-import { useShareTimetable } from "@/features/timetables/transfer";
+import { TimetableActionSheet } from "@/features/timetables/TimetableActionSheet";
+import { useExportCalendar, useShareTimetable } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { WEEKEND_MODE_LABEL_KEY } from "@/i18n/weekendMode";
 import { useAppState } from "@/state/AppStateContext";
@@ -46,11 +49,13 @@ export default function CurrentTimetableScreen() {
   const { t } = useI18n();
   const { state, renameActiveTimetable, setTimetableStartDate, archiveCurrentTimetable, setWeekendMode } = useAppState();
   /*
-   * Share is here as well as behind the long press on the Timetables list,
-   * because a shortcut nobody finds is not a feature. This is the screen a user
-   * reaches by tapping their timetable, so it is where they will look.
+   * Share and Export are here as well as behind the long press on the
+   * Timetables list, because a shortcut nobody finds is not a feature. This is
+   * the screen a user reaches by tapping their timetable, so it is where they
+   * will look.
    */
   const sharing = useShareTimetable();
+  const calendar = useExportCalendar();
 
   const { timetable } = state;
   const [name, setName] = useState(timetable?.name ?? "");
@@ -58,6 +63,9 @@ export default function CurrentTimetableScreen() {
   const [busy, setBusy] = useState(false);
   const [startSheetOpen, setStartSheetOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  /** The Share / Export chooser, and the calendar range sheet it can open. */
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   /** Why the last archive did not happen, shown beside the button that tried. */
   const [archiveError, setArchiveError] = useState<DomainError | undefined>();
 
@@ -170,15 +178,21 @@ export default function CurrentTimetableScreen() {
         />
       </FormSection>
 
-      {/* Above the divider, not below it: sharing changes nothing about the
-          timetable, and grouping it with Archive would put a harmless action in
-          the section reserved for the one with a consequence. */}
+      {/* Above the divider, not below it: neither sending a copy nor exporting
+          one changes anything about the timetable, and grouping them with
+          Archive would put harmless actions in the section reserved for the one
+          with a consequence.
+
+          One button rather than two. There are now two ways a timetable can
+          leave the app and they are easy to confuse, so the choice — and the
+          sentence explaining each — belongs in a sheet where there is room to
+          say it, not in two buttons whose labels would have to carry it. */}
       <View style={{ marginTop: spacing.lg }}>
         <Button
-          label={t("transfer.shareAction")}
+          label={t("transfer.shareOrExport")}
           variant="secondary"
-          onPress={sharing.shareActive}
-          disabled={busy || sharing.sharing}
+          onPress={() => setTransferOpen(true)}
+          disabled={busy || sharing.sharing || calendar.exporting}
         />
         {sharing.error ? (
           <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
@@ -220,6 +234,46 @@ export default function CurrentTimetableScreen() {
           confirmLabel={t("timetables.archiveConfirm")}
           onConfirm={handleArchive}
           onCancel={() => setArchiveConfirmOpen(false)}
+        />
+      ) : null}
+
+      {transferOpen ? (
+        <TimetableActionSheet
+          name={currentName}
+          actions={[
+            {
+              key: "share",
+              label: t("transfer.shareFileAction"),
+              description: t("transfer.shareFileHint"),
+              onPress: () => {
+                setTransferOpen(false);
+                sharing.shareActive();
+              },
+            },
+            {
+              key: "calendar",
+              label: t("calendarExport.action"),
+              description: t("calendarExport.actionHint"),
+              onPress: () => {
+                setTransferOpen(false);
+                setCalendarOpen(true);
+              },
+            },
+          ]}
+          onDismiss={() => setTransferOpen(false)}
+        />
+      ) : null}
+
+      {calendarOpen ? (
+        <CalendarExportSheet
+          name={currentName}
+          anchorDate={timetable.anchorDate}
+          // The active timetable is one the user is living in, so the suggested
+          // range starts today rather than in weeks they have already sat.
+          today={todayIsoDate()}
+          busy={calendar.exporting}
+          onExport={calendar.exportActive}
+          onDismiss={() => setCalendarOpen(false)}
         />
       ) : null}
 

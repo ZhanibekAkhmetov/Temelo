@@ -98,6 +98,13 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
 - Any timetable — the current one or an archived one — exports to a `.temelo`
   file through the Android share sheet, so it can be sent by message, mail,
   Drive or Quick Share, or simply kept as a backup.
+- The same **Share / Export** action also exports to a calendar: an `.ics` file
+  for a date range you pick, which Google Calendar, Samsung Calendar, Apple
+  Calendar and anything else standards-compliant can import. Every meeting in
+  the range is written out individually — moved lessons at their new date,
+  cancelled ones left out — so the calendar shows exactly what Temelo shows.
+  It is a **one-time copy**: it does not update afterwards, Temelo never reads
+  a calendar file back, and no calendar permission is asked for.
 - Importing one is the reverse, and starts inside Temelo: pick the file, read a
   preview of what is in it, confirm. Nothing is written before that, so a file
   that is not a Temelo timetable changes nothing.
@@ -120,8 +127,9 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
   languages by default, with a manual override.
 
 Not yet implemented: picking an existing course when creating a second
-placement, calendar export, opening a `.temelo` from outside the app
-("Open with Temelo"), synchronization, and accounts.
+placement, opening a `.temelo` from outside the app ("Open with Temelo"),
+calendar *synchronization* (export is one-way and there is no `.ics` import),
+and accounts.
 
 ## Technology
 
@@ -131,8 +139,8 @@ Versions are read from [package.json](package.json):
 - React Native `0.86.2`, React `19.2.3`, React Compiler enabled
 - TypeScript `~6.0.3` in strict mode
 - `expo-sqlite` `~57.0.2` for persistence
-- `expo-file-system` `~57.0.7` for reading and writing `.temelo` files, and for
-  its own native document picker
+- `expo-file-system` `~57.0.7` for reading and writing `.temelo` and `.ics`
+  files, and for its own native document picker
 - `expo-sharing` `~57.0.19` for the Android share sheet
 - `react-native-gesture-handler` `~2.32.0` and `react-native-reanimated`
   `4.5.1` for the timetable surface
@@ -256,14 +264,15 @@ The full milestone history is in [docs/ROADMAP.md](docs/ROADMAP.md).
 pinch zoom and week paging; quick class creation and editing; weekly, biweekly
 and one-time recurrence with edit scopes and occurrence exceptions; SQLite
 persistence with migrations; the timetable lifecycle (one active timetable plus
-archived ones); `.temelo` export, sharing and import; local class reminders;
-themes; English, Russian and German localization.
+archived ones); `.temelo` export, sharing and import; one-way `.ics` calendar
+export over a chosen date range; local class reminders; themes; English,
+Russian and German localization.
 
 **Next** — stabilization and a standalone offline Android release.
 
 **Later, not committed to** — reusing an existing course across placements,
-calendar export, a web version, optional account-based synchronization, and
-possible store distribution.
+two-way calendar synchronization, a web version, optional account-based
+synchronization, and possible store distribution.
 
 ## Repository structure
 
@@ -278,7 +287,7 @@ src/
   i18n/         Translations (en/ru/de), locale detection, formatting
   state/        App state provider and defaults
   storage/      SQLite: database, schema, migrations, repository, and the
-                `.temelo` file format
+                file formats (`.temelo`, `.ics`)
   theme/        Design tokens, appearance preference, class colours
   types/        Shared model types
   util/         Native-module wrappers (notifications, haptics, files)

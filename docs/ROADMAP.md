@@ -177,12 +177,31 @@ current implementation status.
     user *taps* outside the app, which stays best-effort at the mercy of
     whichever content provider reports the file's type.
 
-13. **Calendar export**
+13. **Calendar export** *(Beta 1)*
     Timetable data can be exported in a format consumable by external
     calendar applications (e.g. Google Calendar, Apple Calendar, Samsung
     Calendar).
     *Done when:* an exported file, imported into at least one target
     calendar app, shows correctly recurring events.
+    *Status: implemented; the acceptance check above is pending on a real
+    device.* Sharing became
+    a choice — **Share Temelo file** or **Export to calendar** — on the current
+    timetable's screen, an archived one's, and the long press on the Timetables
+    list. Calendar export is **one way**: an `.ics` for a date range the user
+    picks, handed to the share sheet. There is no `.ics` import, no
+    synchronization, no Calendar Provider or EventKit integration and no
+    calendar permission.
+    Because a timetable has no end date the export is bounded — at most 366
+    days, suggested as six months from today, or from an archive's own start
+    date. Within that range every occurrence is written as its own `VEVENT`
+    rather than as an `RRULE`, which is what keeps moved, cancelled and split
+    occurrences exactly right: the events come from `resolveOccurrences`, the
+    same resolver the grid draws from, so the calendar cannot disagree with
+    what the app shows. Times are RFC 5545 *floating* local date-times, because
+    Temelo stores no timezone and inventing one would be a claim it cannot
+    make. Archived timetables export from their stored snapshot without being
+    restored, and nothing is written to the database to export anything.
+    See "Calendar export" in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 14. **Later synchronization and desktop work**
     Cross-device synchronization, optional accounts, and a desktop-oriented
@@ -231,11 +250,13 @@ implemented and are described in the README:
 
 ## Next milestone
 
-Milestone 13, calendar export. Sharing already exists as a single action on a
-timetable, and this turns it into a choice between sending the timetable as a
-Temelo file and exporting it to a calendar — which is why milestone 12
-deliberately shipped no chooser: a menu with one item in it says nothing.
-
 Stabilization and a standalone, offline Android build (`preview` profile in
 [eas.json](../eas.json)) that a tester can install without a development
-machine remains the release step for everything above; it reorders nothing.
+machine. Milestone 13 was the last new feature planned for Beta 1, so what
+remains before release is verification rather than construction — in
+particular, the share-sheet and calendar-import behaviour that only a real
+device can show, since the emulator cannot complete a calendar import without
+signing a Google account into it.
+
+Milestone 14 — synchronization, optional accounts and desktop work — stays
+deliberately unscoped until it is actually started.

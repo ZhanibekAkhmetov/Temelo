@@ -282,6 +282,46 @@ export const en = {
   "transfer.selectionActions": "Actions for {name}",
 
   /*
+   * --------------------------------------------------------- calendar export
+   *
+   * Two different things can leave a timetable, and the wording's whole job is
+   * to keep them apart. A `.temelo` is Temelo's own file and comes back; an
+   * `.ics` is a copy handed to a calendar app and never comes back. So neither
+   * action is called "Share" on its own, and each says what it is *for* rather
+   * than what format it is in — a student knows what "for backup" means and
+   * has no reason to know what an ICS file is.
+   *
+   * "One-time" is the word doing the most work here: the file is a snapshot of
+   * a date range, so a class changed in Temelo tomorrow does not change in the
+   * calendar it was exported to. Saying so once, quietly, under the dates is
+   * much better than a support question later.
+   */
+  "transfer.shareOrExport": "Share / Export",
+  "transfer.shareFileAction": "Share Temelo file",
+  "transfer.shareFileHint": "For backup, or importing into Temelo.",
+  "calendarExport.action": "Export to calendar",
+  "calendarExport.actionHint": "Create a calendar file for a date range.",
+  "calendarExport.title": "Export to calendar",
+  "calendarExport.dialogTitle": "Export to calendar",
+  "calendarExport.from": "From",
+  "calendarExport.to": "To",
+  "calendarExport.fromTitle": "First day",
+  "calendarExport.toTitle": "Last day",
+  "calendarExport.note":
+    "Creates a one-time calendar file for these dates. Later changes in Temelo won't reach it.",
+  "calendarExport.confirm": "Export",
+  /** Android primary: hands the .ics to a calendar app (ACTION_VIEW). */
+  "calendarExport.openInCalendar": "Open in calendar",
+  /** Android secondary, and the whole of the iOS flow: the share sheet. */
+  "calendarExport.shareFile": "Share calendar file",
+  /** Under "No calendar app…": what to do instead. */
+  "calendarExport.noAppHint": "Use Share calendar file to send it somewhere else.",
+  /** Under "No classes in this date range": why Export is disabled. */
+  "calendarExport.emptyHint": "Pick different dates to export a calendar file.",
+  /** How a teacher is labelled inside an exported event's description. */
+  "calendarExport.teacherLine": "Teacher: {name}",
+
+  /*
    * ------------------------------------------------------------------ share
    *
    * The receiver another app's share sheet opens.
@@ -315,6 +355,11 @@ export const en = {
   "errors.fileTooLarge": "This file is too large to be a Temelo timetable.",
   "errors.fileUnreadable": "Couldn't read this file.",
   "errors.shareUnavailable": "Sharing isn't available on this device.",
+  "errors.calendarRangeInvalid": "The last day cannot be before the first day.",
+  "errors.calendarRangeTooLong": "Choose a period of {days} days or fewer.",
+  "errors.calendarNoClasses": "No classes in this date range.",
+  "errors.calendarNoApp": "No calendar app to open this.",
+  "errors.calendarExportFailed": "Couldn't export this calendar.",
   "errors.shareFailed": "Couldn't share this timetable.",
   "errors.classGone": "This class no longer exists.",
   "errors.beforeTimetableStart": "This date is before the timetable starts.",

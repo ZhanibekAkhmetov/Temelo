@@ -24,8 +24,8 @@
  *    the device checklist, not this file.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { check, equal, section } from "./report.mjs";
@@ -34,6 +34,36 @@ const SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..", "src");
 
 function read(...parts) {
   return readFileSync(join(SRC, ...parts), "utf8");
+}
+
+/** Every TypeScript source file under `src`, as `{ path, source }`. */
+function everySourceFile() {
+  const files = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name)) {
+        files.push({ path: relative(SRC, full).replace(/\\/g, "/"), source: readFileSync(full, "utf8") });
+      }
+    }
+  };
+  walk(SRC);
+  return files;
+}
+
+/**
+ * The same text with its comments removed.
+ *
+ * The files this suite reads explain themselves at length, and several of the
+ * words it searches for — "calendar", "ics", the name of a native module —
+ * appear in that prose precisely *because* the rule is being justified there.
+ * Asserting against the raw text would therefore fail on a well-documented file
+ * and pass on an undocumented one, which is exactly backwards. So the
+ * assertions below are about code, and this is what makes them so.
+ */
+function codeOf(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
 /**
@@ -101,7 +131,104 @@ function testNativeIntentStaysBoring() {
   equal("and there is one decision, taken in one place", source.match(/incomingShareLaunchPath\(/g).length, 1);
 }
 
+/**
+ * Every native file or intent module is reached through one file.
+ *
+ * The rule predates the calendar work — `expo-file-system` and `expo-sharing`
+ * have always been `util/timetableFiles`'s alone — and adding a third such
+ * module is exactly the moment to assert it rather than to keep meaning it.
+ * `expo-intent-launcher` is the most tempting of the three to reach for
+ * directly, because "open this file" reads like a one-liner from anywhere, and
+ * the one-liner is what puts a `content://` URI and a permission grant into a
+ * screen component.
+ */
+function testNativeEdgeStaysAtOneFile() {
+  section("AA. The native file and intent modules are reached through one file");
+
+  const BOUNDARY = "util/timetableFiles.ts";
+  const NATIVE = ["expo-file-system", "expo-sharing", "expo-intent-launcher"];
+  const files = everySourceFile();
+
+  check("the source tree was walked", files.length > 20, `found ${files.length}`);
+
+  for (const module of NATIVE) {
+    // Both spellings, because the intent launcher is deliberately reached by a
+    // deferred `require` — see `intentLauncher` — and a rule that only knew
+    // about `import` would have a hole exactly where the newest module sits.
+    const named = new RegExp(`(from\\s+["']|require\\(\\s*["']|import\\(\\s*["'])${module}(/[^"']*)?["']`);
+    const importers = files.filter(({ source }) => named.test(codeOf(source))).map(({ path }) => path);
+    equal(`${module} is reached from exactly one file`, importers.join(","), BOUNDARY);
+  }
+
+  /*
+   * And the boundary still knows nothing about what it is carrying. It takes a
+   * file name, some text and a MIME type; deciding that a calendar is
+   * `text/calendar` belongs to `storage/calendarFile`, which is what keeps the
+   * whole of the file *format* testable in Node with no native modules at all.
+   */
+  const boundary = codeOf(read("util", "timetableFiles.ts"));
+  check("the boundary hard-codes no MIME type", !/["']text\/calendar["']|["']application\/octet-stream["']/.test(boundary));
+  check("...names no file extension", !/["'][^"']*\.(ics|temelo)["']/.test(boundary));
+  check("...and imports nothing from storage or domain", !/from\s+["']@\/(storage|domain|features)\//.test(boundary));
+}
+
+/**
+ * Opening a file and sending a copy of it are two different Android verbs.
+ *
+ * This is the product decision the calendar hand-off turns on, and it is one
+ * line of code away from being silently undone: swapping `openFileWithApp` back
+ * to `shareTimetableFile` would still compile, still export a correct `.ics`,
+ * and still look right in review — and calendar apps would stop being offered,
+ * because they register no `ACTION_SEND` filter. So the shape is asserted.
+ *
+ * What this cannot prove is the runtime half — that Android resolves the intent
+ * and that the grant lets the calendar read the file. Nothing in Node can; that
+ * is the device checklist.
+ */
+function testOpeningAndSharingStaySeparate() {
+  section("AB. Opening a file and sharing it stay two different things");
+
+  const boundary = codeOf(read("util", "timetableFiles.ts"));
+
+  check("there is an ACTION_VIEW launch", /["']android\.intent\.action\.VIEW["']/.test(boundary));
+  check("it is the only intent action named", (boundary.match(/android\.intent\.action\.[A-Z_]+/g) ?? []).length === 1);
+  check("it carries a read grant", /flags:\s*FLAG_GRANT_READ_URI_PERMISSION/.test(boundary));
+  equal("which is Android's own constant", (boundary.match(/FLAG_GRANT_READ_URI_PERMISSION\s*=\s*0x0*1\b/g) ?? []).length, 1);
+  check("it hands over a content URI", /data:\s*contentUri/.test(boundary));
+
+  /*
+   * The one thing the outbound path must never do, and the reason the grant
+   * exists at all. Scoped to the function that hands a file *out*: reading a
+   * `file://` somebody else sent in is a different question with a different
+   * answer, and `isFileUri` rightly says yes to it.
+   */
+  const opening = boundary.slice(boundary.indexOf("export async function openFileWithApp"));
+  const openingBody = opening.slice(0, opening.indexOf("\nexport ", 1) + 1 || undefined);
+  check("the opening function was found", openingBody.includes("startActivityAsync"), "not found");
+  check("it never hands out a file:// URI", !/file:\/\//.test(openingBody));
+  check("...and never reads the plain file uri for the hand-off", !/\.uri\b/.test(openingBody));
+  check("the share sheet is still reached the way it was", /Sharing\.shareAsync\(/.test(boundary));
+  check("opening is refused off Android before anything is written", /Platform\.OS\s*!==\s*["']android["']/.test(boundary));
+
+  /*
+   * And above it: one build of the file, two ways out. If the serializer were
+   * called once per delivery the two could drift, and "the calendar I opened"
+   * and "the calendar I sent myself" would stop being the same file.
+   */
+  const transfer = codeOf(read("features", "timetables", "transfer.ts"));
+  equal("the calendar is serialized exactly once", (transfer.match(/buildIcsCalendar\(/g) ?? []).length, 1);
+  equal("...and resolved exactly once", (transfer.match(/calendarOccurrencesIn\(/g) ?? []).length, 1);
+  check("opening goes to the intent launcher", /openFileWithApp\(/.test(transfer));
+  check("sharing still goes to the share sheet", /shareTimetableFile\(/.test(transfer));
+  check("an empty range is answered before either", /occurrences\.length === 0/.test(transfer));
+  // A calendar app that cannot be found is its own answer, not a failure: the
+  // sheet points at the other button instead of reporting an error.
+  check("a missing calendar app is its own outcome", /kind:\s*["']noCalendarApp["']/.test(transfer));
+}
+
 export function runArchitectureHarness() {
   testReceiverCannotNavigate();
   testNativeIntentStaysBoring();
+  testNativeEdgeStaysAtOneFile();
+  testOpeningAndSharingStaySeparate();
 }

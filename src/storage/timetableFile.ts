@@ -55,6 +55,7 @@
  */
 
 import { createId } from "@/domain/id";
+import { sanitizeFileNameStem } from "@/storage/fileName";
 import {
   buildTimetableSnapshot,
   parseTimetableSnapshotValue,
@@ -204,66 +205,20 @@ export function buildValidatedTemeloFile(
 const MAX_FILE_NAME_STEM = 60;
 
 /**
- * Characters no filename may carry.
- *
- * The union of what Android, Windows and the share targets in between object
- * to. `/` and `\` are the two that matter for safety rather than tidiness:
- * without them a timetable named `../x` would be a path rather than a name.
- * Control characters are handled separately, just below.
- */
-const UNSAFE_FILE_NAME = /[<>:"/\\|?*]/g;
-
-/**
- * Whether a code point has no business being in a filename at all.
- *
- * Everything below U+0020 plus DEL. Checked by code point rather than with a
- * control-character class in the regex above, which would need an eslint
- * exemption and would put two literal control characters into the source of a
- * file that is otherwise all prose.
- */
-function isControlPoint(point: string): boolean {
-  const code = point.codePointAt(0) ?? 0;
-  return code < 0x20 || code === 0x7f;
-}
-
-/**
  * A timetable's name, as a filename somebody would recognise in a Downloads
  * folder.
  *
- * "My timetable" becomes `My timetable.temelo`. Spaces are kept, because this
- * is a document rather than an identifier and a user looking for their
- * timetable is looking for its name. Everything a filesystem or a share target
- * could object to is removed, runs of whitespace collapse to one space, and
- * leading and trailing dots and spaces go — a name that is only dots is the
- * classic way to produce `.` or `..`.
+ * "My timetable" becomes `My timetable.temelo`. The cleaning itself is
+ * `storage/fileName`, shared with the calendar exporter so that what a
+ * filesystem accepts is decided in one place; what belongs here is the
+ * extension and the fallback.
  *
- * A name that survives none of that falls back to `timetable.temelo`. That is
- * not a failure worth reporting: the file's contents carry the real name, and
- * the import preview reads it from there.
+ * A name that survives none of the cleaning falls back to `timetable.temelo`.
+ * That is not a failure worth reporting: the file's contents carry the real
+ * name, and the import preview reads it from there.
  */
 export function temeloFileName(timetableName: string): string {
-  const cleaned = [...timetableName]
-    // A space rather than nothing: a name with a newline in the middle of it is
-    // two words, and joining them into one would be a worse answer than the
-    // space the rest of this function is already collapsing.
-    .map((point) => (isControlPoint(point) ? " " : point))
-    .join("")
-    .replace(UNSAFE_FILE_NAME, " ")
-    .replace(/\s+/g, " ")
-    /*
-     * Dots and spaces at either end, in one pass each.
-     *
-     * Trailing dots are stripped by some filesystems and kept by others, which
-     * is worse than either, and leading ones hide the file. The character class
-     * includes whitespace so that the two cannot hide behind each other: with
-     * separate trim-then-strip-dots steps, "../../x" arrives here as ".. .. x"
-     * and leaves as ".. x", still leading with a dot.
-     */
-    .replace(/^[.\s]+/, "")
-    .replace(/[.\s]+$/, "");
-
-  const points = [...cleaned];
-  const stem = points.length > MAX_FILE_NAME_STEM ? points.slice(0, MAX_FILE_NAME_STEM).join("").trim() : cleaned;
+  const stem = sanitizeFileNameStem(timetableName, MAX_FILE_NAME_STEM);
   return `${stem.length > 0 ? stem : "timetable"}${TEMELO_FILE_EXTENSION}`;
 }
 
