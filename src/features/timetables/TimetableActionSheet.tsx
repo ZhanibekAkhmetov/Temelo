@@ -7,6 +7,15 @@ import { useTheme } from "@/theme/useTheme";
 export interface TimetableAction {
   key: string;
   label: string;
+  /**
+   * One quiet line under the label, for an action whose name is not enough.
+   *
+   * Added for the two ways a timetable can leave the app, which are genuinely
+   * easy to confuse: a Temelo file comes back, a calendar file does not. Every
+   * other action here — Delete, and Share when it is the only one — says what
+   * it does in its own name and takes none.
+   */
+  description?: string;
   onPress: () => void;
   /** Drawn in the danger colour. At most one, and always last. */
   destructive?: boolean;
@@ -139,6 +148,11 @@ export function TimetableActionSheet({ name, actions, onDismiss }: TimetableActi
                 >
                   {action.label}
                 </Text>
+                {action.description ? (
+                  <Text style={[typography.caption, { color: colors.textMuted, marginTop: spacing.xs }]}>
+                    {action.description}
+                  </Text>
+                ) : null}
               </Pressable>
             ))}
           </View>

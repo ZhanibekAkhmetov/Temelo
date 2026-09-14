@@ -3,15 +3,18 @@ import { StyleSheet, Text, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 
 import { Button } from "@/components/Button";
+
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FormSection, ListGroup } from "@/components/FormSection";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
+import { todayIsoDate } from "@/domain/date";
+import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
 import { ImportPreviewDialog } from "@/features/timetables/ImportPreviewDialog";
 import { TimetableActionSheet, type TimetableAction } from "@/features/timetables/TimetableActionSheet";
 import { timetableSummary, shapeOfActive } from "@/features/timetables/summary";
 import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
-import { useImportTimetable, useShareTimetable } from "@/features/timetables/transfer";
+import { useExportCalendar, useImportTimetable, useShareTimetable } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import type { ArchivedTimetableSummary } from "@/storage/timetableLifecycle";
@@ -61,6 +64,7 @@ export default function TimetablesScreen() {
 
   const sharing = useShareTimetable();
   const importing = useImportTimetable();
+  const calendar = useExportCalendar();
 
   /**
    * Which row the contextual actions are about, or null.
@@ -72,6 +76,20 @@ export default function TimetablesScreen() {
   const [selected, setSelected] = useState<{ kind: "current" | "archived"; id: string; name: string } | null>(null);
   /** The archived timetable a Delete from the sheet is waiting on. */
   const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
+  /**
+   * The timetable a calendar export is being ranged for, with the start date
+   * the suggested range is derived from.
+   *
+   * Held here rather than read back off `selected`, because the sheet that
+   * produced it is dismissed before this opens — an action sheet and a form
+   * stacked on each other would be two scrims deep.
+   */
+  const [exporting, setExporting] = useState<{
+    kind: "current" | "archived";
+    id: string;
+    name: string;
+    anchorDate: string;
+  } | null>(null);
 
   /*
    * Re-read on focus rather than once on mount.
@@ -104,7 +122,7 @@ export default function TimetablesScreen() {
     : null;
 
   const archivedCount = archived?.length ?? 0;
-  const busy = sharing.sharing || importing.busy;
+  const busy = sharing.sharing || importing.busy || calendar.exporting;
 
   function select(kind: "current" | "archived", id: string, name: string) {
     // The same tick a long press on a timetable block gives, for the same
@@ -113,11 +131,18 @@ export default function TimetablesScreen() {
     setSelected({ kind, id, name });
   }
 
+  /** The start date a row's suggested export range is derived from, or null. */
+  function anchorDateFor(entry: NonNullable<typeof selected>): string | null {
+    if (entry.kind === "current") return current?.anchorDate ?? null;
+    return archived?.find((candidate) => candidate.id === entry.id)?.contents?.startDate ?? null;
+  }
+
   /** What the sheet offers for whichever row is selected. */
   function actionsFor(entry: NonNullable<typeof selected>): TimetableAction[] {
     const share: TimetableAction = {
       key: "share",
-      label: t("transfer.shareAction"),
+      label: t("transfer.shareFileAction"),
+      description: t("transfer.shareFileHint"),
       onPress: () => {
         setSelected(null);
         if (entry.kind === "current") sharing.shareActive();
@@ -125,10 +150,32 @@ export default function TimetablesScreen() {
       },
     };
 
-    if (entry.kind === "current") return [share];
+    const anchorDate = anchorDateFor(entry);
+    /*
+     * Offered only when there is a start date to range from — which for an
+     * archive means a snapshot that could be read. A damaged one keeps Share,
+     * which reports the damage itself, and simply does not offer this.
+     */
+    const exportToCalendar: TimetableAction[] =
+      anchorDate === null
+        ? []
+        : [
+            {
+              key: "calendar",
+              label: t("calendarExport.action"),
+              description: t("calendarExport.actionHint"),
+              onPress: () => {
+                setSelected(null);
+                setExporting({ kind: entry.kind, id: entry.id, name: entry.name, anchorDate });
+              },
+            },
+          ];
+
+    if (entry.kind === "current") return [share, ...exportToCalendar];
 
     return [
       share,
+      ...exportToCalendar,
       {
         key: "delete",
         label: t("timetables.deleteAction"),
@@ -290,6 +337,23 @@ export default function TimetablesScreen() {
           name={selected.name}
           actions={actionsFor(selected)}
           onDismiss={() => setSelected(null)}
+        />
+      ) : null}
+
+      {exporting ? (
+        <CalendarExportSheet
+          name={exporting.name}
+          anchorDate={exporting.anchorDate}
+          // Today for the timetable in use, its own start for an archive; see
+          // `defaultCalendarExportRange`.
+          today={exporting.kind === "current" ? todayIsoDate() : null}
+          busy={calendar.exporting}
+          onExport={(range, how) =>
+            exporting.kind === "current"
+              ? calendar.exportActive(range, how)
+              : calendar.exportArchive(exporting.id, range, how)
+          }
+          onDismiss={() => setExporting(null)}
         />
       ) : null}
 

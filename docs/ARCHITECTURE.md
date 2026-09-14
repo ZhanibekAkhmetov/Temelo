@@ -43,7 +43,8 @@ src/
                   dev-only diagnostics)
   i18n/           Translations, locale resolution, formatting
   state/          App state provider and defaults
-  storage/        Persistence / repository boundary, and the `.temelo` format
+  storage/        Persistence / repository boundary, and the file formats
+                  (`.temelo`, `.ics`)
   theme/          Design tokens, appearance preference, class colours
   types/          Shared model types
   util/           Native-module wrappers (notifications, haptics, files)
@@ -231,6 +232,69 @@ exactly the line `util/notifications` and `util/haptics` already draw. That is
 what lets the whole format be exercised by the Node harness, which has no native
 modules.
 
+## Calendar export: one way, bounded, materialized
+
+A timetable can also leave as an `.ics` (`storage/calendarFile`), which is the
+opposite kind of thing from a `.temelo` and is built that way deliberately.
+
+**One way.** Temelo writes calendar files and never reads one. There is no
+`.ics` import, no synchronization, no Calendar Provider or EventKit
+integration, and **no calendar permission is requested** — the file goes to the
+ordinary share sheet, so the app never gains access to the user's calendar. A
+file, once made, does not update: it is a snapshot of a date range, and
+re-exporting is how a changed timetable reaches a calendar again.
+
+**Bounded.** A timetable has a start and no end, so "export all of it" is not a
+finite request. The user picks a range; `domain/calendarExport` caps one export
+at 366 days and suggests six months from today (from the archive's own start
+date, for an archive).
+
+**Materialized, not `RRULE`.** This is the load-bearing decision. Temelo's
+editing model is richer than iCalendar recurrence — an occurrence can be moved
+to another day and period, cancelled on its own, or split off by a "this and
+future" edit — and expressing that as `RRULE`/`RDATE`/`EXDATE` would be a
+second implementation of recurrence whose bugs would surface inside somebody
+else's calendar app. Because the range is finite, none is needed: the exporter
+enumerates the dates and asks **`resolveOccurrences`** — the same function the
+grid draws from, the clash check asks and the reminder plan is built on — then
+writes one `VEVENT` per resolved occurrence. A cancelled occurrence emits
+nothing, a moved one emits exactly one event at the date it moved to, and a
+split series is two ordinary runs. `harness/calendar.mjs` suite H asserts the
+exported set equals the resolver's set over several ranges, which is what stops
+the two drifting apart.
+
+**Floating times, because Temelo has no timezone.** A recurring class is stored
+as a local weekday and an `HH:mm`; no timezone is stored anywhere in the model.
+So `DTSTART`/`DTEND` are written as RFC 5545 floating date-times — no `Z`, no
+`TZID` — which preserves exactly what Temelo means ("Maths is at 09:00").
+Inventing a `TZID` from the exporting device would claim knowledge of the
+institution's zone the app does not have, and would shift every class by an hour
+for a user who exported in one country and read the file in another. `DTSTAMP`
+is a real instant and so is correctly UTC.
+
+The file is RFC 5545: CRLF line endings, TEXT escaping of backslash, comma,
+semicolon and newline, and folding at **75 octets** — counted in UTF-8 bytes
+over whole code points, so a Cyrillic or emoji name is neither over-long nor cut
+in half. UIDs are derived from the placement id and the occurrence's date *in
+its series*, the same pair that identifies an occurrence everywhere else, so
+re-exporting the same range is byte-identical and a calendar recognises an
+update rather than duplicates. No `VALARM` is ever emitted: Temelo has its own
+reminders, and a second set from a calendar app is not something the user asked
+for.
+
+Export is read-only for both the active timetable and an archived one. Both
+arrive as a `TimetableSnapshot`, so there is one code path; an archive is read
+from its stored snapshot and never restored, and nothing is written to SQLite in
+order to export. A range holding no occurrences is reported to the user and
+never shared as an empty calendar, which would look exactly like a successful
+export until they went looking for their classes.
+
+Filename sanitization is shared with the `.temelo` exporter
+(`storage/fileName`) so that what a filesystem accepts is decided in one place,
+and the platform boundary is the same `util/timetableFiles` — which gained only
+an optional iOS UTI, since `.ics` has a registered one and `.temelo` does not.
+No native module, permission or `app.json` change was needed for any of this.
+
 ## Receiving a share: a transient receiver, not a screen
 
 On Android, another app's share sheet can send a `.temelo` to Temelo. The
@@ -336,6 +400,11 @@ into a corner:
   only show up on a physical device — today, that the share receiver has no
   router to call. Keep it small: a check belongs there only when the failure it
   prevents cannot be reproduced in Node at all.
+- `harness/calendar.mjs` checks the `.ics` against RFC 5545 literally rather
+  than through a library — a library sharing the same misunderstanding would
+  prove nothing — and asserts the exported event set equals what
+  `resolveOccurrences` produces. It cannot prove that any particular calendar
+  application accepts the file; that is a device check.
 - **Nothing in the harness can prove Android task or activity behaviour.**
   Which task a share-launched activity lands in, whether Done returns the user
   to the sending app, and what the Expo dev client does to the task on the way

@@ -10,8 +10,10 @@ import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
 import type { DomainError } from "@/domain/errors";
+import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
 import { daysLabel, hoursLabel } from "@/features/timetables/summary";
-import { useShareTimetable } from "@/features/timetables/transfer";
+import { TimetableActionSheet } from "@/features/timetables/TimetableActionSheet";
+import { useExportCalendar, useShareTimetable } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { MAX_TIMETABLE_NAME_LENGTH, type ArchivedTimetableSummary } from "@/storage/timetableLifecycle";
@@ -47,12 +49,16 @@ export default function ArchivedTimetableScreen() {
    */
   const justImported = params.imported === "1";
   const sharing = useShareTimetable();
+  const calendar = useExportCalendar();
 
   const [entry, setEntry] = useState<ArchivedTimetableSummary | null | undefined>(undefined);
   const [name, setName] = useState<string | null>(null);
   const [nameError, setNameError] = useState<DomainError | undefined>();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<"restore" | "delete" | null>(null);
+  /** The Share / Export chooser, and the calendar range sheet it can open. */
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   /** Why the last restore or delete did not happen. */
   const [actionError, setActionError] = useState<DomainError | undefined>();
 
@@ -244,17 +250,19 @@ export default function ArchivedTimetableScreen() {
           </Text>
         )}
 
-        {/* Sharing an archive is reading it, so it is offered whatever else is
-            on the screen — including for a snapshot too damaged to restore,
-            where the attempt simply reports that it could not be read. It sits
+        {/* Sharing or exporting an archive is reading it, so both are offered
+            whatever else is on the screen — including for a snapshot too damaged
+            to restore, where the attempt simply reports that it could not be
+            read. Neither restores anything and neither writes: an archive is
+            exported from its own stored snapshot, exactly where it sits. It is
             above the divider because it changes nothing; Delete is below it,
             alone, because it cannot be taken back. */}
         <View style={{ marginTop: spacing.lg }}>
           <Button
-            label={t("transfer.shareAction")}
+            label={t("transfer.shareOrExport")}
             variant="secondary"
-            onPress={() => sharing.shareArchive(archiveId)}
-            disabled={busy || sharing.sharing}
+            onPress={() => setTransferOpen(true)}
+            disabled={busy || sharing.sharing || calendar.exporting}
           />
           {sharing.error ? (
             <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
@@ -287,6 +295,50 @@ export default function ArchivedTimetableScreen() {
 
         <View style={{ height: spacing.xl }} />
       </ScreenContainer>
+
+      {transferOpen ? (
+        <TimetableActionSheet
+          name={entry.name}
+          actions={[
+            {
+              key: "share",
+              label: t("transfer.shareFileAction"),
+              description: t("transfer.shareFileHint"),
+              onPress: () => {
+                setTransferOpen(false);
+                sharing.shareArchive(archiveId);
+              },
+            },
+            {
+              key: "calendar",
+              label: t("calendarExport.action"),
+              description: t("calendarExport.actionHint"),
+              onPress: () => {
+                setTransferOpen(false);
+                setCalendarOpen(true);
+              },
+            },
+          ]}
+          onDismiss={() => setTransferOpen(false)}
+        />
+      ) : null}
+
+      {/* Only with readable contents: the suggested range is derived from the
+          archive's start date, and a snapshot that cannot be read has none to
+          derive it from. The chooser above still offers Share, which reports
+          the damage itself. */}
+      {calendarOpen && contents ? (
+        <CalendarExportSheet
+          name={entry.name}
+          anchorDate={contents.startDate}
+          // An archive is history: today is almost certainly past the end of it,
+          // so the range starts where the timetable itself did.
+          today={null}
+          busy={calendar.exporting}
+          onExport={(range, how) => calendar.exportArchive(archiveId, range, how)}
+          onDismiss={() => setCalendarOpen(false)}
+        />
+      ) : null}
 
       {confirming === "restore" && current ? (
         <ConfirmDialog

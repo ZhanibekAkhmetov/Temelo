@@ -1,9 +1,12 @@
 /**
- * Sharing a timetable out and importing one in, as two hooks.
+ * Sharing a timetable out, importing one in, and exporting one to a calendar,
+ * as three hooks.
  *
  * This is the one place the layers meet: `state/AppStateContext` owns the
  * database, `storage/timetableFile` owns what a `.temelo` is,
- * `features/timetables/importPipeline` owns what a valid one *means*, and
+ * `storage/calendarFile` owns what an `.ics` is, `domain/calendarExport` owns
+ * which meetings fall inside a date range,
+ * `features/timetables/importPipeline` owns what a valid file *means*, and
  * `util/timetableFiles` owns the share sheet and the picker. None of them knows
  * about the others, and none of them knows how to say "this file isn't a valid
  * Temelo timetable" — that is this module's job, and it is why the
@@ -13,9 +16,10 @@
  * Two rules the hooks enforce, both of which are the whole point of the
  * feature:
  *
- *  - **Export never mutates.** Both share paths read a snapshot and write a
- *    file. Nothing is saved, no timestamp moves, and the timetable the user is
- *    looking at is the same object afterwards.
+ *  - **Export never mutates.** Every export path — both share paths and the
+ *    calendar one — reads a snapshot and writes a file. Nothing is saved, no
+ *    timestamp moves, and the timetable the user is looking at is the same
+ *    object afterwards. An archive is read, never restored.
  *  - **Import writes nothing until it is confirmed.** Choosing a file parses
  *    and validates it into a *preview*, and only `confirm` reaches the
  *    database. A file that fails any check never gets as far as a transaction,
@@ -24,18 +28,30 @@
  */
 
 import { useCallback, useRef, useState } from "react";
+import { Platform } from "react-native";
 
+import {
+  calendarOccurrencesIn,
+  validateCalendarExportRange,
+  type CalendarExportRange,
+} from "@/domain/calendarExport";
 import { domainError, type DomainError } from "@/domain/errors";
 import { previewTimetableFile, type ImportCandidate } from "@/features/timetables/importPipeline";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState, type ImportActionResult, type SnapshotResult } from "@/state/AppStateContext";
+import {
+  buildIcsCalendar,
+  calendarFileName,
+  CALENDAR_FILE_MIME_TYPE,
+  CALENDAR_FILE_UTI,
+} from "@/storage/calendarFile";
 import {
   buildValidatedTemeloFile,
   temeloFileName,
   TEMELO_FILE_MIME_TYPE,
   type TemeloFileFailure,
 } from "@/storage/timetableFile";
-import { pickTimetableFile, shareTimetableFile } from "@/util/timetableFiles";
+import { openFileWithApp, pickTimetableFile, shareTimetableFile } from "@/util/timetableFiles";
 
 /**
  * The underlying reason, in the log, where it is the only thing that would ever
@@ -280,4 +296,192 @@ export function useImportTimetable(): TimetableImporting {
   }, []);
 
   return { pending, busy, error, choose, confirm, cancel };
+}
+
+/* --------------------------------------------------------- calendar export */
+
+/**
+ * What one attempt to export a calendar came to.
+ *
+ * `empty` is a first-class outcome rather than an error, because it is not one:
+ * the user asked a reasonable question about a range that happens to hold no
+ * classes — a summer, a gap between terms — and the answer is information, not
+ * a failure. It is also the one outcome that must not reach the share sheet. An
+ * `.ics` with no `VEVENT` in it is a valid file that silently imports nothing,
+ * so handing it over would look exactly like a successful export right up until
+ * the user went looking for their classes.
+ */
+export type CalendarExportOutcome =
+  /** The file was written and the share sheet opened. */
+  | { kind: "shared" }
+  /** The file was written and handed to a calendar app. */
+  | { kind: "opened" }
+  /**
+   * Nothing on this device offered to open a calendar file.
+   *
+   * Its own outcome rather than a `failed`, because it is the one failure the
+   * user can do something about — the file is fine and sharing it still works
+   * — and the sheet answers it by pointing at the other button rather than by
+   * reporting an error.
+   */
+  | { kind: "noCalendarApp" }
+  /** No classes in the chosen range; nothing was written or shared. */
+  | { kind: "empty" }
+  /** An export is already running — a second tap in the same frame. */
+  | { kind: "busy" }
+  | { kind: "failed"; error: DomainError };
+
+/**
+ * Which way out an export takes.
+ *
+ * `open` hands the file to a calendar app (`ACTION_VIEW`); `share` hands a copy
+ * to whatever the user picks from the share sheet (`ACTION_SEND`). They are two
+ * different Android verbs answering two different questions, not two styles of
+ * the same one — see `openFileWithApp`. Everything before the hand-off is
+ * identical, which is why this is a parameter rather than a second function.
+ */
+export type CalendarDelivery = "open" | "share";
+
+export interface CalendarExporting {
+  /** True while the file is being built and the sheet opened. */
+  exporting: boolean;
+  /** Exports the active timetable over a range. Defaults to sharing. */
+  exportActive: (range: CalendarExportRange, how?: CalendarDelivery) => Promise<CalendarExportOutcome>;
+  /** Exports one archived timetable over a range, reading it without restoring it. */
+  exportArchive: (
+    archiveId: string,
+    range: CalendarExportRange,
+    how?: CalendarDelivery,
+  ) => Promise<CalendarExportOutcome>;
+}
+
+/**
+ * Whether this platform can hand a file to another app to *open*.
+ *
+ * Android only, and the reason is not a limitation so much as a difference in
+ * kind: iOS has no `ACTION_VIEW`, and its share sheet already offers Calendar
+ * for a `.ics` because the file declares a system UTI. So the one button iOS
+ * shows is the sharing one, and it reaches a calendar by the route iOS has.
+ */
+export const CAN_OPEN_IN_APP = Platform.OS === "android";
+
+/**
+ * Writing a bounded stretch of a timetable to an `.ics` and handing it to the
+ * share sheet.
+ *
+ * The shape is the same as `useShareTimetable`'s, and for the same reason: the
+ * active timetable and an archived one both arrive as a `TimetableSnapshot`, so
+ * one function does both and the archive is only ever read. Nothing on this
+ * path writes to the database.
+ *
+ * What differs is that the outcome is *returned* rather than kept in state. The
+ * range sheet stays open across an attempt — a range holding no classes is
+ * something the user answers by changing the dates, right there — so it needs
+ * the result of the attempt it just made, not a piece of shared state it would
+ * have to remember to clear.
+ */
+export function useExportCalendar(): CalendarExporting {
+  const { t } = useI18n();
+  const { activeTimetableSnapshot, readArchivedSnapshot } = useAppState();
+  const [exporting, setExporting] = useState(false);
+  /** See the note on `inFlight` in `useImportTimetable`; same reason. */
+  const inFlight = useRef(false);
+
+  const run = useCallback(
+    async (
+      load: () => SnapshotResult | Promise<SnapshotResult>,
+      range: CalendarExportRange,
+      how: CalendarDelivery,
+    ): Promise<CalendarExportOutcome> => {
+      // Before anything is loaded or written: an impossible range is a question
+      // about the form, not about the timetable.
+      const invalid = validateCalendarExportRange(range);
+      if (invalid) return { kind: "failed", error: invalid };
+
+      if (inFlight.current) return { kind: "busy" };
+      inFlight.current = true;
+      setExporting(true);
+      try {
+        const loaded = await load();
+        if (!loaded.ok) return { kind: "failed", error: loaded.error };
+
+        /*
+         * The whole of the recurrence question, asked once, of the resolver the
+         * grid draws from. Everything that makes this feature hard — parity,
+         * splits, moved and deleted occurrences, the timetable's start — is
+         * already decided by the time these come back. See
+         * `domain/calendarExport`.
+         */
+        const occurrences = calendarOccurrencesIn(loaded.snapshot, range, {
+          teacher: (name) => t("calendarExport.teacherLine", { name }),
+        });
+        if (occurrences.length === 0) return { kind: "empty" };
+
+        /*
+         * One file, built once, whichever way it leaves. The serializer, the
+         * name and the resolved occurrences are identical for both deliveries —
+         * only the Android verb differs — so a calendar opened directly and a
+         * calendar reached through a chat app receive byte-identical files.
+         */
+        const fileName = calendarFileName(loaded.snapshot.timetable.name, range.from, range.to);
+        const contents = buildIcsCalendar({
+          calendarName: loaded.snapshot.timetable.name,
+          occurrences,
+          exportedAt: new Date().toISOString(),
+        });
+
+        if (how === "open") {
+          const opened = await openFileWithApp({ fileName, contents, mimeType: CALENDAR_FILE_MIME_TYPE });
+          if (opened.ok) return { kind: "opened" };
+          if (opened.kind === "failed") logDetail("opening the calendar failed", opened.detail);
+          if (opened.kind === "noHandler") logDetail("no calendar app", opened.detail);
+          /*
+           * Every way this can fail leaves the user in the same place — the
+           * file exists and the other button still works — so all of them are
+           * answered with the same outcome. `unsupported` is unreachable from
+           * a sheet that only offers this button on Android, and is folded in
+           * here rather than given a branch that could never run.
+           */
+          return { kind: "noCalendarApp" };
+        }
+
+        const shared = await shareTimetableFile({
+          fileName,
+          contents,
+          mimeType: CALENDAR_FILE_MIME_TYPE,
+          dialogTitle: t("calendarExport.dialogTitle"),
+          uti: CALENDAR_FILE_UTI,
+        });
+
+        if (!shared.ok) {
+          if (shared.kind === "failed") logDetail("the calendar export failed", shared.detail);
+          return {
+            kind: "failed",
+            error: domainError(
+              shared.kind === "unavailable" ? "errors.shareUnavailable" : "errors.calendarExportFailed",
+            ),
+          };
+        }
+        return { kind: "shared" };
+      } finally {
+        inFlight.current = false;
+        setExporting(false);
+      }
+    },
+    [t],
+  );
+
+  const exportActive = useCallback(
+    (range: CalendarExportRange, how: CalendarDelivery = "share") =>
+      run(() => activeTimetableSnapshot(), range, how),
+    [run, activeTimetableSnapshot],
+  );
+
+  const exportArchive = useCallback(
+    (archiveId: string, range: CalendarExportRange, how: CalendarDelivery = "share") =>
+      run(() => readArchivedSnapshot(archiveId), range, how),
+    [run, readArchivedSnapshot],
+  );
+
+  return { exporting, exportActive, exportArchive };
 }

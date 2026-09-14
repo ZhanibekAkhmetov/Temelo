@@ -43,7 +43,9 @@
  */
 
 import { Directory, File, Paths } from "expo-file-system";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import * as Sharing from "expo-sharing";
+import { Platform } from "react-native";
 
 /**
  * The largest file this module will read into memory, in bytes.
@@ -65,6 +67,69 @@ const MAX_INCOMING_FILE_BYTES = 8 * 1024 * 1024;
 
 /** The cache subdirectory an export is staged in. Cleared before each write. */
 const EXPORT_DIRECTORY = "timetable-export";
+
+/**
+ * `Intent.FLAG_GRANT_READ_URI_PERMISSION`.
+ *
+ * The whole reason a direct open needs an intent launcher rather than
+ * `Linking.openURL`. The staged file lives in Temelo's private cache and is
+ * handed over as a `content://` URI from a provider declared `exported="false"`
+ * — so the receiving app can read it only for as long as the intent that
+ * carried this flag is alive. Without it the calendar resolves the intent,
+ * starts, and then fails reading the file, which is worse than not offering
+ * the button at all.
+ *
+ * Written as a literal because it is one: a platform constant Android has never
+ * changed, and the alternative is a native module imported for one integer.
+ */
+const FLAG_GRANT_READ_URI_PERMISSION = 0x00000001;
+
+/**
+ * How long to wait for a launch to fail before calling it a success.
+ *
+ * `startActivityAsync` resolves when the user comes *back* — which may be
+ * minutes, or never, if they leave through Recents — and rejects when the
+ * activity could not be started at all. Only the rejection is an answer this
+ * code can use, and it arrives on the next bridge turn: Android throws
+ * `ActivityNotFoundException` synchronously inside `startActivityForResult`.
+ *
+ * So the wait is for the rejection, not for the resolution, and this is the
+ * grace it is given. Generous by two orders of magnitude on purpose, and free
+ * when the launch works: by then the calendar is on screen and the sheet
+ * underneath it is something nobody is looking at.
+ */
+const LAUNCH_GRACE_MS = 1200;
+
+/**
+ * The intent launcher, or null on a build whose native side does not have it.
+ *
+ * Two separate hazards, and the shape of this function is one answer to both.
+ *
+ * `expo-intent-launcher`'s entry point is `requireNativeModule('ExpoIntentLauncher')`
+ * evaluated at *module scope*, so a plain top-level import on a build without
+ * the native module throws while the bundle is being evaluated — not a failed
+ * export but an app that does not start. Every development build made before
+ * this module was installed is such a build, and so is any client a user has
+ * not updated. Requiring it lazily, on the one code path that uses it, is what
+ * keeps that from being a launch crash.
+ *
+ * Asking `requireOptionalNativeModule` first is what keeps it from being a
+ * *reported* error either. A `try` around the require does catch the throw, and
+ * the export goes on to fall back correctly — but the module factory has failed
+ * by then, and in development that is surfaced as a red screen the user has to
+ * dismiss, describing a condition the code has already handled. The optional
+ * form answers the same question without anything throwing, so the missing
+ * module becomes what it should be: this one button unavailable, with the share
+ * button beside it still doing its job.
+ *
+ * The guard is only a guard. What is called afterwards is the package's own
+ * supported API, not the native module it points at.
+ */
+function intentLauncher(): typeof import("expo-intent-launcher") | null {
+  if (requireOptionalNativeModule("ExpoIntentLauncher") === null) return null;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require("expo-intent-launcher");
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -103,6 +168,24 @@ function resetExportDirectory(): Directory {
 }
 
 /**
+ * Writes `contents` into the staging directory and hands back the file.
+ *
+ * Shared by both ways out, so there is one answer to "where does an export
+ * live" and one moment at which the previous one stops existing: the start of
+ * the next export, never the end of the current one. That ordering is the
+ * whole of the lifetime guarantee. A file handed to another app stays on disk
+ * until Temelo is asked to produce a different one, which is long after the
+ * receiving activity has read it — and if the OS reclaims the cache first, it
+ * reclaims a file whose only purpose was already served.
+ */
+function stageExportFile(fileName: string, contents: string): File {
+  const file = new File(resetExportDirectory(), fileName);
+  file.create({ overwrite: true });
+  file.write(contents);
+  return file;
+}
+
+/**
  * Writes `contents` to a temporary file called `fileName` and hands it to the
  * platform share sheet.
  *
@@ -121,6 +204,15 @@ export async function shareTimetableFile(input: {
   contents: string;
   mimeType: string;
   dialogTitle: string;
+  /**
+   * The iOS uniform type identifier, when the file has a registered one.
+   *
+   * Android ignores it entirely and routes on `mimeType`, so this is only ever
+   * about iOS. It defaults to the generic data type below, which is what a file
+   * of an unknown kind is supposed to declare and what `.temelo` — registered
+   * with nothing, anywhere — has to use.
+   */
+  uti?: string;
 }): Promise<ShareTimetableResult> {
   try {
     if (!(await Sharing.isAvailableAsync())) return { ok: false, kind: "unavailable" };
@@ -132,11 +224,7 @@ export async function shareTimetableFile(input: {
 
   let uri: string;
   try {
-    const directory = resetExportDirectory();
-    const file = new File(directory, input.fileName);
-    file.create({ overwrite: true });
-    file.write(input.contents);
-    uri = file.uri;
+    uri = stageExportFile(input.fileName, input.contents).uri;
   } catch (error: unknown) {
     return { ok: false, kind: "failed", detail: `writing the export: ${messageOf(error)}` };
   }
@@ -145,13 +233,113 @@ export async function shareTimetableFile(input: {
     await Sharing.shareAsync(uri, {
       mimeType: input.mimeType,
       dialogTitle: input.dialogTitle,
-      // iOS only, and there is no registered UTI for `.temelo`; the generic
-      // data type is what a file of an unknown kind is supposed to declare.
-      UTI: "public.data",
+      // iOS only. There is no registered UTI for `.temelo`, so the generic data
+      // type is what a file of an unknown kind is supposed to declare; a caller
+      // whose format *does* have one — a calendar file does — names it instead.
+      UTI: input.uti ?? "public.data",
     });
     return { ok: true };
   } catch (error: unknown) {
     return { ok: false, kind: "failed", detail: `opening the share sheet: ${messageOf(error)}` };
+  }
+}
+
+/* -------------------------------------------------------------------- open */
+
+export type OpenFileResult =
+  | { ok: true }
+  /** Not Android. Nothing was written; the caller shares instead. */
+  | { ok: false; kind: "unsupported" }
+  /** Nothing on the device offered to open a file of this type. */
+  | { ok: false; kind: "noHandler"; detail: string }
+  /** Staging the file or reaching the launcher failed. */
+  | { ok: false; kind: "failed"; detail: string };
+
+/**
+ * Hands a temporary file to whichever app Android thinks should *open* it.
+ *
+ * ## Why this is not the share sheet
+ *
+ * `shareAsync` sends `ACTION_SEND`, which asks "who wants to receive a copy of
+ * this" — mail, chat, Drive. Opening asks "who understands this kind of file",
+ * which is `ACTION_VIEW`, and for a calendar file the two sets barely overlap:
+ * Google Calendar registers `ACTION_VIEW` filters for `text/calendar` and for
+ * `*.ics`, and no `ACTION_SEND` filter at all. That is why a `.ics` sent to a
+ * chat app and then tapped reaches a calendar, while the same file offered
+ * straight from the share sheet does not — the file was always fine and the
+ * verb was always wrong.
+ *
+ * ## Why a `content://` URI and a grant flag
+ *
+ * The staged file is in Temelo's private cache, so a `file://` URI would be
+ * both unreadable by the receiver and an exposure Android has refused since
+ * API 24. `File.contentUri` returns a URI from the `FileSystemFileProvider`
+ * that `expo-file-system` already declares, and because that provider is not
+ * exported, the receiver can read it only under the read grant this intent
+ * carries. Nothing is made world-readable and no permission is requested.
+ *
+ * ## What the result means
+ *
+ * `{ ok: true }` means the activity started — the same promise
+ * `shareTimetableFile` makes, and the same reason: what the user does in the
+ * calendar afterwards is not knowable from here. `noHandler` is the one failure
+ * worth a different sentence, because it is the only one the user can act on,
+ * by sharing the file somewhere instead.
+ */
+export async function openFileWithApp(input: {
+  fileName: string;
+  contents: string;
+  mimeType: string;
+}): Promise<OpenFileResult> {
+  // iOS has no intent system and `expo-intent-launcher` ships nothing for it.
+  // Answered before anything is written, so a platform that cannot open a file
+  // never leaves one behind for nothing.
+  if (Platform.OS !== "android") return { ok: false, kind: "unsupported" };
+
+  let contentUri: string;
+  try {
+    contentUri = stageExportFile(input.fileName, input.contents).contentUri;
+  } catch (error: unknown) {
+    return { ok: false, kind: "failed", detail: `staging the file: ${messageOf(error)}` };
+  }
+
+  const launcher = intentLauncher();
+  if (!launcher) return { ok: false, kind: "noHandler", detail: "the intent launcher is not in this build" };
+
+  try {
+    /*
+     * Deliberately not awaited to completion. The promise settles either by
+     * rejecting — no activity could be started — or by resolving when the user
+     * returns from the calendar, which is not an event this function is about
+     * and may never arrive. So the race waits only for the failure, and treats
+     * its absence as the launch having worked; see `LAUNCH_GRACE_MS`.
+     *
+     * The rejection handler is attached immediately rather than inside the
+     * race, so a refusal that arrives *after* the grace has elapsed is still
+     * handled and never surfaces as an unhandled rejection.
+     */
+    const launch = launcher.startActivityAsync("android.intent.action.VIEW", {
+      data: contentUri,
+      type: input.mimeType,
+      flags: FLAG_GRANT_READ_URI_PERMISSION,
+    });
+
+    const settled = launch.then(
+      () => null,
+      (error: unknown) => messageOf(error),
+    );
+    const failure = await Promise.race([
+      settled,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), LAUNCH_GRACE_MS)),
+    ]);
+
+    if (failure !== null) return { ok: false, kind: "noHandler", detail: failure };
+    return { ok: true };
+  } catch (error: unknown) {
+    // Not the missing-module case — `intentLauncher` has already answered that
+    // one. This is the launcher itself refusing synchronously: no activity to
+    // attach to, or a second launch while one is still pending.
+    return { ok: false, kind: "failed", detail: `opening the file: ${messageOf(error)}` };
   }
 }
 

@@ -162,6 +162,33 @@ The first implementation milestone covers:
 - Creating a class in an empty slot with the minimal flow described above.
 - Local, on-device persistence of everything above.
 
+## Sharing a timetable, and exporting it to a calendar
+
+A timetable can leave Temelo in two different ways, and they are offered
+together — as **Share / Export** on the timetable's own screen and on its long
+press — because they are easy to confuse and the difference matters:
+
+- **Share Temelo file** — a `.temelo`, for backup or for importing into Temelo
+  on another device. It comes back: importing one reconstructs the timetable.
+- **Export to calendar** — an `.ics` for Google Calendar, Samsung Calendar,
+  Apple Calendar or anything else that reads the standard format. It does not
+  come back, and Temelo never reads one.
+
+A timetable has no end date, so a calendar export has to be bounded: the user
+picks a first and a last day. The suggested range runs six months from today
+for the timetable in use, and from its own start date for an archived one,
+and a single export covers at most a year and a day.
+
+The file is a **one-time copy of those dates**. Every meeting in the range is
+written out individually — including the ones that were moved, and excluding
+the ones that were deleted — so what the calendar shows is exactly what Temelo
+shows for the same days. It does not update afterwards, and the range sheet
+says so before the export happens.
+
+Archived timetables export too, read from their stored snapshot: exporting one
+never restores it and never changes anything. A range with no classes in it is
+said so in words rather than shared as an empty file.
+
 ## Receiving a timetable from another app
 
 A `.temelo` arriving in Telegram, WhatsApp, mail or Drive is imported with
@@ -193,8 +220,16 @@ effort:
 - No backend, server, or authentication.
 - No account of any kind.
 - No cloud synchronization between devices.
-- No calendar export (Google/Apple/Samsung Calendar or others).
-- No direct device-calendar integration.
+- No calendar *synchronization*. Calendar export exists and is one-way: a
+  file, for a date range the user picks, handed to the share sheet. Nothing is
+  ever sent back into Temelo and nothing updates after the file is made — a
+  class changed in Temelo afterwards does not change in the calendar it was
+  exported to, and re-exporting is how that is fixed.
+- No reading of `.ics` files. Export only; there is no calendar import.
+- No direct device-calendar integration — no Calendar Provider, no EventKit, no
+  Google or Samsung Calendar API, and no calendar permission is requested. The
+  file goes through the ordinary share sheet, so Temelo never gains access to
+  the user's calendar at all.
 - No "Open with Temelo" for a `.temelo` file *tapped* in a file manager or a
   chat. Android reports an unknown extension as whatever the provider in the
   middle guesses, so registering for that would be unreliable in exactly the
@@ -213,9 +248,8 @@ current build:
 - A desktop-oriented web application.
 - Synchronization between a user's devices.
 - Optional accounts, used only to enable synchronization.
-- Calendar export to Google Calendar, Apple Calendar, Samsung Calendar, and
-  similar applications.
-- Direct integration with the device's native calendar.
+- Direct integration with the device's native calendar — a live, two-way link
+  rather than the one-way file export that now exists.
 - Opening a `.temelo` file by *tapping* it outside Temelo — the Android "Open
   with" intent. (Exporting a timetable, sharing it, importing one from inside
   Temelo, and receiving one through another app's share sheet are all
