@@ -24,32 +24,45 @@ standalone mobile application and a portfolio piece.
 
 ## Current status
 
-**Beta 1 (version 0.1.0).** Feature-complete for its first release: onboarding
-and generated periods, the weekly timetable, SQLite persistence with versioned
-migrations, recurring classes with occurrence-level exceptions, one active
-timetable plus archived ones, local class reminders, `.temelo` backup and
-transfer, one-way `.ics` calendar export, light/dark themes, and English,
-Russian and German localization.
+**Beta 2 (version 0.2.0)** is the latest release. It builds on Beta 1 with
+three changes that came out of tester feedback:
+
+- **Overlapping classes.** Two or more classes can share a time slot on
+  purpose, after the user confirms the clash. Each stays reachable on its own.
+- **Chosen start dates.** A weekly or every-two-weeks class can start on a
+  date the user picks instead of with the timetable.
+- **Any set of weekdays.** A timetable shows any combination of days. Hiding
+  a day keeps its classes, and showing it again brings them back.
+
+Everything Beta 1 introduced is still there: onboarding and generated periods,
+the weekly timetable, SQLite persistence with versioned migrations, recurring
+classes with occurrence-level exceptions, one active timetable plus archived
+ones, local class reminders, `.temelo` backup and transfer, one-way `.ics`
+calendar export, light/dark themes, and English, Russian and German
+localization. Updating from Beta 1 keeps existing timetables.
 
 Android is the platform it is developed and tested on. It has **not** been
 released to Google Play or the App Store, and there is no web version, cloud
 sync, or account system. See
-[docs/BETA1_RELEASE_NOTES.md](docs/BETA1_RELEASE_NOTES.md) for what Beta 1
-contains and what it deliberately does not.
+[docs/BETA2_RELEASE_NOTES.md](docs/BETA2_RELEASE_NOTES.md) for what Beta 2
+changes, and [docs/BETA1_RELEASE_NOTES.md](docs/BETA1_RELEASE_NOTES.md) for
+the first release.
 
-## Try Temelo Beta 1
+## Try Temelo Beta 2
 
-Download **[Temelo-Beta-1.apk](https://github.com/ZhanibekAkhmetov/Temelo/releases/download/v0.1.0-beta.2/Temelo-Beta-1.apk)**
+Download **[Temelo-Beta-2.apk](https://github.com/ZhanibekAkhmetov/Temelo/releases/download/v0.2.0-beta.1/Temelo-Beta-2.apk)**
 
-Release notes: [Temelo Beta 1](https://github.com/ZhanibekAkhmetov/Temelo/releases/tag/v0.1.0-beta.2)
+Release notes: [Temelo Beta 2](https://github.com/ZhanibekAkhmetov/Temelo/releases/tag/v0.2.0-beta.1)
 
 To install it on an Android phone:
 
-1. Download `Temelo-Beta-1.apk`.
+1. Download `Temelo-Beta-2.apk`.
 2. Open the file. Android will ask whether to allow installing apps from whichever browser or files app you downloaded it with; allow it there, then continue.
-3. Installing over an earlier Temelo build keeps your timetables.
+3. Installing over Beta 1 or an earlier Temelo build keeps your timetables. Don't uninstall first.
 
 This is a **test build distributed as a file, not a Play Store release**, which is why Android asks. It needs no account and no network connection. Uninstalling removes its data, so export a `.temelo` file first if you want to keep a timetable.
+
+Earlier releases: [Temelo Beta 1](https://github.com/ZhanibekAkhmetov/Temelo/releases/tag/v0.1.0-beta.2) (version 0.1.0), still available from its release page.
 
 
 ## Screenshots
@@ -68,10 +81,11 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
 
 **Setup**
 
-- Setup in two steps: the timetable's name and which days it has classes on,
-  then the academic day (day start, lesson duration, break duration, number of
-  periods). No start date, no end date, and no term to name — nothing in the
-  app stops because of a date the user was asked to guess.
+- Setup in two steps: the timetable's name, the date it starts on and which
+  days it has classes on, then the academic day (day start, lesson duration,
+  break duration, number of periods). There is no end date and no term to
+  name, so nothing in the app stops because of a date the user was asked to
+  guess.
 - Periods are generated from the academic-day configuration, with a live
   preview of the resulting day while the values are being chosen.
 - Any set of weekdays can be shown — Mon–Fri, Mon/Wed/Fri, the whole week.
@@ -309,8 +323,9 @@ archived ones); `.temelo` export, sharing and import; one-way `.ics` calendar
 export over a chosen date range; local class reminders; themes; English,
 Russian and German localization.
 
-**Next** — Beta 1: a standalone offline Android release, its branding, and
-acceptance on a physical device.
+**Released** — Beta 1 (0.1.0), the first standalone offline Android build;
+Beta 2 (0.2.0), adding intentional overlapping classes, chosen start dates for
+repeating classes, and any set of visible weekdays.
 
 **Later, not committed to** — reusing an existing course across placements,
 two-way calendar synchronization, a web version, optional account-based
@@ -334,7 +349,7 @@ src/
   types/        Shared model types
   util/         Native-module wrappers (notifications, haptics, files)
 docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md,
-                BETA1_RELEASE_NOTES.md
+                BETA1_RELEASE_NOTES.md, BETA2_RELEASE_NOTES.md
 harness/        Node-based domain and storage checks
 assets/         branding/ holds the Temelo mark and the icon, adaptive-icon,
                 monochrome, notification and splash assets derived from it

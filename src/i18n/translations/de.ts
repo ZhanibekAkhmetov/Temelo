@@ -185,7 +185,7 @@ export const de: Translations = {
   "settings.loadSampleConfirm": "Laden",
 
   "about.title": "Über Temelo",
-  "about.version": "Version {version} · Beta 1",
+  "about.version": "Version {version} · Beta 2",
   "about.storage": "Deine Stundenpläne liegen auf diesem Gerät. Temelo braucht kein Konto und funktioniert offline.",
   "about.backup": "Teile eine .temelo-Datei, um ein Backup zu behalten oder einen Stundenplan auf ein anderes Gerät zu übertragen.",
   "about.calendar": "Der Kalenderexport erstellt eine einmalige Kopie. Spätere Änderungen in Temelo erreichen sie nicht.",

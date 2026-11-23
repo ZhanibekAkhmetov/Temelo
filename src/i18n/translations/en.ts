@@ -199,7 +199,7 @@ export const en = {
 
   // ----------------------------------------------------------------- about
   "about.title": "About",
-  "about.version": "Version {version} · Beta 1",
+  "about.version": "Version {version} · Beta 2",
   "about.storage": "Your timetables are stored on this device. Temelo has no account and works offline.",
   "about.backup": "Share a .temelo file to keep a backup or move a timetable to another device.",
   "about.calendar": "Exporting to a calendar sends a one-time copy. Later changes in Temelo won’t reach it.",

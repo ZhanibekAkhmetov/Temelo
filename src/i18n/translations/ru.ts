@@ -184,7 +184,7 @@ export const ru: Translations = {
   "settings.loadSampleConfirm": "Загрузить",
 
   "about.title": "О приложении",
-  "about.version": "Версия {version} · Бета 1",
+  "about.version": "Версия {version} · Бета 2",
   "about.storage": "Расписания хранятся на этом устройстве. Temelo работает без аккаунта и без интернета.",
   "about.backup": "Отправьте файл .temelo, чтобы сохранить резервную копию или перенести расписание на другое устройство.",
   "about.calendar": "Экспорт в календарь создаёт разовую копию. Последующие изменения в Temelo в неё не попадут.",

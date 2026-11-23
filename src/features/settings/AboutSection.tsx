@@ -25,7 +25,7 @@ const PROJECT_LABEL = "ZhanibekAkhmetov/Temelo";
  * file" and "Export to calendar" sound alike and behave nothing alike.
  *
  * The version is read from the app config rather than written out, so the
- * number on this screen is the number that was built. "Beta 1" is the release,
+ * number on this screen is the number that was built. "Beta 2" is the release,
  * not a state the app is in, so it is said once, here, and nowhere else in the
  * product.
  */
