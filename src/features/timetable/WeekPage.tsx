@@ -144,10 +144,20 @@ function WeekPageComponent({
 
   // A selected class is ringed in its own colour, one step brighter than the
   // block it surrounds; a range with no class yet has only the accent.
+  //
+  // Found by identity rather than by position: with overlapping classes two
+  // blocks can start in the same cell, and only the selected one is ringed.
   const selectedBlock =
     overlay?.kind === "selected"
-      ? blocks.find((block) => block.dayIndex === overlay.dayIndex && block.startIndex === overlay.startIndex)
+      ? (blocks.find((block) => block.occurrenceId === overlay.occurrenceId) ??
+        blocks.find((block) => block.dayIndex === overlay.dayIndex && block.startIndex === overlay.startIndex))
       : undefined;
+  // The outline takes the selected class's lane only while it still sits
+  // where the selection says; a class mid-resize is drawn by the overlay.
+  const outlineLane =
+    selectedBlock && selectedBlock.dayIndex === overlay?.dayIndex && selectedBlock.startIndex === overlay.startIndex
+      ? { lane: selectedBlock.lane, laneCount: selectedBlock.laneCount }
+      : { lane: 0, laneCount: 1 };
   const overlayStroke = selectedBlock ? getClassColors(selectedBlock.course.appearanceId).outline : colors.accent;
 
   const todayColumn = weekdays.findIndex((day) => dates[day] === today);
@@ -317,6 +327,8 @@ function WeekPageComponent({
                 startIndex={block.startIndex}
                 span={block.span}
                 dayIndex={block.dayIndex}
+                lane={block.lane}
+                laneCount={block.laneCount}
                 columnWidth={columnWidth}
                 slotHeight={slotHeight}
                 appearanceId={block.course.appearanceId}
@@ -363,6 +375,8 @@ function WeekPageComponent({
               startIndex={overlay.startIndex}
               span={overlay.span}
               dayIndex={overlay.dayIndex}
+              lane={overlay.kind === "selected" ? outlineLane.lane : 0}
+              laneCount={overlay.kind === "selected" ? outlineLane.laneCount : 1}
               columnWidth={columnWidth}
               slotHeight={slotHeight}
               color={overlayStroke}

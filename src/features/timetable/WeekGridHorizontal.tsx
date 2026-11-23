@@ -6,7 +6,7 @@ import { findCurrentPeriodIndex, findPeriodProgress } from "@/domain/time";
 import { cellKey, resolveWeekClasses, type ScheduledClass } from "@/domain/timetable";
 import { isWeekendDay, type Weekday } from "@/domain/week";
 import { GridCell } from "@/features/timetable/GridCell";
-import type { SelectedCell, WeekGridProps } from "@/features/timetable/types";
+import type { SelectedCell, SlotChoice, WeekGridProps } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/useTheme";
 import type { TimeSlot } from "@/types/models";
@@ -46,6 +46,7 @@ export function WeekGridHorizontal({
   width,
   height,
   onCellPress,
+  onSlotPress,
 }: WeekGridProps) {
   const { colors, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
@@ -118,6 +119,23 @@ export function WeekGridHorizontal({
     };
   }
 
+  /**
+   * One class opens its editor, as it always has. Several — classes that
+   * overlap in this cell — open the chooser, from which each can be opened on
+   * its own, and another added beside them.
+   */
+  function handleCellPress(day: Weekday, date: string, slot: TimeSlot, existing: ScheduledClass[]) {
+    if (existing.length > 1) {
+      const choice: SlotChoice = {
+        newClass: selectionFor(day, date, slot, undefined),
+        classes: existing.map((occurrence) => selectionFor(day, date, slot, occurrence)),
+      };
+      onSlotPress(choice);
+      return;
+    }
+    onCellPress(selectionFor(day, date, slot, existing[0]));
+  }
+
   function handleContentSizeChange() {
     if (targetIndexRef.current === null) return;
     if (appliedSignatureRef.current === timeSlotsSignature) return;
@@ -187,7 +205,7 @@ export function WeekGridHorizontal({
             </View>
           ) : null}
           {timeSlots.map((slot) => {
-            const existing = classesByCell.get(cellKey(day, slot.id));
+            const existing = classesByCell.get(cellKey(day, slot.id)) ?? [];
             const date = dates[day];
             return (
               <GridCell
@@ -195,16 +213,17 @@ export function WeekGridHorizontal({
                 width={periodColWidth}
                 height={rowHeight}
                 isToday={date === today}
-                content={
-                  existing
-                    ? { name: existing.course.name, room: existing.course.room, appearanceId: existing.course.appearanceId }
-                    : null
-                }
-                onPress={() => onCellPress(selectionFor(day, date, slot, existing))}
+                contents={existing.map((occurrence) => ({
+                  name: occurrence.course.name,
+                  room: occurrence.course.room,
+                  appearanceId: occurrence.course.appearanceId,
+                }))}
+                onPress={() => handleCellPress(day, date, slot, existing)}
                 accessibilityLabel={t(
-                  existing ? "timetable.classAtTime" : "timetable.emptySlotAtTime",
+                  existing.length > 0 ? "timetable.classAtTime" : "timetable.emptySlotAtTime",
                   {
-                    name: existing?.course.name ?? "",
+                    // Every name, so a screen reader hears both overlapping classes.
+                    name: existing.map((occurrence) => occurrence.course.name).join(", "),
                     weekday: format.weekdayLong(day),
                     period: slot.position,
                     start: slot.startTime,

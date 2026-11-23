@@ -30,8 +30,14 @@ export interface RangeGeometry {
 
 export type Interaction =
   | { kind: "idle" }
-  /** Finger down, dragging out a new range from the period it started on. */
-  | ({ kind: "creatingRange"; anchorIndex: number; valid: boolean } & RangeGeometry)
+  /**
+   * Finger down, dragging out a new range from the period it started on.
+   *
+   * `valid` false means the range cannot land at all (before the timetable
+   * starts). `overlaps` means it can, but on top of another class — which is
+   * allowed once the user confirms it, and drawn as a warning, not an error.
+   */
+  | ({ kind: "creatingRange"; anchorIndex: number; valid: boolean; overlaps: boolean } & RangeGeometry)
   /** A range exists on screen but no placement has been created for it. */
   | ({ kind: "provisionalSelected" } & RangeGeometry)
   /** An existing class is selected and showing its resize handles. */
@@ -41,6 +47,7 @@ export type Interaction =
       kind: "resizingStart" | "resizingEnd" | "movingEvent";
       occurrenceId: string | null;
       valid: boolean;
+      overlaps: boolean;
       /** Where it was before the drag, to return to if the drop is refused. */
       origin: RangeGeometry;
     } & RangeGeometry);

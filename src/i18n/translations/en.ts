@@ -47,7 +47,8 @@ export const en = {
   "timetable.cannotMove": "Cannot move class",
   "timetable.cannotApply": "Cannot apply change",
   "timetable.newRangeHint": "New class position, tap again to set it up",
-  "timetable.rangeInUse": "in use",
+  "timetable.rangeOverlaps": "overlaps",
+  "timetable.rangeUnavailable": "not available",
   "timetable.classAt": "{name}, {weekday}, period {period}",
   "timetable.classAtTime": "{name}, {weekday}, period {period}, {start} to {end}",
   "timetable.emptySlotAtTime": "Empty slot, {weekday}, period {period}, {start} to {end}",
@@ -76,6 +77,7 @@ export const en = {
   "classEditor.recurrence": "Recurrence",
   "classEditor.date": "Date",
   "classEditor.deleteClass": "Delete class",
+  "classEditor.addAnotherHere": "Add another class at this time",
   "classEditor.deleteTitle": "Delete class?",
   "classEditor.deleteMessage": "Remove {name} from the timetable. This cannot be undone.",
   "classEditor.summaryOnce": "One time on {date}",
@@ -105,6 +107,13 @@ export const en = {
   "recurrence.once": "One time",
 
   // ---------------------------------------------------------- scopeChooser
+  "overlap.title": "Classes overlap",
+  "overlap.message": "This class overlaps {name}. Both will be kept and shown side by side.",
+  "overlap.saveAnyway": "Save anyway",
+  "overlap.addAnyway": "Add anyway",
+  "slotChooser.title": "Classes at this time",
+  "slotChooser.addHere": "Add class here",
+
   "scopeChooser.title": "Apply changes to",
   "scopeChooser.onlyThis": "Only this occurrence",
   "scopeChooser.thisAndFuture": "This and future occurrences",
@@ -358,7 +367,7 @@ export const en = {
   "share.failedTitle": "Couldn’t import this file",
 
   // ---------------------------------------------------------------- errors
-  "errors.slotInUse": "This slot is already used by {name}.",
+  "errors.overlapsWith": "This overlaps {name}.",
   "errors.classNameRequired": "Class name is required.",
   "errors.timetableNameRequired": "Timetable name is required.",
   "errors.noActiveTimetable": "There is no active timetable.",

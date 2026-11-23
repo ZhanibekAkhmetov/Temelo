@@ -8,7 +8,7 @@ import { addWeeksIso, weekDatesFrom } from "@/domain/calendar";
 import type { EditSource } from "@/domain/classEdit";
 import type { OccurrencePreview } from "@/domain/occurrence";
 import { findCurrentPeriodIndex } from "@/domain/time";
-import { resolveWeekBlocks, type ScheduledClass, type WeekBlock } from "@/domain/timetable";
+import { blocksAtCell, resolveWeekBlocks, type ScheduledClass, type WeekBlock } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
 import {
   clampValue,
@@ -44,7 +44,7 @@ import {
   TOUCH_SLOP,
 } from "@/features/timetable/motion";
 import { TimeGutter } from "@/features/timetable/TimeGutter";
-import type { HitBlock, PageOverlay, SelectedCell } from "@/features/timetable/types";
+import type { HitBlock, PageOverlay, SelectedCell, SlotChoice } from "@/features/timetable/types";
 import { WeekPage } from "@/features/timetable/WeekPage";
 import { activationTick, selectionTick } from "@/util/haptics";
 import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
@@ -187,6 +187,8 @@ interface TimetableSurfaceProps {
   now: string;
   onVisibleWeekChange: (weekStartIso: string) => void;
   onOpenEditor: (selection: SelectedCell) => void;
+  /** A tap on a cell holding more than one class; see `SlotChoice`. */
+  onOpenSlot: (choice: SlotChoice) => void;
   /**
    * A settled drag or resize. Returns "deferred" when it opened a question
    * instead of changing anything, so the surface knows to keep the origin
@@ -194,13 +196,23 @@ interface TimetableSurfaceProps {
    */
   onMoveClass: (move: OccurrenceMove) => MoveOutcome;
   /** Whether a proposed position is free for a whole series' recurrence. */
-  canPlaceClass: (input: PlacementPosition) => boolean;
+  canPlaceClass: (input: PlacementPosition) => PlacementStatus;
   /** The same, asked of one date only — one occurrence, or a new range. */
-  canPlaceOccurrence: (input: OccurrencePosition) => boolean;
+  canPlaceOccurrence: (input: OccurrencePosition) => PlacementStatus;
   ref?: Ref<TimetableSurfaceHandle>;
 }
 
 export type MoveOutcome = "committed" | "deferred";
+
+/**
+ * What a proposed position would mean.
+ *
+ * "overlap" is a warning, not a refusal: the range may land on top of another
+ * class once the user has confirmed it. "blocked" is a refusal — off the grid,
+ * or before the timetable starts — and a drop there goes back where it came
+ * from.
+ */
+export type PlacementStatus = "free" | "overlap" | "blocked";
 
 /** Where a drag or resize left one occurrence of one class. */
 export interface OccurrenceMove {
@@ -259,6 +271,7 @@ export function TimetableSurface({
   now,
   onVisibleWeekChange,
   onOpenEditor,
+  onOpenSlot,
   onMoveClass,
   canPlaceClass,
   canPlaceOccurrence,
@@ -441,6 +454,8 @@ export function TimetableSurface({
         dayIndex: block.dayIndex,
         startIndex: block.startIndex,
         span: block.span,
+        lane: block.lane,
+        laneCount: block.laneCount,
       })),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,6 +472,8 @@ export function TimetableSurface({
             dayIndex: interaction.dayIndex,
             startIndex: interaction.startIndex,
             span: interaction.span,
+            lane: 0,
+            laneCount: 1,
           }
         : null,
     );
@@ -747,9 +764,9 @@ export function TimetableSurface({
    * rule: a week where an alternating class simply does not meet looks
    * identical to one where it does not clash.
    */
-  const rangeIsFree = useCallback(
-    (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number): boolean => {
-      if (dayIndex < 0 || dayIndex >= dayCount || startIndex < 0 || startIndex + span > slotCount) return false;
+  const rangeStatus = useCallback(
+    (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number): PlacementStatus => {
+      if (dayIndex < 0 || dayIndex >= dayCount || startIndex < 0 || startIndex + span > slotCount) return "blocked";
 
       const page = pageUnderFinger();
       const weekday = weekdays[dayIndex];
@@ -772,20 +789,36 @@ export function TimetableSurface({
     [canPlaceClass, canPlaceOccurrence, dayCount, pageUnderFinger, slotCount, timeSlots, weekdays],
   );
 
-  const openEditorFor = useCallback(
-    (dates: Record<Weekday, string>, dayIndex: number, startIndex: number, span: number, existing?: WeekBlock) => {
+  /** The two halves of a status, as the interaction state carries them. */
+  const statusFlags = useCallback(
+    (occurrenceId: string | null, dayIndex: number, startIndex: number, span: number) => {
+      const status = rangeStatus(occurrenceId, dayIndex, startIndex, span);
+      return { valid: status !== "blocked", overlaps: status === "overlap" };
+    },
+    [rangeStatus],
+  );
+
+  const selectionFor = useCallback(
+    (dates: Record<Weekday, string>, dayIndex: number, startIndex: number, span: number, existing?: WeekBlock): SelectedCell => {
       const weekday = weekdays[dayIndex];
-      setInteraction(IDLE);
-      onOpenEditor({
+      return {
         weekday,
         date: dates[weekday],
         timeSlot: timeSlots[startIndex],
         slotSpan: span,
         endTime: timeSlots[Math.min(slotCount - 1, startIndex + span - 1)].endTime,
         existing,
-      });
+      };
     },
-    [onOpenEditor, setInteraction, slotCount, timeSlots, weekdays],
+    [slotCount, timeSlots, weekdays],
+  );
+
+  const openEditorFor = useCallback(
+    (dates: Record<Weekday, string>, dayIndex: number, startIndex: number, span: number, existing?: WeekBlock) => {
+      setInteraction(IDLE);
+      onOpenEditor(selectionFor(dates, dayIndex, startIndex, span, existing));
+    },
+    [onOpenEditor, selectionFor, setInteraction],
   );
 
   /**
@@ -840,9 +873,18 @@ export function TimetableSurface({
       // Resolved from the pager itself, so the class this tap is judged
       // against is the one actually drawn under it.
       const page = pageUnderFinger();
-      const existing = page.blocks.find(
-        (block) => block.dayIndex === dayIndex && slotIndex >= block.startIndex && slotIndex < block.startIndex + block.span,
-      );
+      const covering = blocksAtCell(page.blocks, dayIndex, slotIndex);
+      // Several classes share this cell: a narrow lane is no target to aim a
+      // thumb at, so the tap asks which one was meant.
+      if (covering.length > 1) {
+        setInteraction(IDLE);
+        onOpenSlot({
+          newClass: selectionFor(page.dates, dayIndex, slotIndex, 1),
+          classes: covering.map((block) => selectionFor(page.dates, block.dayIndex, block.startIndex, block.span, block)),
+        });
+        return;
+      }
+      const existing = covering[0];
       if (existing) {
         openEditorFor(page.dates, existing.dayIndex, existing.startIndex, existing.span, existing);
         return;
@@ -864,7 +906,7 @@ export function TimetableSurface({
       setInteraction({ kind: "provisionalSelected", weekStart: page.weekStart, dayIndex, startIndex: slotIndex, span: 1 });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [bodyHeight, dayCount, interaction, openEditorFor, pageUnderFinger, setInteraction, slotCount],
+    [bodyHeight, dayCount, interaction, onOpenSlot, openEditorFor, pageUnderFinger, selectionFor, setInteraction, slotCount],
   );
 
   /** idle | provisionalSelected --long press on empty grid--> creatingRange */
@@ -879,10 +921,10 @@ export function TimetableSurface({
         anchorIndex,
         startIndex: anchorIndex,
         span: 1,
-        valid: rangeIsFree(null, dayIndex, anchorIndex, 1),
+        ...statusFlags(null, dayIndex, anchorIndex, 1),
       });
     },
-    [pageUnderFinger, rangeIsFree, setInteraction],
+    [pageUnderFinger, setInteraction, statusFlags],
   );
 
   /** eventSelected --handle drag--> resizingStart | resizingEnd */
@@ -905,6 +947,7 @@ export function TimetableSurface({
         startIndex,
         span,
         valid: true,
+        overlaps: false,
       });
     },
     [pageUnderFinger, setInteraction],
@@ -944,6 +987,7 @@ export function TimetableSurface({
         startIndex,
         span,
         valid: true,
+        overlaps: false,
       });
     },
     [pageUnderFinger, setInteraction],
@@ -955,14 +999,14 @@ export function TimetableSurface({
       selectionTick();
       const current = latestInteraction.get();
       if (current.kind === "creatingRange") {
-        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(null, dayIndex, startIndex, span) });
+        setInteraction({ ...current, dayIndex, startIndex, span, ...statusFlags(null, dayIndex, startIndex, span) });
         return;
       }
       if (current.kind === "resizingStart" || current.kind === "resizingEnd" || current.kind === "movingEvent") {
-        setInteraction({ ...current, dayIndex, startIndex, span, valid: rangeIsFree(current.occurrenceId, dayIndex, startIndex, span) });
+        setInteraction({ ...current, dayIndex, startIndex, span, ...statusFlags(current.occurrenceId, dayIndex, startIndex, span) });
       }
     },
-    [latestInteraction, rangeIsFree, setInteraction],
+    [latestInteraction, setInteraction, statusFlags],
   );
 
   /**
@@ -991,9 +1035,11 @@ export function TimetableSurface({
   }, [latestInteraction, setInteraction]);
 
   /**
-   * creatingRange --release--> provisionalSelected (dropped if it overlaps)
-   * resizing* | movingEvent --release--> eventSelected, committed only when
-   * the proposed range is free.
+   * creatingRange --release--> provisionalSelected (dropped only if blocked;
+   *   a range over another class stays, and saving it asks about the overlap)
+   * resizing* | movingEvent --release--> eventSelected, handed to the screen
+   * unless the proposed range is blocked. An overlap is the screen's to
+   * confirm, which is why it can come back "deferred".
    *
    * The store write lives here, in the callback the gesture hands the drag
    * to, and never inside a `setState` updater: an updater runs during the
@@ -1012,7 +1058,7 @@ export function TimetableSurface({
 
       if (current.kind === "creatingRange") {
         setInteraction(
-          rangeIsFree(null, dayIndex, startIndex, span)
+          rangeStatus(null, dayIndex, startIndex, span) !== "blocked"
             ? { kind: "provisionalSelected", weekStart: current.weekStart, dayIndex, startIndex, span }
             : IDLE,
         );
@@ -1027,7 +1073,7 @@ export function TimetableSurface({
       const unchanged = dayIndex === origin.dayIndex && startIndex === origin.startIndex && span === origin.span;
       const page = pageUnderFinger();
       const occurrence = occurrenceId ? page.blocks.find((block) => block.occurrenceId === occurrenceId) : undefined;
-      if (!occurrenceId || !occurrence || unchanged || !rangeIsFree(occurrenceId, dayIndex, startIndex, span)) {
+      if (!occurrenceId || !occurrence || unchanged || rangeStatus(occurrenceId, dayIndex, startIndex, span) === "blocked") {
         setInteraction(
           occurrenceId ? { kind: "eventSelected", occurrenceId, ...origin } : { kind: "provisionalSelected", ...origin },
         );
@@ -1050,7 +1096,7 @@ export function TimetableSurface({
       deferredOrigin,
       latestInteraction,
       onMoveClass,
-      rangeIsFree,
+      rangeStatus,
       setInteraction,
       timeSlots,
       pageUnderFinger,
@@ -1830,7 +1876,12 @@ export function TimetableSurface({
         return;
       }
 
+      // Overlapping classes share the column in lanes, so the hold picks up
+      // the one whose lane is under the finger — and, failing that, the first
+      // one covering the cell.
+      const columnFraction = dayFloat - dayIndex;
       let hit: HitBlock | null = null;
+      let fallback: HitBlock | null = null;
       for (let index = 0; index < hitBlocks.get().length; index++) {
         const candidate = hitBlocks.get()[index];
         if (
@@ -1838,10 +1889,14 @@ export function TimetableSurface({
           slotFloat >= candidate.startIndex &&
           slotFloat < candidate.startIndex + candidate.span
         ) {
-          hit = candidate;
-          break;
+          if (fallback === null) fallback = candidate;
+          if (Math.floor(columnFraction * candidate.laneCount) === candidate.lane) {
+            hit = candidate;
+            break;
+          }
         }
       }
+      if (hit === null) hit = fallback;
       // The visible week can have changed under a stale hit-test; without a
       // class to hold there is nothing to pick up, and the tap still stands.
       if (!hit || hit.occurrenceId === null) return;
@@ -1951,6 +2006,7 @@ export function TimetableSurface({
     !live && (interaction.kind === "provisionalSelected" || interaction.kind === "eventSelected")
       ? {
           kind: interaction.kind === "provisionalSelected" ? "provisional" : "selected",
+          occurrenceId: interaction.kind === "eventSelected" ? interaction.occurrenceId : null,
           dayIndex: interaction.dayIndex,
           startIndex: interaction.startIndex,
           span: interaction.span,

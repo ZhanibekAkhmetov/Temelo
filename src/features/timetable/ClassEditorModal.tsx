@@ -4,6 +4,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DateField } from "@/components/DateField";
 import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { ReminderField } from "@/components/ReminderField";
@@ -26,7 +27,7 @@ import { FormSection } from "@/components/FormSection";
 import { ClassColorField } from "@/features/timetable/ClassColorField";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useI18n } from "@/i18n/I18nProvider";
-import { useAppState } from "@/state/AppStateContext";
+import { useAppState, type UpsertPlacementInput } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 import type { RecurrenceType, TimeSlot, Timetable } from "@/types/models";
 
@@ -48,6 +49,12 @@ interface ClassEditorModalProps {
    * change: the screen asks which occurrences they apply to first.
    */
   onRequestScope: (edit: PendingClassEdit) => void;
+  /**
+   * "Add another class at this time": reopen the editor on the same cell for a
+   * new class. Offered only while editing an existing one — it is the way to
+   * put a second class into a slot that already has one.
+   */
+  onAddAnother?: () => void;
 }
 
 /**
@@ -70,6 +77,7 @@ export function ClassEditorModal({
   timetable,
   existing,
   onRequestScope,
+  onAddAnother,
 }: ClassEditorModalProps) {
   /*
    * Back inside a native Modal arrives as `onRequestClose` and never as a
@@ -105,6 +113,7 @@ export function ClassEditorModal({
           timetable={timetable}
           existing={existing}
           onRequestScope={onRequestScope}
+          onAddAnother={onAddAnother}
         />
       ) : null}
     </Modal>
@@ -122,6 +131,7 @@ function ClassEditorForm({
   timetable,
   existing,
   onRequestScope,
+  onAddAnother,
 }: Omit<ClassEditorModalProps, "visible"> & { onBackInterceptorChange: (handler: BackInterceptor) => void }) {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
@@ -166,6 +176,11 @@ function ClassEditorForm({
   const [openPicker, setOpenPicker] = useState<OpenPicker>(null);
   const [nameError, setNameError] = useState<DomainError | undefined>();
   const [formError, setFormError] = useState<DomainError | undefined>();
+  /**
+   * A save that stopped at an overlap, waiting for "Add anyway". It holds the
+   * exact input, so confirming saves precisely what was about to be saved.
+   */
+  const [overlap, setOverlap] = useState<{ name: string; input: UpsertPlacementInput } | null>(null);
 
   const isOneOff = recurrenceType === "once";
 
@@ -312,7 +327,7 @@ function ClassEditorForm({
       return;
     }
 
-    const result = upsertPlacement({
+    const input: UpsertPlacementInput = {
       placementId: existing?.basePlacement.id,
       weekday,
       timeSlotId: timeSlot.id,
@@ -327,8 +342,25 @@ function ClassEditorForm({
       endsOn: schedule.endsOn,
       startsWithTimetable: schedule.startsWithTimetable ?? true,
       reminderMinutes,
-    });
+    };
+    const result = upsertPlacement(input);
 
+    if (!result.ok && result.overlapWith) {
+      setOverlap({ name: result.overlapWith, input });
+      return;
+    }
+    if (!result.ok) {
+      setFormError(result.error);
+      return;
+    }
+    onClose();
+  }
+
+  function handleOverlapConfirm() {
+    const pending = overlap;
+    setOverlap(null);
+    if (!pending) return;
+    const result = upsertPlacement(pending.input, { allowOverlap: true });
     if (!result.ok) {
       setFormError(result.error);
       return;
@@ -532,7 +564,13 @@ function ClassEditorForm({
           ) : null}
 
           {existing ? (
-            <View style={{ marginTop: spacing.md, borderTopWidth: borderWidth.thin, borderColor: colors.divider, paddingTop: spacing.lg }}>
+            <View style={{ marginTop: spacing.md, borderTopWidth: borderWidth.thin, borderColor: colors.divider, paddingTop: spacing.lg, gap: spacing.md }}>
+              {/* Beside the class rather than hidden in the grid: a slot that
+                  already holds a class cannot be tapped "empty", and this is
+                  the plain way to put a second one next to it. */}
+              {onAddAnother ? (
+                <Button label={t("classEditor.addAnotherHere")} variant="secondary" onPress={onAddAnother} />
+              ) : null}
               <Button label={t("classEditor.deleteClass")} variant="destructive" onPress={handleDelete} />
             </View>
           ) : null}
@@ -548,6 +586,16 @@ function ClassEditorForm({
           value={onceDate}
           onCancel={() => setOpenPicker(null)}
           onConfirm={handleDateConfirm}
+        />
+      ) : null}
+
+      {overlap ? (
+        <ConfirmDialog
+          title={t("overlap.title")}
+          message={t("overlap.message", { name: overlap.name })}
+          confirmLabel={existing ? t("overlap.saveAnyway") : t("overlap.addAnyway")}
+          onConfirm={handleOverlapConfirm}
+          onCancel={() => setOverlap(null)}
         />
       ) : null}
     </GestureHandlerRootView>

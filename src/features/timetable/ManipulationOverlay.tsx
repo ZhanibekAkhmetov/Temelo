@@ -89,10 +89,15 @@ export function ManipulationOverlay({
   if (!isLive) return null;
 
   const valid = "valid" in interaction ? interaction.valid : true;
+  const overlaps = valid && "overlaps" in interaction && interaction.overlaps;
   // While it can still land, the class is ringed in its own colour; the
   // moment it cannot, everything about the range turns destructive — stroke,
   // label ground and label text together, so it reads as refused rather than
   // as one more colour on a colourful grid.
+  //
+  // Landing on top of another class is not a refusal. It keeps its own
+  // colour and the label says "overlaps": the drop is allowed, and the screen
+  // asks before anything is saved.
   const appearance = subject?.appearanceId ? getClassColors(subject.appearanceId) : null;
   const stroke = valid ? (appearance?.outline ?? colors.accent) : colors.danger;
   const first = timeSlots[Math.max(0, Math.min(timeSlots.length - 1, interaction.startIndex))];
@@ -158,7 +163,7 @@ export function ManipulationOverlay({
             numberOfLines={1}
           >
             {first.startTime}–{last.endTime}
-            {valid ? "" : ` · ${t("timetable.rangeInUse")}`}
+            {!valid ? ` · ${t("timetable.rangeUnavailable")}` : overlaps ? ` · ${t("timetable.rangeOverlaps")}` : ""}
           </Text>
         </Animated.View>
       </Animated.View>

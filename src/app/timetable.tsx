@@ -3,6 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
 import {
   createPendingClassEdit,
@@ -15,24 +16,43 @@ import { isOnOrAfterTimetableStart } from "@/domain/occurrence";
 import { getOrderedWeekdays } from "@/domain/week";
 import { ClassEditorModal } from "@/features/timetable/ClassEditorModal";
 import { EditScopeSheet } from "@/features/timetable/EditScopeSheet";
+import { SlotClassesSheet } from "@/features/timetable/SlotClassesSheet";
 import {
   TimetableSurface,
   type MoveOutcome,
   type OccurrenceMove,
   type OccurrencePosition,
   type PlacementPosition,
+  type PlacementStatus,
   type TimetableSurfaceHandle,
 } from "@/features/timetable/TimetableSurface";
 import { WeekGridHorizontal } from "@/features/timetable/WeekGridHorizontal";
 import { NoTimetable } from "@/features/timetables/NoTimetable";
 import { useNow } from "@/features/timetable/useNow";
-import type { SelectedCell } from "@/features/timetable/types";
+import type { SelectedCell, SlotChoice } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
-import { useAppState } from "@/state/AppStateContext";
+import { useAppState, type ActionResult, type MovePlacementInput } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 
 /** Thursday names the month a week belongs to when it straddles two. */
 const MONTH_LABEL_DAY_OFFSET = 3;
+
+/**
+ * An edit that stopped at an overlap, waiting for "Save anyway".
+ *
+ * It holds exactly what is needed to repeat the same edit with the overlap
+ * allowed — the move of a one-off, or a scoped edit whose draft is still the
+ * pending one — and nothing has been written while it is open.
+ */
+type OverlapPrompt =
+  | { kind: "move"; name: string; input: MovePlacementInput }
+  | { kind: "edit"; name: string; scope: EditScope };
+
+/** A store answer, read as what a drag preview should show. */
+function placementStatusOf(result: ActionResult): PlacementStatus {
+  if (result.ok) return "free";
+  return result.overlapWith ? "overlap" : "blocked";
+}
 
 export default function TimetableScreen() {
   const { colors, spacing, typography } = useTheme();
@@ -46,6 +66,9 @@ export default function TimetableScreen() {
    */
   const [pendingEdit, setPendingEdit] = useState<PendingClassEdit | null>(null);
   const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
+  /** A tapped cell holding several classes, asking which one was meant. */
+  const [slotChoice, setSlotChoice] = useState<SlotChoice | null>(null);
+  const [overlapPrompt, setOverlapPrompt] = useState<OverlapPrompt | null>(null);
 
   // The tick is also what carries the timetable over midnight, so the date
   // comes from it rather than from a bare call here: everything below is
@@ -86,14 +109,21 @@ export default function TimetableScreen() {
     (move: OccurrenceMove): MoveOutcome => {
       const series = move.occurrence.basePlacement;
       if (series.recurrenceType === "once") {
-        const result = movePlacement({
+        const input: MovePlacementInput = {
           placementId: series.id,
           weekday: move.weekday,
           timeSlotId: move.timeSlotId,
           slotSpan: move.slotSpan,
           occurrenceDate: move.occurrence.occurrenceDate,
           date: move.date,
-        });
+        };
+        const result = movePlacement(input);
+        // Landing on another class is the user's call: ask, and hold the drag
+        // where it was dropped until they answer.
+        if (!result.ok && result.overlapWith) {
+          setOverlapPrompt({ kind: "move", name: result.overlapWith, input });
+          return "deferred";
+        }
         if (!result.ok) Alert.alert(t("timetable.cannotMove"), t(result.error.key, result.error.params));
         return "committed";
       }
@@ -121,17 +151,51 @@ export default function TimetableScreen() {
   function handleScopeSelect(scope: EditScope) {
     if (!pendingEdit) return;
     const result = applyClassEdit(pendingEdit.draft, scope);
+    // An overlap keeps the edit pending — still drawn where it would land —
+    // and asks before it goes any further.
+    if (!result.ok && result.overlapWith) {
+      setOverlapPrompt({ kind: "edit", name: result.overlapWith, scope });
+      return;
+    }
     setPendingEdit(null);
     surfaceRef.current?.settleDeferredDrag(!result.ok);
     if (!result.ok) Alert.alert(t("timetable.cannotApply"), t(result.error.key, result.error.params));
   }
 
+  /** "Save anyway": the same edit again, with the overlap accepted. */
+  function handleOverlapConfirm() {
+    const prompt = overlapPrompt;
+    setOverlapPrompt(null);
+    if (!prompt) return;
+    if (prompt.kind === "move") {
+      const result = movePlacement(prompt.input, { allowOverlap: true });
+      surfaceRef.current?.settleDeferredDrag(!result.ok);
+      if (!result.ok) Alert.alert(t("timetable.cannotMove"), t(result.error.key, result.error.params));
+      return;
+    }
+    if (!pendingEdit) return;
+    const result = applyClassEdit(pendingEdit.draft, prompt.scope, { allowOverlap: true });
+    setPendingEdit(null);
+    surfaceRef.current?.settleDeferredDrag(!result.ok);
+    if (!result.ok) Alert.alert(t("timetable.cannotApply"), t(result.error.key, result.error.params));
+  }
+
+  /** Cancel: nothing was written, and a dragged class goes back where it was. */
+  function handleOverlapCancel() {
+    setOverlapPrompt(null);
+    setPendingEdit(null);
+    surfaceRef.current?.settleDeferredDrag(true);
+  }
+
   // Asked once per crossed boundary while dragging, so the preview can show
   // whether the drop would be accepted before the finger lifts. Both go to
   // the store, so the answer is the one the commit will give.
-  const handleCanPlaceClass = useCallback((input: PlacementPosition) => checkPlacement(input).ok, [checkPlacement]);
+  const handleCanPlaceClass = useCallback(
+    (input: PlacementPosition) => placementStatusOf(checkPlacement(input)),
+    [checkPlacement],
+  );
   const handleCanPlaceOccurrence = useCallback(
-    (input: OccurrencePosition) => checkOccurrence(input).ok,
+    (input: OccurrencePosition) => placementStatusOf(checkOccurrence(input)),
     [checkOccurrence],
   );
 
@@ -276,6 +340,7 @@ export default function TimetableScreen() {
             now={now.time}
             onVisibleWeekChange={setVisibleWeekStart}
             onOpenEditor={handleOpenEditor}
+            onOpenSlot={setSlotChoice}
             onMoveClass={handleMoveClass}
             canPlaceClass={handleCanPlaceClass}
             canPlaceOccurrence={handleCanPlaceOccurrence}
@@ -295,6 +360,7 @@ export default function TimetableScreen() {
             width={gridSize.width}
             height={gridSize.height}
             onCellPress={handleOpenEditor}
+            onSlotPress={setSlotChoice}
           />
         )}
       </View>
@@ -311,12 +377,40 @@ export default function TimetableScreen() {
           timetable={state.timetable}
           existing={selected.existing}
           onRequestScope={setPendingEdit}
+          // The same cell, as a brand-new class: the way to put a second class
+          // beside one that is already there.
+          onAddAnother={() => setSelected((current) => (current ? { ...current, existing: undefined } : current))}
+        />
+      ) : null}
+
+      {slotChoice && !selected ? (
+        <SlotClassesSheet
+          choice={slotChoice}
+          onSelect={(selection) => {
+            setSlotChoice(null);
+            handleOpenEditor(selection);
+          }}
+          onAdd={(selection) => {
+            setSlotChoice(null);
+            handleOpenEditor(selection);
+          }}
+          onCancel={() => setSlotChoice(null)}
+        />
+      ) : null}
+
+      {overlapPrompt ? (
+        <ConfirmDialog
+          title={t("overlap.title")}
+          message={t("overlap.message", { name: overlapPrompt.name })}
+          confirmLabel={t("overlap.saveAnyway")}
+          onConfirm={handleOverlapConfirm}
+          onCancel={handleOverlapCancel}
         />
       ) : null}
 
       {/* Never in the same frame as the editor: they are two native modals,
           and the editor's save is what raises this one. */}
-      {pendingEdit && !selected ? (
+      {pendingEdit && !selected && !overlapPrompt ? (
         <EditScopeSheet
           effectiveDate={pendingEdit.draft.effectiveDate}
           onlyThisBlockedReason={onlyThisBlockedReason(pendingEdit.draft)}

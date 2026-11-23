@@ -14,8 +14,21 @@
  * date; a one-off clashes only on its own day, whatever weekday its record
  * happens to name; and an occurrence that has been moved elsewhere leaves
  * its original slot free, because resolving that date no longer produces it.
+ *
+ * ## A clash is a question, not a veto
+ *
+ * Until Beta 2 a clash refused the edit outright. Real timetables have
+ * intentional overlaps — a lab that runs alongside a lecture, two optional
+ * courses in one slot of which the student attends either — so a clash is now
+ * reported as an *overlap* that the user may accept. Detection is exactly as
+ * strict as it was; what changed is that every write path takes an
+ * `allowOverlap` option, and without it answers with an `OverlapRefusal`
+ * naming the class in the way, so the screen can ask "Add anyway?" instead of
+ * saying no. Nothing is ever merged, replaced or discarded: two overlapping
+ * classes are two placements, each with its own occurrences and reminders.
  */
 
+import { domainError, type DomainError } from "@/domain/errors";
 import { resolveOccurrences, type Occurrence, type OccurrenceSource } from "@/domain/occurrence";
 import { clashHorizon, occurrenceDates } from "@/domain/recurrence";
 import { occupiedSlotIds } from "@/domain/timetable";
@@ -38,6 +51,63 @@ export interface PlacementCandidate {
   endsOn: string;
   /** Whether the candidate reaches back to the timetable's start; see `seriesLowerBound`. */
   startsWithTimetable?: boolean;
+}
+
+/** How a write treats an overlap it finds. */
+export interface OverlapOptions {
+  /**
+   * The user has seen the overlap warning and confirmed it. Absent or false
+   * means the write stops at the first overlap and reports it.
+   */
+  allowOverlap?: boolean;
+}
+
+/**
+ * A write that stopped because it would overlap another class — the one case
+ * of refusal the user can overrule.
+ *
+ * `overlapWith` is the course name as the conflicting occurrence reads, so the
+ * warning names exactly what the user sees in that slot.
+ */
+export interface OverlapRefusal {
+  ok: false;
+  error: DomainError;
+  overlapWith: string;
+}
+
+export function overlapRefusal(conflict: Occurrence): OverlapRefusal {
+  return {
+    ok: false,
+    error: domainError("errors.overlapsWith", { name: conflict.course.name }),
+    overlapWith: conflict.course.name,
+  };
+}
+
+/** The part of a series that decides which cells, on which dates, it occupies. */
+export type Occupancy = Pick<
+  PlacementCandidate,
+  "weekday" | "timeSlotId" | "slotSpan" | "recurrenceType" | "startsOn" | "endsOn" | "startsWithTimetable"
+>;
+
+/**
+ * Whether two descriptions of a series occupy exactly the same cells on
+ * exactly the same dates.
+ *
+ * An edit that leaves this unchanged — a rename, a new room, a reminder —
+ * cannot introduce an overlap, so it is never asked about one. Without this,
+ * every later edit of a class the user had deliberately overlapped would raise
+ * the same warning again.
+ */
+export function sameOccupancy(a: Occupancy, b: Occupancy): boolean {
+  return (
+    a.weekday === b.weekday &&
+    a.timeSlotId === b.timeSlotId &&
+    a.slotSpan === b.slotSpan &&
+    a.recurrenceType === b.recurrenceType &&
+    a.startsOn === b.startsOn &&
+    a.endsOn === b.endsOn &&
+    Boolean(a.startsWithTimetable) === Boolean(b.startsWithTimetable)
+  );
 }
 
 export interface OccurrenceCandidate {

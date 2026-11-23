@@ -21,7 +21,12 @@ import { addDaysIso, isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/dat
 import { domainError, type DomainError } from "@/domain/errors";
 import { createId } from "@/domain/id";
 import { occurrenceIdFor, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
-import { findOccurrenceConflict, findPlacementConflict } from "@/domain/conflict";
+import {
+  findOccurrenceConflict,
+  findPlacementConflict,
+  overlapRefusal,
+  type OverlapOptions,
+} from "@/domain/conflict";
 import {
   anchorOnOrBefore,
   defaultSeriesEndDate,
@@ -325,10 +330,23 @@ export interface EditableTimetable {
   timetableStart?: string | null;
 }
 
-export type EditResult = { ok: true; next: EditableTimetable } | { ok: false; error: DomainError };
+/**
+ * `overlapWith` is set only when the one thing wrong is an overlap the user
+ * may accept — see `domain/conflict`. Every other refusal is final.
+ */
+export type EditResult =
+  | { ok: true; next: EditableTimetable }
+  | { ok: false; error: DomainError; overlapWith?: string };
 
-function conflictMessage(conflict: Occurrence): DomainError {
-  return domainError("errors.slotInUse", { name: conflict.course.name });
+/**
+ * Whether the edit can change which cells the class occupies on which dates.
+ *
+ * Only then is it asked about overlaps. A rename, a room, a colour or a
+ * reminder leave the occupancy exactly as it was, so an overlap the user
+ * already accepted is not raised again by every later edit of the class.
+ */
+function occupancyMayChange(draft: ClassEditDraft): boolean {
+  return draft.changed.schedule || draft.changed.recurrence;
 }
 
 /**
@@ -561,17 +579,26 @@ function exceptionsAfterAll(
  * the series, not a copy of it. Anything the draft agrees with the series
  * about is stored as null, so a later series-wide edit still reaches it.
  */
-function applyOnlyThis(current: EditableTimetable, draft: ClassEditDraft, base: Placement, baseCourse: Course, now: string): EditResult {
+function applyOnlyThis(
+  current: EditableTimetable,
+  draft: ClassEditDraft,
+  base: Placement,
+  baseCourse: Course,
+  now: string,
+  options: OverlapOptions,
+): EditResult {
   const blocked = onlyThisBlockedReason(draft);
   if (blocked) return { ok: false, error: blocked };
 
-  const conflict = findOccurrenceConflict(current, {
-    occurrenceId: occurrenceIdFor(base.id, draft.occurrenceDate),
-    date: draft.effectiveDate,
-    timeSlotId: draft.timeSlotId,
-    slotSpan: draft.slotSpan,
-  });
-  if (conflict) return { ok: false, error: conflictMessage(conflict) };
+  if (!options.allowOverlap && occupancyMayChange(draft)) {
+    const conflict = findOccurrenceConflict(current, {
+      occurrenceId: occurrenceIdFor(base.id, draft.occurrenceDate),
+      date: draft.effectiveDate,
+      timeSlotId: draft.timeSlotId,
+      slotSpan: draft.slotSpan,
+    });
+    if (conflict) return overlapRefusal(conflict);
+  }
 
   const overrideOf = <T,>(value: T, seriesValue: T): T | null => (value === seriesValue ? null : value);
   const overrides = {
@@ -620,7 +647,15 @@ function applyOnlyThis(current: EditableTimetable, draft: ClassEditDraft, base: 
  * first occurrence, so a series whose first occurrence is the edited one
  * repeats on precisely the weeks the old one would have.
  */
-function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, base: Placement, baseCourse: Course, now: string): EditResult {
+function applyThisAndFuture(
+  current: EditableTimetable,
+  draft: ClassEditDraft,
+  base: Placement,
+  baseCourse: Course,
+  now: string,
+  options: OverlapOptions,
+): EditResult {
+
   const splitDate = draft.occurrenceDate;
   const previousEnd = addDaysIso(splitDate, -1);
   const isOneOff = draft.recurrenceType === "once";
@@ -690,8 +725,10 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
 
   // The old series is already truncated in `placements`, so the two halves
   // are checked against each other as the two separate series they now are.
-  const conflict = findPlacementConflict({ ...current, placements }, { ...nextPlacement, placementId: nextPlacement.id });
-  if (conflict) return { ok: false, error: conflictMessage(conflict) };
+  if (!options.allowOverlap && occupancyMayChange(draft)) {
+    const conflict = findPlacementConflict({ ...current, placements }, { ...nextPlacement, placementId: nextPlacement.id });
+    if (conflict) return overlapRefusal(conflict);
+  }
 
   /*
    * One-off exceptions from the split point onwards belonged to the old
@@ -754,7 +791,14 @@ function applyThisAndFuture(current: EditableTimetable, draft: ClassEditDraft, b
  * are anchored to occurrences of the series, and a series whose dates have
  * moved no longer has the occurrences they name.
  */
-function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Placement, baseCourse: Course, now: string): EditResult {
+function applyAll(
+  current: EditableTimetable,
+  draft: ClassEditDraft,
+  base: Placement,
+  baseCourse: Course,
+  now: string,
+  options: OverlapOptions,
+): EditResult {
   const { changed } = draft;
   const moved = movedRangeOf(draft, base);
   const nextPlacement: Placement = {
@@ -777,8 +821,10 @@ function applyAll(current: EditableTimetable, draft: ClassEditDraft, base: Place
   // Against everything except itself: the stored copy of this very series
   // is still the unedited one, and it would otherwise clash with its own
   // replacement whenever the schedule did not move at all.
-  const conflict = findPlacementConflict(current, { ...nextPlacement, placementId: base.id });
-  if (conflict) return { ok: false, error: conflictMessage(conflict) };
+  if (!options.allowOverlap && occupancyMayChange(draft)) {
+    const conflict = findPlacementConflict(current, { ...nextPlacement, placementId: base.id });
+    if (conflict) return overlapRefusal(conflict);
+  }
 
   const exceptions = exceptionsAfterAll(current, draft, base, now);
 
@@ -803,6 +849,7 @@ export function applyClassEditScope(
   draft: ClassEditDraft,
   scope: EditScope,
   now: string,
+  options: OverlapOptions = {},
 ): EditResult {
   const base = current.placements.find((placement) => placement.id === draft.placementId && !placement.deletedAt);
   if (!base) return { ok: false, error: domainError("errors.classGone") };
@@ -817,7 +864,7 @@ export function applyClassEditScope(
   // option got here means the same thing.
   const effectiveScope = base.recurrenceType === "once" ? "all" : scope;
 
-  if (effectiveScope === "onlyThis") return applyOnlyThis(current, draft, base, baseCourse, now);
-  if (effectiveScope === "thisAndFuture") return applyThisAndFuture(current, draft, base, baseCourse, now);
-  return applyAll(current, draft, base, baseCourse, now);
+  if (effectiveScope === "onlyThis") return applyOnlyThis(current, draft, base, baseCourse, now, options);
+  if (effectiveScope === "thisAndFuture") return applyThisAndFuture(current, draft, base, baseCourse, now, options);
+  return applyAll(current, draft, base, baseCourse, now, options);
 }
