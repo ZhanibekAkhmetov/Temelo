@@ -15,10 +15,13 @@ import {
   classEditorSchedule,
   createPendingClassEdit,
   draftHasChanges,
+  editorSeriesStart,
   validateClassEditDraft,
   type PendingClassEdit,
+  type SeriesStartChoice,
 } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
+import { firstSeriesDate } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
@@ -59,9 +62,12 @@ interface ClassEditorModalProps {
 
 /**
  * Which picker is open — at most one at a time. The colour unfolds in place;
- * a one-off's date opens a sheet over the form.
+ * a one-off's date and a series' start date each open a sheet over the form.
  */
-type OpenPicker = "date" | "color" | null;
+type OpenPicker = "date" | "startDate" | "color" | null;
+
+/** The two answers to "Starts", as the choice row names them. */
+type StartMode = "timetable" | "date";
 
 /** Answers Android's Back before the editor does; true when it handled it. */
 type BackInterceptor = (() => boolean) | null;
@@ -168,6 +174,16 @@ function ClassEditorForm({
    * the reminder *this occurrence* has, which a one-off edit may have set
    * apart from the rest of its series.
    */
+  /*
+   * Where a repeating class begins. Seeded from the stored series — with the
+   * timetable, or the first lesson of a series that has its own start — and
+   * sent with the save only once the user has touched it, so opening the
+   * editor on a class can never re-anchor it by accident.
+   */
+  const initialStart = editorSeriesStart(existing?.basePlacement, date, timetable.anchorDate);
+  const [startMode, setStartMode] = useState<StartMode>(initialStart.withTimetable ? "timetable" : "date");
+  const [startDate, setStartDate] = useState(initialStart.date);
+  const [startTouched, setStartTouched] = useState(false);
   const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes>(
     existing ? existing.placement.reminderMinutes : defaultReminderMinutes,
   );
@@ -185,18 +201,46 @@ function ClassEditorForm({
   const isOneOff = recurrenceType === "once";
 
   /*
-   * The series' dates, which the user is not asked for and does not see —
-   * only a one-off's date is offered, because it is the lesson itself. A
+   * The series' dates. A one-off's date is offered because it is the lesson
+   * itself; a repeating class offers only where it starts. Untouched, a
    * stored series keeps its anchor, end and `startsWithTimetable` exactly as
    * they are; a new one anchors on the tapped week. See `classEditorSchedule`.
    */
+  const startChoice: SeriesStartChoice | undefined = !startTouched
+    ? undefined
+    : startMode === "timetable"
+      ? { withTimetable: true }
+      : { withTimetable: false, date: startDate };
   const schedule = classEditorSchedule({
     recurrenceType,
     tappedDate: date,
     onceDate,
     timetableStart: timetable.anchorDate,
     base: existing?.basePlacement,
+    start: startChoice,
   });
+
+  const START_OPTIONS: { label: string; value: StartMode }[] = [
+    { label: t("classEditor.startsWithTimetable"), value: "timetable" },
+    { label: t("classEditor.startsOnDate"), value: "date" },
+  ];
+
+  /*
+   * The first lesson the chosen start actually produces — the next matching
+   * weekday on or after it, and for an every-two-weeks class the one that
+   * fixes which half of the fortnight it is on. Named in the summary so a
+   * Wednesday picked for a Monday class reads as the Monday it means.
+   */
+  const firstLesson =
+    !isOneOff && startMode === "date"
+      ? firstSeriesDate({
+          weekday: existing?.basePlacement.weekday ?? weekday,
+          recurrenceType,
+          startsOn: startDate,
+          endsOn: schedule.endsOn,
+          startsWithTimetable: false,
+        })
+      : null;
 
   const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
     { label: t("recurrence.weekly"), value: "weekly" },
@@ -231,9 +275,13 @@ function ClassEditorForm({
    */
   const summaryText = isOneOff
     ? t("classEditor.summaryOnce", { date: format.dateLong(onceDate) })
-    : recurrenceType === "biweekly"
-      ? t("classEditor.summaryBiweekly")
-      : t("classEditor.summaryWeekly");
+    : firstLesson
+      ? recurrenceType === "biweekly"
+        ? t("classEditor.summaryBiweeklyFrom", { date: format.dateLong(firstLesson) })
+        : t("classEditor.summaryWeeklyFrom", { date: format.dateLong(firstLesson) })
+      : recurrenceType === "biweekly"
+        ? t("classEditor.summaryBiweekly")
+        : t("classEditor.summaryWeekly");
 
   const slotText =
     slotSpan > 1
@@ -255,7 +303,7 @@ function ClassEditorForm({
     setOpenPicker((current) => (current === picker ? null : picker));
   }
 
-  const dateSheetOpen = openPicker === "date";
+  const dateSheetOpen = openPicker === "date" || openPicker === "startDate";
 
   // While the date sheet is open, Back closes the sheet and leaves the editor.
   useEffect(() => {
@@ -268,8 +316,18 @@ function ClassEditorForm({
   }, [dateSheetOpen, onBackInterceptorChange]);
 
   function handleDateConfirm(value: string) {
-    setOnceDate(value);
+    if (openPicker === "startDate") {
+      setStartDate(value);
+      setStartTouched(true);
+    } else {
+      setOnceDate(value);
+    }
     setOpenPicker(null);
+  }
+
+  function handleStartModeChange(mode: StartMode) {
+    setStartMode(mode);
+    setStartTouched(true);
   }
 
   function handleSave() {
@@ -547,12 +605,27 @@ function ClassEditorForm({
                 sheetTitle={t("recurrence.label")}
               />
 
-              {/* Only a one-off has a date to pick: it is the lesson itself. A
-                  repeating class has no start-date row — where its series is
-                  anchored is internal, and the timetable's start is the date
-                  the user controls. Opens the date sheet over the form. */}
+              {/* A one-off's date is the lesson itself. Opens the date sheet
+                  over the form. */}
               {schedule.dateField === "occurrenceDate" ? (
                 <DateField label={t("classEditor.date")} value={onceDate} onPress={() => setOpenPicker("date")} />
+              ) : null}
+
+              {/* A repeating class starts with the timetable unless the user
+                  says otherwise. Choosing a date stops everything before its
+                  first lesson — the grid, reminders, the clash check and the
+                  calendar export all read the same bound. */}
+              {isOneOff ? null : (
+                <ChoiceRowField
+                  label={t("classEditor.starts")}
+                  value={startMode}
+                  options={START_OPTIONS}
+                  onChange={handleStartModeChange}
+                  sheetTitle={t("classEditor.starts")}
+                />
+              )}
+              {!isOneOff && startMode === "date" ? (
+                <DateField label={t("classEditor.startDate")} value={startDate} onPress={() => setOpenPicker("startDate")} />
               ) : null}
             </FormSection>
           ) : null}
@@ -582,8 +655,9 @@ function ClassEditorForm({
           what keeps the month pager's swipe working in here. */}
       {dateSheetOpen ? (
         <DatePickerSheet
-          title={t("classEditor.date")}
-          value={onceDate}
+          title={openPicker === "startDate" ? t("classEditor.startDate") : t("classEditor.date")}
+          value={openPicker === "startDate" ? startDate : onceDate}
+          note={openPicker === "startDate" ? t("classEditor.startDateNote") : undefined}
           onCancel={() => setOpenPicker(null)}
           onConfirm={handleDateConfirm}
         />

@@ -83,6 +83,13 @@ export const en = {
   "classEditor.summaryOnce": "One time on {date}",
   "classEditor.summaryWeekly": "Repeats every week",
   "classEditor.summaryBiweekly": "Repeats every two weeks",
+  "classEditor.starts": "Starts",
+  "classEditor.startsWithTimetable": "With the timetable",
+  "classEditor.startsOnDate": "On a chosen date",
+  "classEditor.startDate": "Start date",
+  "classEditor.startDateNote": "Nothing of this class is shown, reminded about or exported before its first lesson on or after this date.",
+  "classEditor.summaryWeeklyFrom": "Repeats every week from {date}",
+  "classEditor.summaryBiweeklyFrom": "Repeats every two weeks from {date}",
 
   // ------------------------------------------------------------ classColor
   "classColor.label": "Color",
@@ -393,6 +400,7 @@ export const en = {
   "errors.endBeforeStart": "End date cannot be before the start date.",
   "errors.endBeforeOccurrence": "End date cannot be before this occurrence.",
   "errors.recurrenceWholeSeries": "Recurrence changes apply to the whole series.",
+  "errors.startWholeSeries": "A start date applies to the whole series.",
   "errors.storageWriteFailed": "Could not save to this device. Your changes are only in memory and will be lost when the app closes.",
   "errors.dayStartInvalid": "Academic day start must be a valid time (HH:mm).",
   "errors.lessonDurationInvalid": "Lesson duration must be a positive number of minutes.",

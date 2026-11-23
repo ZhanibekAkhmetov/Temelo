@@ -6,8 +6,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
 import {
+  blockedScopeReasons,
   createPendingClassEdit,
-  onlyThisBlockedReason,
   type EditScope,
   type PendingClassEdit,
 } from "@/domain/classEdit";
@@ -413,7 +413,7 @@ export default function TimetableScreen() {
       {pendingEdit && !selected && !overlapPrompt ? (
         <EditScopeSheet
           effectiveDate={pendingEdit.draft.effectiveDate}
-          onlyThisBlockedReason={onlyThisBlockedReason(pendingEdit.draft)}
+          blockedReasons={blockedScopeReasons(pendingEdit.draft)}
           onSelect={handleScopeSelect}
           onCancel={handleScopeCancel}
         />

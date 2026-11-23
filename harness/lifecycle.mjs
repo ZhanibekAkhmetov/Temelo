@@ -2152,12 +2152,15 @@ function editorEdit(state, placementId, occurrenceDate, edits = {}) {
 /**
  * Beta 1 took the "Start date" row off repeating classes: it asked "this
  * occurrence / this and future / all" about a structural boundary, and it was
- * how a series' anchor could be dragged around the first timetable week. The
- * anchors themselves — `startsOn`, `startsWithTimetable`, parity, split
- * boundaries — are untouched, and this is what proves it.
+ * how a series' anchor could be dragged around the first timetable week.
+ * Beta 2 offers a start again, but only as an explicit choice that applies to
+ * the whole series (`harness/seriesStart.mjs`). Left untouched — which is
+ * every edit here — the anchors themselves — `startsOn`,
+ * `startsWithTimetable`, parity, split boundaries — pass through exactly as
+ * stored, and this is what proves it.
  */
 async function testClassEditorSchedule() {
-  section("Q. The class editor offers a one-off's date, never a repeating class's start");
+  section("Q. An editor edit that does not touch the start leaves every series anchor as stored");
 
   const path = await buildV5Database();
   const { db } = await open(path);

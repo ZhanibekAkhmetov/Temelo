@@ -31,7 +31,9 @@ import {
   anchorOnOrBefore,
   defaultSeriesEndDate,
   defaultSeriesStartDate,
+  firstSeriesDate,
   hasOccurrenceBetween,
+  occursOn,
   seriesLowerBound,
   seriesRangeMovedTo,
   type SeriesRange,
@@ -59,6 +61,12 @@ export interface EditedFields {
   appearance: boolean;
   /** Repetition rule or the series' own date range. */
   recurrence: boolean;
+  /**
+   * The series' start specifically — its `startsOn` or whether it starts with
+   * the timetable. Always implies `recurrence`; kept apart because a start
+   * date is a property of the whole series and cannot be split either.
+   */
+  start: boolean;
   /** Lead time before the class its reminder fires at, or no reminder. */
   reminder: boolean;
 }
@@ -170,6 +178,12 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
       startsOn !== base.startsOn ||
       endsOn !== base.endsOn ||
       startsWithTimetable !== base.startsWithTimetable,
+    // Only a repeating series has a start to speak of; turning a one-off into
+    // a series necessarily gives it one, and that is the rule changing.
+    start:
+      base.recurrenceType !== "once" &&
+      recurrenceType !== "once" &&
+      (startsOn !== base.startsOn || startsWithTimetable !== base.startsWithTimetable),
     reminder: reminderMinutes !== occurrence.placement.reminderMinutes,
   };
 
@@ -222,7 +236,17 @@ export function createPendingClassEdit(input: ClassEditInput): PendingClassEdit 
 }
 
 /** What the class editor reads of the stored series it was opened on. */
-export type EditorSeriesBase = Pick<Placement, "recurrenceType" | "startsOn" | "endsOn" | "startsWithTimetable">;
+export type EditorSeriesBase = Pick<
+  Placement,
+  "weekday" | "recurrenceType" | "startsOn" | "endsOn" | "startsWithTimetable"
+>;
+
+/**
+ * Where a repeating class begins, as the editor offers it: with the
+ * timetable — the default, and every class's behaviour before Beta 2 — or on
+ * a date the user picked.
+ */
+export type SeriesStartChoice = { withTimetable: true } | { withTimetable: false; date: string };
 
 export interface EditorScheduleInput {
   /** The repetition rule as currently chosen in the editor. */
@@ -234,14 +258,18 @@ export interface EditorScheduleInput {
   timetableStart: string;
   /** The stored series being edited; omitted for a new class. */
   base?: EditorSeriesBase;
+  /**
+   * The start the user chose in the editor. Omitted while they have not
+   * touched it, which is what keeps every stored anchor exactly as it is.
+   */
+  start?: SeriesStartChoice;
 }
 
 export interface EditorSchedule {
   /**
-   * The one date the editor lets the user pick: a one-off's own date, which
-   * is its actual occurrence. A repeating class has none — its `startsOn`,
-   * parity anchor and split boundary are internal recurrence structure, and
-   * the timetable's own start is the date the user controls.
+   * A one-off's own date, which is its actual occurrence — the date the
+   * editor offers for a class that meets once. A repeating class offers its
+   * start instead; see `editorSeriesStart`.
    */
   dateField: "occurrenceDate" | null;
   startsOn: string;
@@ -251,19 +279,46 @@ export interface EditorSchedule {
 }
 
 /**
+ * What the editor's start controls show when it opens.
+ *
+ * A stored series that starts with the timetable shows that. One that does
+ * not — a start chosen by the user, or the later half of a "this and future"
+ * split — shows the first date it actually meets on, which is what a person
+ * means by "starts on" whatever the stored anchor happens to be. A new class
+ * starts with the timetable, with the tapped date ready if they switch.
+ */
+export function editorSeriesStart(
+  base: EditorSeriesBase | undefined,
+  tappedDate: string,
+  timetableStart: string,
+): { withTimetable: boolean; date: string } {
+  if (!base || base.recurrenceType === "once") return { withTimetable: true, date: tappedDate };
+  if (base.startsWithTimetable) return { withTimetable: true, date: firstSeriesDate(base, timetableStart) };
+  return { withTimetable: false, date: firstSeriesDate(base, timetableStart) };
+}
+
+/**
  * The series fields the class editor saves, and the date it offers.
  *
- * A stored repeating series keeps its anchor, its end and its
- * `startsWithTimetable` untouched: nothing in the editor can move them, so an
- * edit to a name or a room never reads as a change to the series' structure.
- * A new class anchors by its rule — an every-two-weeks one on the tapped week,
- * which is what chooses its half of the fortnight — and a one-off turned into
- * a series anchors on the tapped week too. Both start with the timetable, and
- * both are open-ended: a one-off's date is its end, and that end must not
- * survive its promotion to a series.
+ * Untouched, a stored repeating series keeps its anchor, its end and its
+ * `startsWithTimetable` exactly as they are, so an edit to a name or a room
+ * never reads as a change to the series' structure. A new class anchors by its
+ * rule — an every-two-weeks one on the tapped week, which is what chooses its
+ * half of the fortnight — and a one-off turned into a series anchors on the
+ * tapped week too. Both start with the timetable, and both are open-ended: a
+ * one-off's date is its end, and that end must not survive its promotion to a
+ * series.
+ *
+ * A start the user chose is the one structural field the editor can set, and
+ * it is the existing machinery rather than a second one: `startsOn` becomes
+ * the chosen date and `startsWithTimetable` false, so `seriesLowerBound` stops
+ * the series there and an every-two-weeks class counts its fortnight from the
+ * first lesson on or after it. Choosing "with the timetable" for a series that
+ * had its own start keeps the anchor — the weeks an alternating class falls on
+ * do not move — and only lets it reach back again.
  */
 export function classEditorSchedule(input: EditorScheduleInput): EditorSchedule {
-  const { recurrenceType, tappedDate, onceDate, timetableStart, base } = input;
+  const { recurrenceType, tappedDate, onceDate, timetableStart, base, start } = input;
   const baseRepeats = base !== undefined && base.recurrenceType !== "once";
 
   if (recurrenceType === "once") {
@@ -274,9 +329,22 @@ export function classEditorSchedule(input: EditorScheduleInput): EditorSchedule 
       startsWithTimetable: baseRepeats ? undefined : true,
     };
   }
-  if (baseRepeats) {
-    return { dateField: null, startsOn: base.startsOn, endsOn: base.endsOn, startsWithTimetable: undefined };
+
+  const unchanged = { dateField: null, startsOn: base?.startsOn ?? "", endsOn: base?.endsOn ?? "", startsWithTimetable: undefined };
+  const endsOn = baseRepeats ? base.endsOn : defaultSeriesEndDate();
+
+  if (start && !start.withTimetable) {
+    // The same first lesson as the series already has is not a new start —
+    // whatever anchor that series stores. Opening the controls and leaving
+    // them where they were must not turn a rename into a structural edit.
+    if (baseRepeats && !base.startsWithTimetable && firstSeriesDate(base, timetableStart) === start.date) return unchanged;
+    return { dateField: null, startsOn: start.date, endsOn, startsWithTimetable: false };
   }
+  if (start?.withTimetable && baseRepeats && !base.startsWithTimetable) {
+    return { dateField: null, startsOn: base.startsOn, endsOn: base.endsOn, startsWithTimetable: true };
+  }
+
+  if (baseRepeats) return unchanged;
   return {
     dateField: null,
     startsOn: base ? tappedDate : defaultSeriesStartDate(recurrenceType, tappedDate, timetableStart),
@@ -313,7 +381,31 @@ export function validateClassEditDraft(draft: ClassEditDraft): EditCheck {
  * something other than what the user asked for.
  */
 export function onlyThisBlockedReason(draft: ClassEditDraft): DomainError | null {
+  if (draft.changed.start) return domainError("errors.startWholeSeries");
   return draft.changed.recurrence ? domainError("errors.recurrenceWholeSeries") : null;
+}
+
+/**
+ * Why "This and future occurrences" cannot be offered, or null when it can.
+ *
+ * A "this and future" edit *is* a new start — the series' later half begins
+ * at the occurrence the edit was made on — so a start date chosen in the same
+ * edit would be a second, contradictory answer to the same question. Where a
+ * series begins is the whole series' business, and only "All occurrences"
+ * can carry it.
+ */
+export function thisAndFutureBlockedReason(draft: ClassEditDraft): DomainError | null {
+  return draft.changed.start ? domainError("errors.startWholeSeries") : null;
+}
+
+/** Every scope the scope chooser must offer disabled, with the reason it says. */
+export function blockedScopeReasons(draft: ClassEditDraft): Partial<Record<EditScope, DomainError>> {
+  const reasons: Partial<Record<EditScope, DomainError>> = {};
+  const onlyThis = onlyThisBlockedReason(draft);
+  const thisAndFuture = thisAndFutureBlockedReason(draft);
+  if (onlyThis) reasons.onlyThis = onlyThis;
+  if (thisAndFuture) reasons.thisAndFuture = thisAndFuture;
+  return reasons;
 }
 
 export interface EditableTimetable {
@@ -655,6 +747,8 @@ function applyThisAndFuture(
   now: string,
   options: OverlapOptions,
 ): EditResult {
+  const blocked = thisAndFutureBlockedReason(draft);
+  if (blocked) return { ok: false, error: blocked };
 
   const splitDate = draft.occurrenceDate;
   const previousEnd = addDaysIso(splitDate, -1);
@@ -826,7 +920,10 @@ function applyAll(
     if (conflict) return overlapRefusal(conflict);
   }
 
-  const exceptions = exceptionsAfterAll(current, draft, base, now);
+  const carried = exceptionsAfterAll(current, draft, base, now);
+  const exceptions = changed.recurrence
+    ? retireOrphanedExceptions(carried, nextPlacement, current.timetableStart ?? null, now)
+    : carried;
 
   return {
     ok: true,
@@ -837,6 +934,38 @@ function applyAll(
       exceptions,
     },
   };
+}
+
+/**
+ * Exceptions a rewritten rule no longer has an occurrence for, retired.
+ *
+ * An exception stands in for one occurrence of its series' base rule, named
+ * by `originalDate`. Change the rule — every week to every two, or a start
+ * date that moves an alternating class onto the other half of the fortnight —
+ * and some of those dates stop being occurrences at all. Left in place, a
+ * cancellation there would cancel nothing while the lesson it meant to cancel
+ * is drawn on the new week, and a moved lesson would be drawn as an extra
+ * class conjured out of a date the series no longer meets on.
+ *
+ * Only dates the new rule could reach are judged. An exception before the
+ * series' new start is simply out of range — `resolveOccurrences` already
+ * ignores it — and is kept, so moving the start back later brings it back
+ * exactly as it was. Retiring is a soft delete, like every delete here.
+ */
+function retireOrphanedExceptions(
+  exceptions: OccurrenceException[],
+  series: Placement,
+  timetableStart: string | null,
+  now: string,
+): OccurrenceException[] {
+  if (series.recurrenceType === "once") return exceptions;
+  const bound = seriesLowerBound(series, timetableStart);
+  return exceptions.map((exception) => {
+    if (exception.deletedAt || exception.placementId !== series.id) return exception;
+    if (exception.originalDate < bound || exception.originalDate > series.endsOn) return exception;
+    if (occursOn(series, exception.originalDate, timetableStart)) return exception;
+    return { ...exception, deletedAt: now, updatedAt: now };
+  });
 }
 
 /**

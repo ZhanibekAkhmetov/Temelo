@@ -32,10 +32,12 @@ const { runCalendarHarness } = await load("calendar.mjs");
 const { runNavigationHarness } = await load("navigation.mjs");
 const { runArchitectureHarness } = await load("architecture.mjs");
 const { runOverlapHarness } = await load("overlap.mjs");
+const { runSeriesStartHarness } = await load("seriesStart.mjs");
 
 runGeometryHarness();
 runNavigationHarness();
 runArchitectureHarness();
+runSeriesStartHarness();
 await runStorageHarness();
 await runLifecycleHarness();
 await runTransferHarness();
