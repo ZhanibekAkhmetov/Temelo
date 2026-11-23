@@ -33,6 +33,7 @@ const { runNavigationHarness } = await load("navigation.mjs");
 const { runArchitectureHarness } = await load("architecture.mjs");
 const { runOverlapHarness } = await load("overlap.mjs");
 const { runSeriesStartHarness } = await load("seriesStart.mjs");
+const { runWeekdaysHarness } = await load("weekdays.mjs");
 
 runGeometryHarness();
 runNavigationHarness();
@@ -43,5 +44,6 @@ await runLifecycleHarness();
 await runTransferHarness();
 await runCalendarHarness();
 await runOverlapHarness();
+await runWeekdaysHarness();
 
 summarize();

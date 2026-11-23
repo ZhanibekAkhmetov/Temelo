@@ -167,7 +167,6 @@ export const de: Translations = {
   "settings.layoutVertical": "Vertikal",
   "settings.layoutHorizontal": "Horizontal",
   "settings.layoutHint": "Vertikal zeigt die Tage oben, horizontal an der Seite.",
-  "settings.daysWithoutClasses": "Unterrichtsfreie Tage",
   "settings.timetables": "Stundenpläne",
   "settings.currentTimetable": "Aktueller Stundenplan",
   "settings.noTimetable": "Keiner",
@@ -193,9 +192,11 @@ export const de: Translations = {
   "about.project": "Projekt auf GitHub",
 
   "week.weekend": "Wochenende",
-  "week.weekendSaturdaySunday": "Sa & So",
-  "week.weekendSundayOnly": "Nur So",
-  "week.weekendNone": "Alle",
+  "week.visibleDaysHint": "Ausgeblendete Tage behalten ihre Kurse und Erinnerungen – sie werden nur nicht angezeigt.",
+  "week.atLeastOneDay": "Mindestens einen Tag auswählen.",
+  "week.hideDaysTitle": "Tage mit Kursen ausblenden?",
+  "week.hideDaysMessage": "Kurse am {days} bleiben samt Erinnerungen und Kalenderexport erhalten, werden im Stundenplan aber erst wieder angezeigt, wenn du diese Tage wieder einblendest.",
+  "week.hideDaysConfirm": "Ausblenden",
 
   "onboarding.weekTitle": "Wochenaufbau",
   "onboarding.weekSubtitle": "Unterrichtsfreie Tage wählen.",
@@ -340,6 +341,7 @@ export const de: Translations = {
   "errors.lessonDurationInvalid": "Die Dauer einer Stunde muss größer als null sein.",
   "errors.breakDurationInvalid": "Die Pause darf nicht negativ sein.",
   "errors.slotCountInvalid": "Die Anzahl der Stunden muss eine ganze Zahl größer als null sein.",
+  "errors.noVisibleDays": "Ein Stundenplan muss mindestens einen Tag anzeigen.",
   "errors.slotCountTooMany": "Höchstens {max} Stunden möglich.",
   "errors.periodPastMidnight":
     "Stunde {position} würde nach Mitternacht enden. Anzahl, Dauer oder Startzeit der Stunden verringern.",

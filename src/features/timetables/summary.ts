@@ -14,39 +14,58 @@
  * row in Settings already follows.
  */
 
-import { getOrderedWeekdays, type WeekendMode } from "@/domain/week";
+import { ALL_WEEKDAYS_MONDAY_FIRST, type Weekday } from "@/domain/week";
 import type { AppFormat } from "@/i18n/format";
 import type { Translate } from "@/i18n/translate";
 import type { TimeSlot } from "@/types/models";
 
 export interface TimetableShape {
-  weekendMode: WeekendMode;
+  visibleWeekdays: Weekday[];
   /** First period's start and last period's end. */
   dayStart: string | null;
   dayEnd: string | null;
 }
 
 /** The shape of the timetable currently loaded into the working tables. */
-export function shapeOfActive(weekendMode: WeekendMode, timeSlots: TimeSlot[]): TimetableShape {
+export function shapeOfActive(visibleWeekdays: Weekday[], timeSlots: TimeSlot[]): TimetableShape {
   const ordered = [...timeSlots].sort((a, b) => a.position - b.position);
   return {
-    weekendMode,
+    visibleWeekdays,
     dayStart: ordered[0]?.startTime ?? null,
     dayEnd: ordered[ordered.length - 1]?.endTime ?? null,
   };
 }
 
-/** "Mon–Fri", from the weekdays the grid actually shows. */
-export function daysLabel(t: Translate, format: AppFormat, weekendMode: WeekendMode): string {
-  const days = getOrderedWeekdays(weekendMode);
-  const first = days[0];
-  const last = days[days.length - 1];
-  if (!first || !last) return "";
-  if (first === last) return format.weekdayShort(first);
-  return t("timetables.daysRange", {
-    first: format.weekdayShort(first),
-    last: format.weekdayShort(last),
-  });
+/**
+ * "Mon–Fri", from the weekdays the grid actually shows — and, now that any set
+ * of days can be shown, "Mon, Wed, Fri" or "Mon–Wed, Sat" for one that is not
+ * a single run.
+ *
+ * A run of three or more days is a range; one or two days are named. "Mon–Tue"
+ * says nothing "Mon, Tue" does not, and reads as a typo for the longer range.
+ */
+export function daysLabel(t: Translate, format: AppFormat, days: readonly Weekday[]): string {
+  const ordered = ALL_WEEKDAYS_MONDAY_FIRST.filter((day) => days.includes(day));
+  const runs: Weekday[][] = [];
+  for (const day of ordered) {
+    const run = runs[runs.length - 1];
+    const previous = run?.[run.length - 1];
+    if (run && previous && ALL_WEEKDAYS_MONDAY_FIRST.indexOf(day) === ALL_WEEKDAYS_MONDAY_FIRST.indexOf(previous) + 1) {
+      run.push(day);
+    } else {
+      runs.push([day]);
+    }
+  }
+  return runs
+    .map((run) =>
+      run.length >= 3
+        ? t("timetables.daysRange", {
+            first: format.weekdayShort(run[0]),
+            last: format.weekdayShort(run[run.length - 1]),
+          })
+        : run.map((day) => format.weekdayShort(day)).join(", "),
+    )
+    .join(", ");
 }
 
 /** "07:30–15:10", or null when the timetable has no periods at all. */
@@ -61,7 +80,7 @@ export function hoursLabel(t: Translate, shape: TimetableShape): string | null {
  * something we wrote.
  */
 export function timetableSummary(t: Translate, format: AppFormat, shape: TimetableShape): string {
-  const days = daysLabel(t, format, shape.weekendMode);
+  const days = daysLabel(t, format, shape.visibleWeekdays);
   const hours = hoursLabel(t, shape);
   return hours ? t("timetables.summary", { days, hours }) : days;
 }

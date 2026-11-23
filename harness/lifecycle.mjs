@@ -447,7 +447,7 @@ function meetingDates(placement, from, until) {
 function fingerprint(state) {
   return JSON.stringify({
     settings: {
-      weekendMode: state.settings.weekendMode,
+      visibleWeekdays: state.settings.visibleWeekdays,
       academicDayStart: state.settings.academicDayStart,
       defaultLessonDurationMinutes: state.settings.defaultLessonDurationMinutes,
       defaultBreakDurationMinutes: state.settings.defaultBreakDurationMinutes,
@@ -473,7 +473,7 @@ function fingerprint(state) {
 /** A timetable the creation flow would produce, as its inputs. */
 function newTimetableInput(name, overrides = {}) {
   const settings = {
-    weekendMode: "none",
+    visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
     academicDayStart: "09:00",
     defaultLessonDurationMinutes: 50,
     defaultBreakDurationMinutes: 10,
@@ -552,7 +552,7 @@ async function testMigration() {
   const { db, schemaVersion } = await open(path);
 
   equal("the database migrated to the latest version", schemaVersion, LATEST_SCHEMA_VERSION);
-  equal("...which is 7", LATEST_SCHEMA_VERSION, 7);
+  equal("...which is 8", LATEST_SCHEMA_VERSION, 8);
 
   const state = await loadTimetable(db);
   check("the timetable loads", state !== null, "loadTimetable returned null");
@@ -572,7 +572,7 @@ async function testMigration() {
   equal("break duration survived", state.settings.defaultBreakDurationMinutes, 10);
 
   // Preferences that are the user's, not the timetable's.
-  equal("days shown survived", state.settings.weekendMode, "saturdaySunday");
+  equal("days shown survived, as the days the preset showed", state.settings.visibleWeekdays.join(","), "monday,tuesday,wednesday,thursday,friday");
   equal("layout survived", state.settings.gridOrientation, "horizontal");
   equal("appearance survived", state.settings.appearancePreference, "dark");
   equal("language survived", state.settings.languagePreference, "ru");
@@ -711,7 +711,7 @@ async function testCreateFirst() {
 
   const empty = {
     settings: {
-      weekendMode: "saturdaySunday",
+      visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
       gridOrientation: "vertical",
       academicDayStart: "07:30",
       defaultLessonDurationMinutes: 90,
@@ -741,7 +741,7 @@ async function testCreateFirst() {
   equal("the first starts at 09:00", state.timeSlots[0].startTime, "09:00");
   equal("...and the fifth ends at 13:50", state.timeSlots[4].endTime, "13:50");
   equal("settings.slotCount agrees with them", state.settings.slotCount, 5);
-  equal("its days shown came from the flow", state.settings.weekendMode, "none");
+  equal("its days shown came from the flow", state.settings.visibleWeekdays.length, 7);
   equal("it starts with no classes", state.placements.length, 0);
   equal("nothing was archived", await countArchivedTimetables(db), 0);
 
@@ -790,7 +790,7 @@ async function testCreateWhileActive() {
   equal("...under its own name", archives[0].name, TERM.name);
   equal("...with its own id", archives[0].id, before.timetable.id);
   equal("...and a readable snapshot", archives[0].contents === null, false);
-  equal("...whose days shown are its own", archives[0].contents.weekendMode, "saturdaySunday");
+  equal("...whose days shown are its own", archives[0].contents.visibleWeekdays.join(","), "monday,tuesday,wednesday,thursday,friday");
   equal("...and whose day still runs 08:00-13:20", `${archives[0].contents.dayStart}-${archives[0].contents.dayEnd}`, "08:00-13:20");
 
   // The archive is exact, not approximately right.
@@ -864,7 +864,7 @@ async function testCreateWhileActive() {
 
   const databaseBefore = await wholeDatabase();
   const abandonedOnce = newTimetableInput("Never created");
-  const abandonedTwice = newTimetableInput("Never created either", { slotCount: 3, weekendMode: "sundayOnly" });
+  const abandonedTwice = newTimetableInput("Never created either", { slotCount: 3, visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] });
   check(
     "the setup steps really did produce a complete timetable to create",
     abandonedOnce.timeSlots.length === 5 && abandonedTwice.timeSlots.length === 3,
@@ -1625,9 +1625,10 @@ async function testTimetableStartDate() {
   const path = await buildV5Database();
   let { db, schemaVersion } = await open(path);
   // The start date itself needed no migration; v7 is the per-series flag that
-  // lets moving it earlier extend the pattern — see section P.
-  equal("the schema is at v7", schemaVersion, 7);
-  equal("...which is the latest", LATEST_SCHEMA_VERSION, 7);
+  // lets moving it earlier extend the pattern — see section P. (v8, visible
+  // weekdays, is unrelated to the start date.)
+  equal("the schema is at the latest version", schemaVersion, LATEST_SCHEMA_VERSION);
+  equal("...which is v8", LATEST_SCHEMA_VERSION, 8);
   let state = await loadTimetable(db);
   equal("a migrated timetable starts on the term start v6 stored", state.timetable?.anchorDate, TERM.start);
   db.closeSync();
@@ -1695,7 +1696,7 @@ async function testTimetableStartDate() {
   const fresh = await open(freshPath);
   const empty = {
     settings: {
-      weekendMode: "saturdaySunday",
+      visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
       gridOrientation: "vertical",
       academicDayStart: "07:30",
       defaultLessonDurationMinutes: 90,
@@ -2011,7 +2012,7 @@ async function testTimetableStartExtendsPattern() {
 function emptyAppState() {
   return {
     settings: {
-      weekendMode: "saturdaySunday",
+      visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
       gridOrientation: "vertical",
       academicDayStart: "07:30",
       defaultLessonDurationMinutes: 90,

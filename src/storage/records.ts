@@ -8,7 +8,14 @@
 
 import { normalizeClassColorId } from "@/domain/classColor";
 import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
-import type { Weekday, WeekendMode } from "@/domain/week";
+import {
+  getOrderedWeekdays,
+  parseWeekdays,
+  serializeWeekdays,
+  weekendModeCovering,
+  type Weekday,
+  type WeekendMode,
+} from "@/domain/week";
 import { normalizeLanguagePreference } from "@/i18n/language";
 import { normalizeAppearancePreference } from "@/theme/appearance";
 import type {
@@ -27,7 +34,17 @@ export const SETTINGS_ROW_ID = "app";
 
 export interface SettingsRow {
   id: string;
+  /**
+   * The legacy preset, still written — as the narrowest one covering
+   * `visible_weekdays` — so a build from before v8 opening this database sees
+   * every day the user shows. Read only when `visible_weekdays` is unusable.
+   */
   weekend_mode: string;
+  /**
+   * The visible days, comma-separated, Monday first (v8). Nullable, so the
+   * column could be added without a rebuild; NULL reads from `weekend_mode`.
+   */
+  visible_weekdays: string | null;
   grid_orientation: string;
   academic_day_start: string;
   default_lesson_duration_minutes: number;
@@ -215,7 +232,8 @@ function reminderMinutesFromColumn(value: number | null): ReminderMinutes {
 export function settingsToRow(settings: Settings): SettingsRow {
   return {
     id: SETTINGS_ROW_ID,
-    weekend_mode: settings.weekendMode,
+    weekend_mode: weekendModeCovering(settings.visibleWeekdays),
+    visible_weekdays: serializeWeekdays(settings.visibleWeekdays),
     grid_orientation: settings.gridOrientation,
     academic_day_start: settings.academicDayStart,
     default_lesson_duration_minutes: settings.defaultLessonDurationMinutes,
@@ -230,7 +248,11 @@ export function settingsToRow(settings: Settings): SettingsRow {
 
 export function settingsFromRow(row: SettingsRow): Settings {
   return {
-    weekendMode: narrow(row.weekend_mode, WEEKEND_MODES, "saturdaySunday"),
+    // The stored set when it is a usable one; otherwise exactly the days the
+    // legacy preset showed, which is what every row held before v8.
+    visibleWeekdays:
+      parseWeekdays(row.visible_weekdays) ??
+      getOrderedWeekdays(narrow(row.weekend_mode, WEEKEND_MODES, "saturdaySunday")),
     gridOrientation: narrow(row.grid_orientation, GRID_ORIENTATIONS, "vertical"),
     academicDayStart: row.academic_day_start,
     defaultLessonDurationMinutes: row.default_lesson_duration_minutes,

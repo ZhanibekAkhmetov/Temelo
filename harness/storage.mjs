@@ -429,7 +429,7 @@ async function testOrdinaryPersistence() {
       ...store.state.settings,
       appearancePreference: "dark",
       languagePreference: "ru",
-      weekendMode: "sundayOnly",
+      visibleWeekdays: ["monday", "wednesday", "friday", "saturday"],
       gridOrientation: "horizontal",
       defaultReminderMinutes: 15,
     },
@@ -443,7 +443,7 @@ async function testOrdinaryPersistence() {
 
   equal("appearance survives a relaunch", settings.appearancePreference, "dark");
   equal("language survives a relaunch", settings.languagePreference, "ru");
-  equal("weekend mode survives a relaunch", settings.weekendMode, "sundayOnly");
+  equal("days shown survive a relaunch", settings.visibleWeekdays.join(","), "monday,wednesday,friday,saturday");
   equal("layout survives a relaunch", settings.gridOrientation, "horizontal");
   equal("default reminder survives a relaunch", settings.defaultReminderMinutes, 15);
 

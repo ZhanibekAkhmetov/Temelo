@@ -53,6 +53,9 @@ export const REQUIRED_COLUMNS: RequiredColumn[] = [
   // v7's. Named by both placement writers, so a database reporting a version
   // ahead of this build without it would refuse every save.
   { table: "placements", column: "starts_with_timetable", type: "INTEGER NOT NULL DEFAULT 1" },
+  // v8's. Nullable: a NULL reads as the legacy `weekend_mode`, so a database
+  // that gets this column from the repair rather than from v8 loses nothing.
+  { table: "settings", column: "visible_weekdays", type: "TEXT" },
 ];
 
 /**

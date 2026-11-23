@@ -4,6 +4,7 @@
  * from exactly one resolution rule.
  */
 
+import { weekdayOfIsoDate } from "@/domain/calendar";
 import { resolveOccurrences, type Occurrence, type OccurrencePreview } from "@/domain/occurrence";
 import type { Weekday } from "@/domain/week";
 import type { Course, OccurrenceException, Placement, TimeSlot } from "@/types/models";
@@ -63,7 +64,8 @@ function occurrencesInWeek(input: ResolveWeekInput): Occurrence[] {
   const dates = input.weekdays.map((weekday) => input.dates[weekday]);
   const shown = new Set(input.weekdays);
   // An occurrence can only be drawn on a day the week actually shows — a
-  // class moved onto a hidden weekend day is simply not in this week.
+  // class on, or moved onto, a hidden day is simply not drawn this week. It
+  // is still an occurrence: reminders and the calendar export never ask this.
   return resolveOccurrences(input, dates).filter((occurrence) => shown.has(occurrence.weekday));
 }
 
@@ -217,4 +219,35 @@ export function resolveWeekClasses(input: ResolveWeekInput): Map<string, Schedul
   }
 
   return byCell;
+}
+
+/**
+ * The weekdays that hold at least one live class — what hiding a day would
+ * take off the grid.
+ *
+ * A series counts on its own weekday; a one-off and a moved occurrence count
+ * on the weekday of the date they actually meet on, because that is the
+ * column they are drawn in. Deliberately generous — a past one-off still
+ * counts — since the only use is to warn before a day disappears from view,
+ * and a warning too many costs a tap while one too few looks like data loss.
+ *
+ * Hiding a day never touches any of these classes; see `Settings.visibleWeekdays`.
+ */
+export function weekdaysWithClasses(source: {
+  placements: Placement[];
+  courses: Course[];
+  exceptions: OccurrenceException[];
+}): Set<Weekday> {
+  const liveCourses = new Set(source.courses.filter((course) => !course.deletedAt).map((course) => course.id));
+  const live = source.placements.filter((placement) => !placement.deletedAt && liveCourses.has(placement.courseId));
+  const liveIds = new Set(live.map((placement) => placement.id));
+  const days = new Set<Weekday>();
+  for (const placement of live) {
+    days.add(placement.recurrenceType === "once" ? weekdayOfIsoDate(placement.startsOn) : placement.weekday);
+  }
+  for (const exception of source.exceptions) {
+    if (exception.deletedAt || exception.state === "cancelled" || !liveIds.has(exception.placementId)) continue;
+    days.add(weekdayOfIsoDate(exception.effectiveDate));
+  }
+  return days;
 }

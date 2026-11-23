@@ -6,6 +6,11 @@ interface ChoiceRowProps {
   label: string;
   selected: boolean;
   onPress: () => void;
+  /**
+   * "radio" for one choice out of several, the default; "checkbox" for a row in
+   * a list where any number may be ticked — the days a timetable shows.
+   */
+  role?: "radio" | "checkbox";
 }
 
 /**
@@ -20,14 +25,14 @@ interface ChoiceRowProps {
  * and "Раз в 2 недели" have to wrap somewhere, and wrapping under the label
  * rather than under the tick is what keeps the column of ticks straight.
  */
-export function ChoiceRow({ label, selected, onPress }: ChoiceRowProps) {
+export function ChoiceRow({ label, selected, onPress, role = "radio" }: ChoiceRowProps) {
   const { colors, spacing, radii, typography } = useTheme();
 
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityState={{ selected }}
+      accessibilityRole={role}
+      accessibilityState={role === "checkbox" ? { checked: selected } : { selected }}
       accessibilityLabel={label}
       pressRetentionOffset={{ top: 12, bottom: 12, left: 16, right: 16 }}
       style={({ pressed }) => [

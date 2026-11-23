@@ -88,7 +88,7 @@ const TEXT = { teacher: (name) => `Teacher: ${name}` };
 
 const EMPTY_STATE = {
   settings: {
-    weekendMode: "saturdaySunday",
+    visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
     gridOrientation: "vertical",
     academicDayStart: "07:30",
     defaultLessonDurationMinutes: 45,
@@ -108,7 +108,7 @@ const EMPTY_STATE = {
 
 function newTimetableInput(name) {
   const settings = {
-    weekendMode: "saturdaySunday",
+    visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
     academicDayStart: "07:30",
     defaultLessonDurationMinutes: 45,
     defaultBreakDurationMinutes: 10,

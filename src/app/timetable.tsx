@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -13,7 +13,6 @@ import {
 } from "@/domain/classEdit";
 import { addDaysIso } from "@/domain/date";
 import { isOnOrAfterTimetableStart } from "@/domain/occurrence";
-import { getOrderedWeekdays } from "@/domain/week";
 import { ClassEditorModal } from "@/features/timetable/ClassEditorModal";
 import { EditScopeSheet } from "@/features/timetable/EditScopeSheet";
 import { SlotClassesSheet } from "@/features/timetable/SlotClassesSheet";
@@ -79,8 +78,11 @@ export default function TimetableScreen() {
   const [visibleWeekStart, setVisibleWeekStart] = useState(currentWeekStart);
 
   const surfaceRef = useRef<TimetableSurfaceHandle>(null);
-  // Stable identity, so a minute tick cannot invalidate the memoised pages.
-  const weekdays = useMemo(() => getOrderedWeekdays(state.settings.weekendMode), [state.settings.weekendMode]);
+  // The stored array keeps its identity until the days themselves change, so
+  // a minute tick cannot invalidate the memoised pages. Hidden days are a
+  // presentation choice: their classes are still in state, still reminded
+  // about and still exported — they are only not given a column.
+  const weekdays = state.settings.visibleWeekdays;
   const isVertical = state.settings.gridOrientation === "vertical";
   const isOnCurrentWeek = visibleWeekStart === currentWeekStart;
 

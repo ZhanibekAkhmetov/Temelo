@@ -168,7 +168,12 @@ function WeekPageComponent({
   // deepest zoom, so it never needs a layout pass itself — only the boxes
   // inside it, once, when a pinch commits. Its centre is also what the
   // pinch transform below has to correct for.
-  const boxWidth = TIME_GUTTER_WIDTH + weekdays.length * MAX_COLUMN_WIDTH;
+  //
+  // A column is never wider than the page, but with one or two days shown it
+  // can be wider than `MAX_COLUMN_WIDTH`: fully zoomed out, a single day is
+  // the whole body. So each column's room is whichever of the two is larger.
+  const columnRoom = Math.max(MAX_COLUMN_WIDTH, width);
+  const boxWidth = TIME_GUTTER_WIDTH + weekdays.length * columnRoom;
   const boxHeight = timeSlots.length * MAX_SLOT_HEIGHT;
 
   const pageStyle = useAnimatedStyle(() => ({
@@ -226,7 +231,7 @@ function WeekPageComponent({
           },
         ]}
       >
-        <Animated.View style={[styles.headerRow, { width: weekdays.length * MAX_COLUMN_WIDTH }, headerStyle]}>
+        <Animated.View style={[styles.headerRow, { width: weekdays.length * columnRoom }, headerStyle]}>
           {weekdays.map((day, index) => {
             const date = dates[day];
             const isToday = date === today;

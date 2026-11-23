@@ -52,7 +52,15 @@ import { normalizeClassColorId } from "@/domain/classColor";
 import { isValidIsoDate } from "@/domain/date";
 import { inferStartsWithTimetable } from "@/domain/recurrence";
 import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
-import { ALL_WEEKDAYS_MONDAY_FIRST, ALL_WEEKEND_MODES, type Weekday, type WeekendMode } from "@/domain/week";
+import {
+  ALL_WEEKDAYS_MONDAY_FIRST,
+  ALL_WEEKEND_MODES,
+  getOrderedWeekdays,
+  normalizeVisibleWeekdays,
+  weekendModeCovering,
+  type Weekday,
+  type WeekendMode,
+} from "@/domain/week";
 import {
   TIMETABLE_SETTING_KEYS,
   type Course,
@@ -75,12 +83,25 @@ import {
  */
 export const SNAPSHOT_FORMAT_VERSION = 1;
 
+/**
+ * The timetable's settings as a snapshot carries them: its own half of
+ * `Settings`, plus the legacy `weekendMode` written beside `visibleWeekdays`.
+ *
+ * The mirror is what keeps format 1 format 1. A build from before Beta 2
+ * requires `weekendMode` and has never heard of `visibleWeekdays`, so a file
+ * that carried only the new field would be "damaged" there; with both, it
+ * opens, showing the narrowest preset that covers every visible day. This
+ * build reads `visibleWeekdays` when it is present and the preset only when it
+ * is not — an archive or a `.temelo` from Beta 1.
+ */
+export type SnapshotSettings = TimetableSettings & { weekendMode: WeekendMode };
+
 export interface TimetableSnapshot {
   formatVersion: number;
   /** The timetable's own identity — the same id it had while active. */
   timetable: Timetable;
   /** Only the settings that belong to the timetable; see `TIMETABLE_SETTING_KEYS`. */
-  settings: TimetableSettings;
+  settings: SnapshotSettings;
   timeSlots: TimeSlot[];
   courses: Course[];
   /** Per-class reminder lead times ride along on these two. */
@@ -143,17 +164,22 @@ export function settingsWithTimetableSettings(
   current: Settings,
   incoming: TimetableSettings,
 ): Settings {
-  // `incoming` is exactly the timetable-specific keys, so the spread replaces
-  // those and nothing else — and TypeScript proves that rather than trusting
-  // a loop over string keys.
-  return { ...current, ...incoming };
+  // Picked rather than spread whole: a snapshot's settings also carry the
+  // legacy `weekendMode` mirror, which is a file-format detail and must not
+  // become a field of the app's own settings.
+  return { ...current, ...timetableSettingsOf({ ...current, ...incoming }) };
+}
+
+/** The snapshot's settings for a timetable's own: the same, plus the legacy mirror. */
+export function snapshotSettingsOf(settings: TimetableSettings): SnapshotSettings {
+  return { ...settings, weekendMode: weekendModeCovering(settings.visibleWeekdays) };
 }
 
 export function buildTimetableSnapshot(contents: TimetableContents): TimetableSnapshot {
   return {
     formatVersion: SNAPSHOT_FORMAT_VERSION,
     timetable: contents.timetable,
-    settings: contents.settings,
+    settings: snapshotSettingsOf(contents.settings),
     timeSlots: contents.timeSlots,
     courses: contents.courses,
     placements: contents.placements,
@@ -385,7 +411,29 @@ function parseTimetable(value: unknown): Timetable {
   };
 }
 
-function parseSettings(value: unknown): TimetableSettings {
+/**
+ * The visible days a snapshot's settings describe.
+ *
+ * `visibleWeekdays` when it is there — and then it has to be a real, non-empty
+ * list of days, or the snapshot is damaged. Absent, the snapshot predates
+ * Beta 2 and the legacy preset says which days it showed. `weekendMode`, when
+ * present, must be one of the three presets either way: it is what an older
+ * build would read, and a value it would refuse is not one to accept here.
+ */
+function visibleWeekdaysOf(value: Record<string, unknown>): { days: Weekday[]; weekendMode: WeekendMode } {
+  const preset = value.weekendMode === undefined ? null : oneOf<WeekendMode>(value, "weekendMode", ALL_WEEKEND_MODES);
+  if (value.weekendMode !== undefined && preset === null) throw new Invalid("settings.weekendMode");
+
+  if (value.visibleWeekdays !== undefined) {
+    const listed = Array.isArray(value.visibleWeekdays) ? normalizeVisibleWeekdays(value.visibleWeekdays) : null;
+    if (listed === null) throw new Invalid("settings.visibleWeekdays must list at least one weekday");
+    return { days: listed, weekendMode: weekendModeCovering(listed) };
+  }
+  const legacy = require_(preset, "settings.weekendMode");
+  return { days: getOrderedWeekdays(legacy), weekendMode: legacy };
+}
+
+function parseSettings(value: unknown): SnapshotSettings {
   if (!isObject(value)) throw new Invalid("settings is not an object");
   const slotCount = require_(int(value, "slotCount"), "settings.slotCount");
   if (slotCount < 1) throw new Invalid("settings.slotCount must be positive");
@@ -393,13 +441,16 @@ function parseSettings(value: unknown): TimetableSettings {
   const pause = require_(int(value, "defaultBreakDurationMinutes"), "settings.defaultBreakDurationMinutes");
   if (lesson < 1) throw new Invalid("settings.defaultLessonDurationMinutes must be positive");
   if (pause < 0) throw new Invalid("settings.defaultBreakDurationMinutes must not be negative");
-  return {
-    weekendMode: require_(oneOf<WeekendMode>(value, "weekendMode", ALL_WEEKEND_MODES), "settings.weekendMode"),
+  const days = visibleWeekdaysOf(value);
+  // Built through `snapshotSettingsOf`, so a parsed snapshot has the same keys
+  // in the same order as a freshly built one and re-encodes to the same bytes.
+  return snapshotSettingsOf({
+    visibleWeekdays: days.days,
     academicDayStart: require_(hhmm(value, "academicDayStart"), "settings.academicDayStart"),
     defaultLessonDurationMinutes: lesson,
     defaultBreakDurationMinutes: pause,
     slotCount,
-  };
+  });
 }
 
 /**
@@ -469,7 +520,7 @@ function assertCoherent(snapshot: TimetableSnapshot): void {
 export interface TimetableSnapshotSummary {
   /** The timetable's start date, exactly as it was written. */
   startDate: string;
-  weekendMode: WeekendMode;
+  visibleWeekdays: Weekday[];
   slotCount: number;
   /** First period's start and last period's end, or null with no periods. */
   dayStart: string | null;
@@ -481,7 +532,7 @@ export function summarizeTimetableSnapshot(snapshot: TimetableSnapshot): Timetab
   const ordered = [...snapshot.timeSlots].sort((a, b) => a.position - b.position);
   return {
     startDate: snapshot.timetable.anchorDate,
-    weekendMode: snapshot.settings.weekendMode,
+    visibleWeekdays: snapshot.settings.visibleWeekdays,
     slotCount: snapshot.settings.slotCount,
     dayStart: ordered[0]?.startTime ?? null,
     dayEnd: ordered[ordered.length - 1]?.endTime ?? null,

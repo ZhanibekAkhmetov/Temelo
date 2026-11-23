@@ -1,5 +1,5 @@
 import type { ReminderMinutes, ReminderOverride } from "@/domain/reminder";
-import type { Weekday, WeekendMode } from "@/domain/week";
+import type { Weekday } from "@/domain/week";
 import type { LanguagePreference } from "@/i18n/language";
 import type { AppearancePreference } from "@/theme/appearance";
 
@@ -13,7 +13,14 @@ export type RecurrenceType = "weekly" | "biweekly" | "once";
 export type GridOrientation = "vertical" | "horizontal";
 
 export interface Settings {
-  weekendMode: WeekendMode;
+  /**
+   * Which days the grid shows, Monday first — any non-empty subset of the
+   * week. Presentation only: a class on a hidden day keeps every occurrence,
+   * reminder and exported event; it is simply not drawn. Replaced the three
+   * `WeekendMode` presets in Beta 2 (migration v8), which still travel beside
+   * it for older builds; see `weekendModeCovering`.
+   */
+  visibleWeekdays: Weekday[];
   gridOrientation: GridOrientation;
   academicDayStart: string;
   defaultLessonDurationMinutes: number;
@@ -50,8 +57,8 @@ export interface Settings {
  *    timetable's skeleton. The periods it generates are addressed by id from
  *    every placement in the timetable, so it could not travel separately even
  *    if we wanted it to.
- *  - `weekendMode` is which days this timetable has classes on. A school year
- *    with Saturday classes and a university term without them are two
+ *  - `visibleWeekdays` is which days this timetable has classes on. A school
+ *    year with Saturday classes and a university term without them are two
  *    different timetables, not one user changing their mind.
  *
  * Everything else stays app-global, including two that are close calls:
@@ -68,7 +75,7 @@ export interface Settings {
  * which stays true across every archive and restore.
  */
 export const TIMETABLE_SETTING_KEYS = [
-  "weekendMode",
+  "visibleWeekdays",
   "academicDayStart",
   "defaultLessonDurationMinutes",
   "defaultBreakDurationMinutes",

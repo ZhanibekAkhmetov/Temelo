@@ -172,7 +172,6 @@ export const en = {
   "settings.layoutVertical": "Vertical",
   "settings.layoutHorizontal": "Horizontal",
   "settings.layoutHint": "Vertical puts the days across the top; horizontal puts them down the side.",
-  "settings.daysWithoutClasses": "Days without classes",
   "settings.timetables": "Timetables",
   "settings.currentTimetable": "Current timetable",
   "settings.noTimetable": "None",
@@ -208,9 +207,11 @@ export const en = {
 
   // ------------------------------------------------------------------ week
   "week.weekend": "Weekend",
-  "week.weekendSaturdaySunday": "Sat & Sun",
-  "week.weekendSundayOnly": "Sun only",
-  "week.weekendNone": "Show all",
+  "week.visibleDaysHint": "Hidden days keep their classes and reminders; they are only not shown.",
+  "week.atLeastOneDay": "Choose at least one day.",
+  "week.hideDaysTitle": "Hide days with classes?",
+  "week.hideDaysMessage": "Classes on {days} are kept, with their reminders and calendar export, but won't be shown on the grid until you show these days again.",
+  "week.hideDaysConfirm": "Hide",
 
   // ------------------------------------------------------------ onboarding
   "onboarding.weekTitle": "Week layout",
@@ -406,6 +407,7 @@ export const en = {
   "errors.lessonDurationInvalid": "Lesson duration must be a positive number of minutes.",
   "errors.breakDurationInvalid": "Break duration must be zero or a positive number of minutes.",
   "errors.slotCountInvalid": "Number of periods must be a positive whole number.",
+  "errors.noVisibleDays": "A timetable has to show at least one day.",
   "errors.slotCountTooMany": "Number of periods must be {max} or fewer.",
   "errors.periodPastMidnight":
     "Period {position} would end after midnight. Reduce the number of periods, lesson duration, or start time.",

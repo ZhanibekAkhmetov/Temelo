@@ -8,7 +8,7 @@ import { DEFAULT_APPEARANCE_PREFERENCE } from "@/theme/appearance";
 import type { Settings, TimeSlot } from "@/types/models";
 
 export const DEFAULT_SETTINGS: Settings = {
-  weekendMode: "saturdaySunday",
+  visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
   gridOrientation: "vertical",
   academicDayStart: "07:30",
   defaultLessonDurationMinutes: 90,

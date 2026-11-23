@@ -7,15 +7,16 @@ import { OnboardingNav } from "@/components/OnboardingNav";
 import { ScreenContainer } from "@/components/ScreenContainer";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import type { DomainError } from "@/domain/errors";
-import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
+import { parseWeekdays, type Weekday } from "@/domain/week";
 import { AcademicDayFields, isUsableAcademicDay } from "@/features/timetables/AcademicDayFields";
 import { useI18n } from "@/i18n/I18nProvider";
 import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
 import { useAppState, type AcademicDayConfigInput } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 
-function weekendModeFrom(value: unknown): WeekendMode {
-  return ALL_WEEKEND_MODES.find((mode) => mode === value) ?? DEFAULT_SETTINGS.weekendMode;
+/** The days from step one; a parameter is input, so anything unusable is the default. */
+function visibleWeekdaysFrom(value: unknown): Weekday[] {
+  return parseWeekdays(typeof value === "string" ? value : null) ?? DEFAULT_SETTINGS.visibleWeekdays;
 }
 
 /**
@@ -37,13 +38,13 @@ export default function NewAcademicDayScreen() {
   const { colors, spacing, typography } = useTheme();
   const { t } = useI18n();
   const { state, createNewTimetable } = useAppState();
-  const params = useLocalSearchParams<{ name?: string; startDate?: string; weekendMode?: string }>();
+  const params = useLocalSearchParams<{ name?: string; startDate?: string; visibleWeekdays?: string }>();
 
   const name = typeof params.name === "string" ? params.name : "";
   // Checked, because a route parameter is input: anything that is not a real
   // date becomes this week's Monday rather than a timetable that never starts.
   const startDate = timetableStartDateFrom(params.startDate);
-  const weekendMode = weekendModeFrom(params.weekendMode);
+  const visibleWeekdays = visibleWeekdaysFrom(params.visibleWeekdays);
 
   const [academicDay, setAcademicDay] = useState<AcademicDayConfigInput>({
     academicDayStart: DEFAULT_SETTINGS.academicDayStart,
@@ -72,7 +73,7 @@ export default function NewAcademicDayScreen() {
     setFormError(undefined);
     setBusy(true);
     const defaultName = t("timetables.defaultName");
-    void createNewTimetable({ name, defaultName, startDate, weekendMode, academicDay }).then((result) => {
+    void createNewTimetable({ name, defaultName, startDate, visibleWeekdays, academicDay }).then((result) => {
       setBusy(false);
       if (!result.ok) {
         setFormError(result.error);

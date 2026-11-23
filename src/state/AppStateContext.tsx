@@ -18,7 +18,7 @@ import { isOnOrAfterTimetableStart, type Occurrence } from "@/domain/occurrence"
 import { seriesRangeMovedTo } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import { generateTimeSlots } from "@/domain/time";
-import type { Weekday, WeekendMode } from "@/domain/week";
+import { normalizeVisibleWeekdays, sameWeekdays, type Weekday } from "@/domain/week";
 import type { LanguagePreference } from "@/i18n/language";
 import type { AppearancePreference } from "@/theme/appearance";
 import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
@@ -175,7 +175,8 @@ export interface CreateTimetableInput {
   defaultName: string;
   /** ISO date; anything that is not a real date falls back to this week's Monday. */
   startDate: string;
-  weekendMode: WeekendMode;
+  /** Which days the new timetable shows; at least one. */
+  visibleWeekdays: Weekday[];
   academicDay: AcademicDayConfigInput;
 }
 
@@ -249,7 +250,11 @@ interface AppStateContextValue {
   persistence: PersistenceStatus;
   /** Development only: what the database on this device really looks like. */
   readStorageReport: () => Promise<StorageReport | null>;
-  setWeekendMode: (input: { weekendMode: WeekendMode }) => void;
+  /**
+   * Which days the active timetable shows. Presentation only — nothing about a
+   * class on a hidden day changes. Refuses an empty set.
+   */
+  setVisibleWeekdays: (input: { visibleWeekdays: Weekday[] }) => ActionResult;
   setGridOrientation: (input: { gridOrientation: GridOrientation }) => void;
   /**
    * Light, dark or follow-the-device. Applied the moment it is called —
@@ -658,11 +663,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return readStorageReport_(db, bootstrapRef.current?.repairedColumns ?? []);
     };
 
-    const setWeekendMode: AppStateContextValue["setWeekendMode"] = (input) => {
-      setState((prev) => ({
-        ...prev,
-        settings: { ...prev.settings, weekendMode: input.weekendMode },
-      }));
+    const setVisibleWeekdays: AppStateContextValue["setVisibleWeekdays"] = (input) => {
+      const visibleWeekdays = normalizeVisibleWeekdays(input.visibleWeekdays);
+      if (!visibleWeekdays) return { ok: false, error: domainError("errors.noVisibleDays") };
+      setState((prev) =>
+        sameWeekdays(prev.settings.visibleWeekdays, visibleWeekdays)
+          ? prev
+          : { ...prev, settings: { ...prev.settings, visibleWeekdays } },
+      );
+      return { ok: true };
     };
 
     const setGridOrientation: AppStateContextValue["setGridOrientation"] = (input) => {
@@ -859,7 +868,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         name,
         defaultName: input.defaultName,
         settings: {
-          weekendMode: input.weekendMode,
+          visibleWeekdays: normalizeVisibleWeekdays(input.visibleWeekdays) ?? DEFAULT_SETTINGS.visibleWeekdays,
           academicDayStart: input.academicDay.academicDayStart,
           defaultLessonDurationMinutes: input.academicDay.defaultLessonDurationMinutes,
           defaultBreakDurationMinutes: input.academicDay.defaultBreakDurationMinutes,
@@ -1286,7 +1295,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       persistence,
       archivedCount,
       readStorageReport,
-      setWeekendMode,
+      setVisibleWeekdays,
       setGridOrientation,
       setAppearancePreference,
       setLanguagePreference,

@@ -166,7 +166,6 @@ export const ru: Translations = {
   "settings.layoutVertical": "Вертикальное",
   "settings.layoutHorizontal": "Горизонтальное",
   "settings.layoutHint": "В вертикальном дни сверху, в горизонтальном — слева.",
-  "settings.daysWithoutClasses": "Дни без занятий",
   "settings.timetables": "Расписания",
   "settings.currentTimetable": "Текущее расписание",
   "settings.noTimetable": "Нет",
@@ -192,9 +191,11 @@ export const ru: Translations = {
   "about.project": "Проект на GitHub",
 
   "week.weekend": "Выходные",
-  "week.weekendSaturdaySunday": "Сб и вс",
-  "week.weekendSundayOnly": "Только вс",
-  "week.weekendNone": "Все дни",
+  "week.visibleDaysHint": "Занятия в скрытые дни и напоминания о них сохраняются — они просто не показываются.",
+  "week.atLeastOneDay": "Выберите хотя бы один день.",
+  "week.hideDaysTitle": "Скрыть дни с занятиями?",
+  "week.hideDaysMessage": "Занятия в эти дни ({days}) сохранятся вместе с напоминаниями и экспортом в календарь, но не будут показаны в сетке, пока вы снова не включите эти дни.",
+  "week.hideDaysConfirm": "Скрыть",
 
   "onboarding.weekTitle": "Учебная неделя",
   "onboarding.weekSubtitle": "Выберите дни без занятий.",
@@ -339,6 +340,7 @@ export const ru: Translations = {
   "errors.lessonDurationInvalid": "Длительность занятия должна быть больше нуля.",
   "errors.breakDurationInvalid": "Перерыв не может быть отрицательным.",
   "errors.slotCountInvalid": "Количество занятий должно быть целым числом больше нуля.",
+  "errors.noVisibleDays": "В расписании должен быть хотя бы один день.",
   "errors.slotCountTooMany": "Занятий в день — не больше {max}.",
   "errors.periodPastMidnight":
     "Занятие {position} закончится после полуночи. Уменьшите их количество или длительность либо сдвиньте начало дня.",

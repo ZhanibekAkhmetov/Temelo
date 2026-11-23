@@ -511,6 +511,43 @@ const separateSeriesStartFromTimetableStart: Migration = {
   },
 };
 
+/**
+ * Any set of visible weekdays, rather than one of three weekend presets.
+ *
+ * `visible_weekdays` holds the days themselves, comma-separated and Monday
+ * first, and it is backfilled from `weekend_mode` with the exact days each
+ * preset showed — so an upgrading user opens to precisely the grid they had.
+ * The preset strings and day lists are literals, for the usual reason: this
+ * has to keep doing what it did the day it shipped.
+ *
+ * `weekend_mode` stays, and keeps being written: a build from before this
+ * migration reads only that, so the repository writes the narrowest preset
+ * that covers the visible days (`weekendModeCovering`). Nullable, no rebuild;
+ * a NULL is read as the preset's days, which is also what this backfill
+ * writes, so the two paths cannot disagree.
+ */
+const addVisibleWeekdays: Migration = {
+  version: 8,
+  description: "Timetables show any set of weekdays, not only a weekend preset",
+  up: async (db) => {
+    // Asked rather than assumed, as in v7: v5's convergence adds every
+    // `REQUIRED_COLUMNS` entry it finds missing, this one included.
+    if (!(await tableColumns(db, "settings")).includes("visible_weekdays")) {
+      await db.execAsync("ALTER TABLE settings ADD COLUMN visible_weekdays TEXT");
+    }
+
+    await db.execAsync(`
+      UPDATE settings
+         SET visible_weekdays = CASE weekend_mode
+               WHEN 'none'       THEN 'monday,tuesday,wednesday,thursday,friday,saturday,sunday'
+               WHEN 'sundayOnly' THEN 'monday,tuesday,wednesday,thursday,friday,saturday'
+               ELSE                   'monday,tuesday,wednesday,thursday,friday'
+             END
+       WHERE visible_weekdays IS NULL OR visible_weekdays = '';
+    `);
+  },
+};
+
 export const MIGRATIONS: Migration[] = [
   createInitialSchema,
   addClassReminders,
@@ -519,6 +556,7 @@ export const MIGRATIONS: Migration[] = [
   convergeSchemaAfterExperimentalBranches,
   addTimetableLifecycle,
   separateSeriesStartFromTimetableStart,
+  addVisibleWeekdays,
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce(

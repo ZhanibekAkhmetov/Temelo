@@ -3,7 +3,6 @@ import { Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
-import { ChoiceRowField } from "@/components/ChoiceRowField";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DateField } from "@/components/DateField";
 import { DatePickerSheet } from "@/components/DatePickerSheet";
@@ -13,13 +12,14 @@ import { ScreenHeader } from "@/components/ScreenHeader";
 import { TextField } from "@/components/TextField";
 import { todayIsoDate } from "@/domain/date";
 import type { DomainError } from "@/domain/errors";
-import { ALL_WEEKEND_MODES } from "@/domain/week";
+import { weekdaysWithClasses } from "@/domain/timetable";
+import type { Weekday } from "@/domain/week";
 import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
-import { hoursLabel, shapeOfActive } from "@/features/timetables/summary";
+import { daysLabel, hoursLabel, shapeOfActive } from "@/features/timetables/summary";
 import { TimetableActionSheet } from "@/features/timetables/TimetableActionSheet";
 import { useExportCalendar, useShareTimetable } from "@/features/timetables/transfer";
+import { VisibleWeekdaysField } from "@/features/timetables/VisibleWeekdaysField";
 import { useI18n } from "@/i18n/I18nProvider";
-import { WEEKEND_MODE_LABEL_KEY } from "@/i18n/weekendMode";
 import { useAppState } from "@/state/AppStateContext";
 import { MAX_TIMETABLE_NAME_LENGTH } from "@/storage/timetableLifecycle";
 import { useTheme } from "@/theme/useTheme";
@@ -46,8 +46,8 @@ import { useTheme } from "@/theme/useTheme";
  */
 export default function CurrentTimetableScreen() {
   const { colors, spacing, typography, borderWidth } = useTheme();
-  const { t } = useI18n();
-  const { state, renameActiveTimetable, setTimetableStartDate, archiveCurrentTimetable, setWeekendMode } = useAppState();
+  const { t, format } = useI18n();
+  const { state, renameActiveTimetable, setTimetableStartDate, archiveCurrentTimetable, setVisibleWeekdays } = useAppState();
   /*
    * Share and Export are here as well as behind the long press on the
    * Timetables list, because a shortcut nobody finds is not a feature. This is
@@ -68,6 +68,11 @@ export default function CurrentTimetableScreen() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   /** Why the last archive did not happen, shown beside the button that tried. */
   const [archiveError, setArchiveError] = useState<DomainError | undefined>();
+  /**
+   * A new set of days that would hide some that still have classes, waiting
+   * for the user to confirm. `hidden` is just those days, to name them.
+   */
+  const [hideDays, setHideDays] = useState<{ next: Weekday[]; hidden: Weekday[] } | null>(null);
 
   /*
    * Archiving from this very screen is what removes the active timetable, and
@@ -93,7 +98,7 @@ export default function CurrentTimetableScreen() {
     );
   }
 
-  const shape = shapeOfActive(state.settings.weekendMode, state.timeSlots);
+  const shape = shapeOfActive(state.settings.visibleWeekdays, state.timeSlots);
   const hours = hoursLabel(t, shape);
   // Read out here rather than inside the handler: narrowing a `const` does not
   // reach into a hoisted function declaration, and an assertion would be a
@@ -107,6 +112,22 @@ export default function CurrentTimetableScreen() {
       return;
     }
     router.back();
+  }
+
+  /*
+   * Hiding a day that has classes on it is allowed — it is only presentation,
+   * and the classes, their reminders and their calendar export stay exactly as
+   * they are — but it makes them disappear from the grid, which is easy to
+   * mistake for having lost them. So that one case asks first and says so.
+   */
+  function handleVisibleWeekdays(next: Weekday[]) {
+    const occupied = weekdaysWithClasses(state);
+    const hidden = state.settings.visibleWeekdays.filter((day) => !next.includes(day) && occupied.has(day));
+    if (hidden.length > 0) {
+      setHideDays({ next, hidden });
+      return;
+    }
+    setVisibleWeekdays({ visibleWeekdays: next });
   }
 
   function handleArchive() {
@@ -159,24 +180,13 @@ export default function CurrentTimetableScreen() {
           value={timetable.anchorDate}
           onPress={() => setStartSheetOpen(true)}
         />
-        {/* Which days this timetable has classes on is edited here and only
-            here. It is a single choice, so it commits on tap, the way every
-            other single choice in the app does.
-
-            Labelled by what the *value* names. Every weekend mode is named
-            after the days it takes away — "Sat & Sun", "Sun only", "Show
-            all" — so under a "Days shown" label the row read as its own
-            opposite: a Mon-Fri timetable said "Days shown: Sat & Sun". The
-            sheet this opens was already titled "Days without classes", and so
-            is the same choice during setup; this row was the one place that
-            disagreed. Where the value really is a range of shown days — an
-            archive, an import preview — "Days shown" stays. */}
-        <ChoiceRowField
-          label={t("settings.daysWithoutClasses")}
-          value={state.settings.weekendMode}
-          options={ALL_WEEKEND_MODES.map((mode) => ({ value: mode, label: t(WEEKEND_MODE_LABEL_KEY[mode]) }))}
-          onChange={(weekendMode) => setWeekendMode({ weekendMode })}
-          sheetTitle={t("settings.daysWithoutClasses")}
+        {/* Which days this timetable shows is edited here and only here —
+            any set of the seven, at least one. The value is the days shown
+            ("Mon–Fri", "Mon, Wed, Fri"), so the label says that too. */}
+        <VisibleWeekdaysField
+          label={t("timetables.days")}
+          value={state.settings.visibleWeekdays}
+          onChange={handleVisibleWeekdays}
         />
         {/* A whole form, so a row that opens one — and it says what it holds,
             so this screen answers the question without being opened. */}
@@ -249,6 +259,19 @@ export default function CurrentTimetableScreen() {
           confirmLabel={t("timetables.archiveConfirm")}
           onConfirm={handleArchive}
           onCancel={() => setArchiveConfirmOpen(false)}
+        />
+      ) : null}
+
+      {hideDays ? (
+        <ConfirmDialog
+          title={t("week.hideDaysTitle")}
+          message={t("week.hideDaysMessage", { days: daysLabel(t, format, hideDays.hidden) })}
+          confirmLabel={t("week.hideDaysConfirm")}
+          onConfirm={() => {
+            setVisibleWeekdays({ visibleWeekdays: hideDays.next });
+            setHideDays(null);
+          }}
+          onCancel={() => setHideDays(null)}
         />
       ) : null}
 
