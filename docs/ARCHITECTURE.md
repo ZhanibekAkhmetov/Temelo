@@ -109,10 +109,16 @@ when persistence is actually implemented.
   stored fact — `Placement.startsWithTimetable` (migration v7). An ordinary
   class is part of the timetable's pattern and reaches back as far as the
   timetable does; the later half of a "this and future" split, or a series
-  whose start a user chose in an earlier build, genuinely begins on
-  `startsOn`. The class editor no longer offers a series start date at all —
-  only a one-off's own date — so none of these anchors is a user-facing
-  field (`classEditorSchedule` in `domain/classEdit`). It is stored
+  whose start the user chose, genuinely begins on `startsOn`. Since Beta 2
+  the editor offers that choice again — "Starts: with the timetable / on a
+  chosen date" — and a chosen date is exactly this existing structure:
+  `startsOn` = the date, `startsWithTimetable` = false, so an alternating
+  class counts its fortnight from the first lesson on or after it. Untouched
+  controls pass every stored anchor through unchanged
+  (`classEditorSchedule` in `domain/classEdit`), a start change applies to
+  the whole series only, and an "all" edit that rewrites the rule retires the
+  exceptions the new rule no longer has an occurrence for (keeping those
+  before the new start, so moving it back restores them). It is stored
   rather than derived because the record alone cannot tell "weekly, starts
   5 Oct, added when the timetable began then" from "weekly, starts 5 Oct, the
   later half of a split" — and only the first may extend backwards.
@@ -130,6 +136,28 @@ when persistence is actually implemented.
   fortnight. Past that point the answer cannot change, because base recurrence
   rules repeat with a period of at most two weeks. See the argument in
   `domain/recurrence`.
+- **A clash is a question, not a veto** (Beta 2). Detection is unchanged, but
+  every write path — `upsertPlacement`, `movePlacement`,
+  `applyClassEditScope` — takes `allowOverlap`. Without it an overlap comes
+  back as an `OverlapRefusal` naming the class in the way, and the screen
+  asks "Save anyway?" through `ConfirmDialog`. An edit that cannot change
+  which cells a class occupies (a rename, a room, a reminder) is never asked,
+  so an accepted overlap is not raised again. Overlapping classes stay two
+  placements with their own occurrences, reminders and exported events.
+  `resolveWeekClasses` keeps a list per cell; the vertical grid lays a group
+  of overlapping blocks out in side-by-side lanes (`assignLanes`), and a tap
+  on a cell holding more than one class opens a chooser rather than guessing
+  from a narrow lane.
+- **Visible weekdays are presentation.** `Settings.visibleWeekdays` (migration
+  v8) is any non-empty, Monday-first subset of the week, carried per timetable
+  in snapshots. Only the grid reads it; `resolveOccurrences`, the reminder
+  plan and the calendar export never do, so a class on a hidden day keeps
+  every occurrence and comes back when the day is shown again. The Beta 1
+  preset is still written — `settings.weekend_mode` and the snapshot's
+  `weekendMode` — as the narrowest preset that covers the visible days
+  (`weekendModeCovering`), because that is all an older build reads; a
+  snapshot without `visibleWeekdays` (Beta 1) is read from the preset. The
+  snapshot format version therefore did not change.
 
 ## One active timetable, archived snapshots
 

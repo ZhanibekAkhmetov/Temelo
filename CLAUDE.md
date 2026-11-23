@@ -19,8 +19,9 @@ development build, not Expo Go.
 - `npx expo start --dev-client` — run the app (phone and computer must share
   a local network)
 - `npm run lint` — lint (`expo lint`); run after code changes
-- `npm run harness` — the geometry, storage, lifecycle and transfer harnesses
-  (`harness/`), run against Node's own SQLite. There is no test runner; this
+- `npm run harness` — the harness suites in `harness/` (geometry, navigation,
+  storage, lifecycle, transfer, calendar, overlaps, series start, visible
+  weekdays), run against Node's own SQLite. There is no test runner; this
   is the substitute, and it must stay green.
 
 ## Architecture boundaries
@@ -73,8 +74,22 @@ development build, not Expo Go.
 - Naming a timetable is optional. A blank name becomes a localized default
   ("Timetable1", "Timetable2", … — the lowest free number), chosen only when
   creation commits.
-- A repeating class has no user-facing start date; only a one-off's date is
-  editable. `startsOn`, parity and split anchors are internal structure.
+- A repeating class starts with the timetable unless the user picks
+  "Starts → On a chosen date" in the editor, which saves `startsOn` = that
+  date and `startsWithTimetable` = false (no second recurrence system). A
+  start change is whole-series only ("only this" and "this and future" are
+  disabled), and untouched controls must leave every stored anchor as is.
+  Parity and split anchors remain internal structure.
+- Overlapping classes are allowed, but only after explicit confirmation.
+  Every write path takes `allowOverlap`; without it a clash comes back with
+  `overlapWith` and the UI asks via `ConfirmDialog`. Never merge, replace or
+  drop a class because of an overlap, and don't re-ask for edits that don't
+  change occupancy (`sameOccupancy`, `occupancyMayChange`).
+- A timetable shows any non-empty set of weekdays (`Settings.visibleWeekdays`,
+  migration v8). Hidden days are presentation only: classes, reminders and
+  `.ics` export ignore them. `settings.weekend_mode` and the snapshot's
+  `weekendMode` are still written as a legacy mirror (`weekendModeCovering`)
+  so older builds can read new data — keep writing them.
 - Lifecycle confirmations (archive, restore, delete, replace) use
   `ConfirmDialog`, never the platform `Alert`.
 - There is no automatic archiving and no end date; archiving is always the
