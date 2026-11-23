@@ -47,7 +47,8 @@ export const en = {
   "timetable.cannotMove": "Cannot move class",
   "timetable.cannotApply": "Cannot apply change",
   "timetable.newRangeHint": "New class position, tap again to set it up",
-  "timetable.rangeInUse": "in use",
+  "timetable.rangeOverlaps": "overlaps",
+  "timetable.rangeUnavailable": "not available",
   "timetable.classAt": "{name}, {weekday}, period {period}",
   "timetable.classAtTime": "{name}, {weekday}, period {period}, {start} to {end}",
   "timetable.emptySlotAtTime": "Empty slot, {weekday}, period {period}, {start} to {end}",
@@ -76,11 +77,19 @@ export const en = {
   "classEditor.recurrence": "Recurrence",
   "classEditor.date": "Date",
   "classEditor.deleteClass": "Delete class",
+  "classEditor.addAnotherHere": "Add another class at this time",
   "classEditor.deleteTitle": "Delete class?",
   "classEditor.deleteMessage": "Remove {name} from the timetable. This cannot be undone.",
   "classEditor.summaryOnce": "One time on {date}",
   "classEditor.summaryWeekly": "Repeats every week",
   "classEditor.summaryBiweekly": "Repeats every two weeks",
+  "classEditor.starts": "Starts",
+  "classEditor.startsWithTimetable": "With the timetable",
+  "classEditor.startsOnDate": "On a chosen date",
+  "classEditor.startDate": "Start date",
+  "classEditor.startDateNote": "Nothing of this class is shown, reminded about or exported before its first lesson on or after this date.",
+  "classEditor.summaryWeeklyFrom": "Repeats every week from {date}",
+  "classEditor.summaryBiweeklyFrom": "Repeats every two weeks from {date}",
 
   // ------------------------------------------------------------ classColor
   "classColor.label": "Color",
@@ -105,6 +114,13 @@ export const en = {
   "recurrence.once": "One time",
 
   // ---------------------------------------------------------- scopeChooser
+  "overlap.title": "Classes overlap",
+  "overlap.message": "This class overlaps {name}. Both will be kept and shown side by side.",
+  "overlap.saveAnyway": "Save anyway",
+  "overlap.addAnyway": "Add anyway",
+  "slotChooser.title": "Classes at this time",
+  "slotChooser.addHere": "Add class here",
+
   "scopeChooser.title": "Apply changes to",
   "scopeChooser.onlyThis": "Only this occurrence",
   "scopeChooser.thisAndFuture": "This and future occurrences",
@@ -156,7 +172,6 @@ export const en = {
   "settings.layoutVertical": "Vertical",
   "settings.layoutHorizontal": "Horizontal",
   "settings.layoutHint": "Vertical puts the days across the top; horizontal puts them down the side.",
-  "settings.daysWithoutClasses": "Days without classes",
   "settings.timetables": "Timetables",
   "settings.currentTimetable": "Current timetable",
   "settings.noTimetable": "None",
@@ -192,9 +207,11 @@ export const en = {
 
   // ------------------------------------------------------------------ week
   "week.weekend": "Weekend",
-  "week.weekendSaturdaySunday": "Sat & Sun",
-  "week.weekendSundayOnly": "Sun only",
-  "week.weekendNone": "Show all",
+  "week.visibleDaysHint": "Hidden days keep their classes and reminders; they are only not shown.",
+  "week.atLeastOneDay": "Choose at least one day.",
+  "week.hideDaysTitle": "Hide days with classes?",
+  "week.hideDaysMessage": "Classes on {days} are kept, with their reminders and calendar export, but won't be shown on the grid until you show these days again.",
+  "week.hideDaysConfirm": "Hide",
 
   // ------------------------------------------------------------ onboarding
   "onboarding.weekTitle": "Week layout",
@@ -358,7 +375,7 @@ export const en = {
   "share.failedTitle": "Couldn’t import this file",
 
   // ---------------------------------------------------------------- errors
-  "errors.slotInUse": "This slot is already used by {name}.",
+  "errors.overlapsWith": "This overlaps {name}.",
   "errors.classNameRequired": "Class name is required.",
   "errors.timetableNameRequired": "Timetable name is required.",
   "errors.noActiveTimetable": "There is no active timetable.",
@@ -384,11 +401,13 @@ export const en = {
   "errors.endBeforeStart": "End date cannot be before the start date.",
   "errors.endBeforeOccurrence": "End date cannot be before this occurrence.",
   "errors.recurrenceWholeSeries": "Recurrence changes apply to the whole series.",
+  "errors.startWholeSeries": "A start date applies to the whole series.",
   "errors.storageWriteFailed": "Could not save to this device. Your changes are only in memory and will be lost when the app closes.",
   "errors.dayStartInvalid": "Academic day start must be a valid time (HH:mm).",
   "errors.lessonDurationInvalid": "Lesson duration must be a positive number of minutes.",
   "errors.breakDurationInvalid": "Break duration must be zero or a positive number of minutes.",
   "errors.slotCountInvalid": "Number of periods must be a positive whole number.",
+  "errors.noVisibleDays": "A timetable has to show at least one day.",
   "errors.slotCountTooMany": "Number of periods must be {max} or fewer.",
   "errors.periodPastMidnight":
     "Period {position} would end after midnight. Reduce the number of periods, lesson duration, or start time.",

@@ -10,8 +10,11 @@ import { useTheme } from "@/theme/useTheme";
 interface EditScopeSheetProps {
   /** The date the edit lands on, named in the first option's explanation. */
   effectiveDate: string;
-  /** Why a single-occurrence change cannot be offered, or null when it can. */
-  onlyThisBlockedReason: DomainError | null;
+  /**
+   * Why a scope cannot be offered, for each one that cannot — "only this" for
+   * a recurrence change, both narrower scopes for a new start date.
+   */
+  blockedReasons: Partial<Record<EditScope, DomainError>>;
   onSelect: (scope: EditScope) => void;
   onCancel: () => void;
 }
@@ -43,7 +46,7 @@ const SCOPE_HINT_KEY: Record<EditScope, TranslationKey> = {
  * doing more work than its label. Nothing has been written yet when this
  * opens — dismissing it leaves the timetable exactly as it was.
  */
-export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect, onCancel }: EditScopeSheetProps) {
+export function EditScopeSheet({ effectiveDate, blockedReasons, onSelect, onCancel }: EditScopeSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
   // A choice takes a frame or two to settle; a second tap in that window
@@ -97,7 +100,7 @@ export function EditScopeSheet({ effectiveDate, onlyThisBlockedReason, onSelect,
 
           <View style={{ borderTopWidth: borderWidth.thin, borderColor: colors.divider }}>
             {EDIT_SCOPE_ORDER.map((scope) => {
-              const blocked = scope === "onlyThis" ? onlyThisBlockedReason : null;
+              const blocked = blockedReasons[scope] ?? null;
               const blockedText = blocked ? t(blocked.key, blocked.params) : null;
               const disabled = blocked !== null || committing;
               const label = t(SCOPE_LABEL_KEY[scope]);

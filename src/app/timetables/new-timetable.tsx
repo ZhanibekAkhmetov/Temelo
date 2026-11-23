@@ -3,7 +3,6 @@ import { Text, View } from "react-native";
 import { router } from "expo-router";
 
 import { Button } from "@/components/Button";
-import { ChoiceRow } from "@/components/ChoiceRow";
 import { DateField } from "@/components/DateField";
 import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { FormSection } from "@/components/FormSection";
@@ -14,9 +13,9 @@ import { TextField } from "@/components/TextField";
 import { ImportPreviewDialog } from "@/features/timetables/ImportPreviewDialog";
 import { useImportTimetable } from "@/features/timetables/transfer";
 import { nextDefaultTimetableName } from "@/domain/timetableName";
-import { ALL_WEEKEND_MODES, type WeekendMode } from "@/domain/week";
+import { normalizeVisibleWeekdays, serializeWeekdays, type Weekday } from "@/domain/week";
+import { WeekdayToggleList } from "@/features/timetables/VisibleWeekdaysField";
 import { useI18n } from "@/i18n/I18nProvider";
-import { WEEKEND_MODE_LABEL_KEY } from "@/i18n/weekendMode";
 import { useAppState } from "@/state/AppStateContext";
 import { defaultTimetableAnchorDate } from "@/state/defaults";
 import { MAX_TIMETABLE_NAME_LENGTH } from "@/storage/timetableLifecycle";
@@ -69,7 +68,9 @@ export default function NewTimetableScreen() {
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState(defaultTimetableAnchorDate);
   const [startSheetOpen, setStartSheetOpen] = useState(false);
-  const [weekendMode, setWeekendMode] = useState<WeekendMode>(state.settings.weekendMode);
+  // Seeded from whatever the current settings show, as the preset was.
+  const [visibleWeekdays, setVisibleWeekdays] = useState<Weekday[]>(state.settings.visibleWeekdays);
+  const daysUsable = normalizeVisibleWeekdays(visibleWeekdays) !== null;
   /** Every archived name, so the placeholder can say which number is free. */
   const [archivedNames, setArchivedNames] = useState<string[]>([]);
 
@@ -121,12 +122,18 @@ export default function NewTimetableScreen() {
     });
   }
 
+  function toggleDay(day: Weekday) {
+    setVisibleWeekdays((current) => (current.includes(day) ? current.filter((entry) => entry !== day) : [...current, day]));
+  }
+
   function handleContinue() {
+    const days = normalizeVisibleWeekdays(visibleWeekdays);
+    if (!days) return;
     // Blank travels as blank. The name is only generated when the timetable
     // is actually created, so walking back out of the flow reserves nothing.
     router.push({
       pathname: "/timetables/new-academic-day",
-      params: { name: name.trim(), startDate, weekendMode },
+      params: { name: name.trim(), startDate, visibleWeekdays: serializeWeekdays(days) },
     });
   }
 
@@ -179,18 +186,16 @@ export default function NewTimetableScreen() {
          * name are most of the screen, so there is nothing to be compact for,
          * and a list is one tap deep instead of two.
          */}
-        <FormSection title={t("settings.daysWithoutClasses")}>
-          {ALL_WEEKEND_MODES.map((mode) => (
-            <ChoiceRow
-              key={mode}
-              label={t(WEEKEND_MODE_LABEL_KEY[mode])}
-              selected={mode === weekendMode}
-              onPress={() => setWeekendMode(mode)}
-            />
-          ))}
+        <FormSection title={t("timetables.days")}>
+          <WeekdayToggleList value={visibleWeekdays} onToggle={toggleDay} />
         </FormSection>
+        {daysUsable ? null : (
+          <Text style={[typography.caption, { color: colors.danger, marginTop: spacing.sm }]}>
+            {t("week.atLeastOneDay")}
+          </Text>
+        )}
 
-        <OnboardingNav onContinue={handleContinue} continueDisabled={importing.busy} />
+        <OnboardingNav onContinue={handleContinue} continueDisabled={importing.busy || !daysUsable} />
 
         {/* Only with nothing active — see the note at the top. Secondary, and
             under the primary rather than beside it: these are not two halves of

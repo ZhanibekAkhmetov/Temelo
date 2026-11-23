@@ -144,10 +144,20 @@ function WeekPageComponent({
 
   // A selected class is ringed in its own colour, one step brighter than the
   // block it surrounds; a range with no class yet has only the accent.
+  //
+  // Found by identity rather than by position: with overlapping classes two
+  // blocks can start in the same cell, and only the selected one is ringed.
   const selectedBlock =
     overlay?.kind === "selected"
-      ? blocks.find((block) => block.dayIndex === overlay.dayIndex && block.startIndex === overlay.startIndex)
+      ? (blocks.find((block) => block.occurrenceId === overlay.occurrenceId) ??
+        blocks.find((block) => block.dayIndex === overlay.dayIndex && block.startIndex === overlay.startIndex))
       : undefined;
+  // The outline takes the selected class's lane only while it still sits
+  // where the selection says; a class mid-resize is drawn by the overlay.
+  const outlineLane =
+    selectedBlock && selectedBlock.dayIndex === overlay?.dayIndex && selectedBlock.startIndex === overlay.startIndex
+      ? { lane: selectedBlock.lane, laneCount: selectedBlock.laneCount }
+      : { lane: 0, laneCount: 1 };
   const overlayStroke = selectedBlock ? getClassColors(selectedBlock.course.appearanceId).outline : colors.accent;
 
   const todayColumn = weekdays.findIndex((day) => dates[day] === today);
@@ -158,7 +168,12 @@ function WeekPageComponent({
   // deepest zoom, so it never needs a layout pass itself — only the boxes
   // inside it, once, when a pinch commits. Its centre is also what the
   // pinch transform below has to correct for.
-  const boxWidth = TIME_GUTTER_WIDTH + weekdays.length * MAX_COLUMN_WIDTH;
+  //
+  // A column is never wider than the page, but with one or two days shown it
+  // can be wider than `MAX_COLUMN_WIDTH`: fully zoomed out, a single day is
+  // the whole body. So each column's room is whichever of the two is larger.
+  const columnRoom = Math.max(MAX_COLUMN_WIDTH, width);
+  const boxWidth = TIME_GUTTER_WIDTH + weekdays.length * columnRoom;
   const boxHeight = timeSlots.length * MAX_SLOT_HEIGHT;
 
   const pageStyle = useAnimatedStyle(() => ({
@@ -216,7 +231,7 @@ function WeekPageComponent({
           },
         ]}
       >
-        <Animated.View style={[styles.headerRow, { width: weekdays.length * MAX_COLUMN_WIDTH }, headerStyle]}>
+        <Animated.View style={[styles.headerRow, { width: weekdays.length * columnRoom }, headerStyle]}>
           {weekdays.map((day, index) => {
             const date = dates[day];
             const isToday = date === today;
@@ -317,6 +332,8 @@ function WeekPageComponent({
                 startIndex={block.startIndex}
                 span={block.span}
                 dayIndex={block.dayIndex}
+                lane={block.lane}
+                laneCount={block.laneCount}
                 columnWidth={columnWidth}
                 slotHeight={slotHeight}
                 appearanceId={block.course.appearanceId}
@@ -363,6 +380,8 @@ function WeekPageComponent({
               startIndex={overlay.startIndex}
               span={overlay.span}
               dayIndex={overlay.dayIndex}
+              lane={overlay.kind === "selected" ? outlineLane.lane : 0}
+              laneCount={overlay.kind === "selected" ? outlineLane.laneCount : 1}
               columnWidth={columnWidth}
               slotHeight={slotHeight}
               color={overlayStroke}

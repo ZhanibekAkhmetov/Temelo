@@ -45,7 +45,7 @@ generic calendar, and optimizes entry and editing around that structure.
 ### 1. Week configuration
 
 - Choose the first day of the week.
-- Choose whether weekends are shown.
+- Choose which days of the week are shown — any set, at least one.
 
 ### 2. Academic-day configuration
 
@@ -97,10 +97,21 @@ Everything else is optional at creation time and editable afterward:
 - Lecturer or teacher.
 - Notes.
 - Recurrence settings (if plain weekly is not what's wanted).
-- For a one-time class, its date. A repeating class has no start date of its
-  own to edit: it follows the timetable's start, and an every-two-weeks class
-  falls on the half of the fortnight of the week it was added in.
+- For a one-time class, its date. A repeating class starts with the
+  timetable by default, and an every-two-weeks class falls on the half of the
+  fortnight of the week it was added in. "Starts → On a chosen date" makes it
+  begin on a specific date instead: nothing of it is shown, reminded about or
+  exported before its first lesson on or after that date, and an
+  every-two-weeks class counts its fortnight from that first lesson.
 - Visual appearance (e.g. color).
+
+Two classes may share a time slot on purpose — a lab next to a lecture, two
+electives of which the student attends one. Placing a class where another
+already meets warns and names it; the user can cancel or add it anyway, and
+nothing about the existing class changes. Overlapping classes are drawn side
+by side (stacked in the horizontal layout), and tapping a shared slot lists
+each class so it can be opened, edited or deleted on its own — or another one
+added at the same time.
 
 A **course** (e.g. "Mathematics") is a reusable entity, independent of any
 single placement. The same course can be placed into multiple weekly slots

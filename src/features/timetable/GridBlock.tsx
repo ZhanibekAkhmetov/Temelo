@@ -21,6 +21,12 @@ interface GridBlockProps {
   startShared?: SharedValue<number>;
   /** Column the block sits in; the drag overlay draws in its own column and passes 0. */
   dayIndex: number;
+  /**
+   * Side-by-side lane inside the column, and how many lanes share it. A class
+   * nothing overlaps is lane 0 of 1 — the whole column.
+   */
+  lane?: number;
+  laneCount?: number;
   /** Live column width, so a horizontal zoom widens the block itself. */
   columnWidth: SharedValue<number>;
   slotHeight: SharedValue<number>;
@@ -49,6 +55,8 @@ export function GridBlock({
   spanShared,
   startShared,
   dayIndex,
+  lane = 0,
+  laneCount = 1,
   columnWidth,
   slotHeight,
   appearanceId,
@@ -69,12 +77,22 @@ export function GridBlock({
     const currentStart = startShared ? startShared.get() : startIndex;
     const height = slotHeight.get();
     const width = columnWidth.get();
+    // Lanes split the column evenly; each lane keeps the same inset on both
+    // sides, so two blocks side by side have a visible gap between them.
+    const laneWidth = width / Math.max(1, laneCount);
     return {
-      width: Math.max(0, width - BLOCK_INSET * 2),
+      width: Math.max(0, laneWidth - BLOCK_INSET * 2),
       height: Math.max(0, currentSpan * height - BLOCK_INSET * 2),
-      transform: [{ translateX: dayIndex * width }, { translateY: currentStart * height + BLOCK_INSET }],
+      transform: [
+        { translateX: dayIndex * width + lane * laneWidth },
+        { translateY: currentStart * height + BLOCK_INSET },
+      ],
     };
   });
+
+  // A lane too narrow for a word reads better as a coloured strip than as two
+  // clipped letters, so the room line goes first and then the name's wrap.
+  const narrow = laneCount > 1;
 
   return (
     <Animated.View
@@ -117,7 +135,7 @@ export function GridBlock({
           >
             {name}
           </Text>
-          {room ? (
+          {room && !narrow ? (
             <Text
               style={[typography.gridSecondary, { color: appearance ? appearance.inkMuted : colors.textSecondary }]}
               numberOfLines={1}
@@ -143,6 +161,9 @@ interface SelectionOutlineProps {
   /** Live start during a resize or move, so the outline tracks the finger. */
   startShared?: SharedValue<number>;
   dayIndex: number;
+  /** The selected class's lane, so the outline rings that class and not its neighbours. */
+  lane?: number;
+  laneCount?: number;
   columnWidth: SharedValue<number>;
   slotHeight: SharedValue<number>;
   color?: string;
@@ -162,6 +183,8 @@ export function SelectionOutline({
   spanShared,
   startShared,
   dayIndex,
+  lane = 0,
+  laneCount = 1,
   columnWidth,
   slotHeight,
   color,
@@ -175,10 +198,14 @@ export function SelectionOutline({
     const currentStart = startShared ? startShared.get() : startIndex;
     const height = slotHeight.get();
     const width = columnWidth.get();
+    const laneWidth = width / Math.max(1, laneCount);
     return {
-      width: Math.max(0, width - OUTLINE_INSET * 2),
+      width: Math.max(0, laneWidth - OUTLINE_INSET * 2),
       height: Math.max(0, currentSpan * height - OUTLINE_INSET * 2),
-      transform: [{ translateX: dayIndex * width }, { translateY: currentStart * height + OUTLINE_INSET }],
+      transform: [
+        { translateX: dayIndex * width + lane * laneWidth },
+        { translateY: currentStart * height + OUTLINE_INSET },
+      ],
     };
   });
 

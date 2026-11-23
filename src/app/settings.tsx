@@ -113,7 +113,7 @@ export default function SettingsScreen() {
    */
   const timetableRowTitle = state.timetable?.name ?? t("timetables.noCurrent");
   const timetableRowSubtitle = state.timetable
-    ? timetableSummary(t, format, shapeOfActive(state.settings.weekendMode, state.timeSlots))
+    ? timetableSummary(t, format, shapeOfActive(state.settings.visibleWeekdays, state.timeSlots))
     : t("timetables.noCurrentHint");
 
   function confirmLoadSample() {

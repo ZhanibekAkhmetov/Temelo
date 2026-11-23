@@ -4,6 +4,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/Button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DateField } from "@/components/DateField";
 import { DatePickerSheet } from "@/components/DatePickerSheet";
 import { ReminderField } from "@/components/ReminderField";
@@ -14,10 +15,13 @@ import {
   classEditorSchedule,
   createPendingClassEdit,
   draftHasChanges,
+  editorSeriesStart,
   validateClassEditDraft,
   type PendingClassEdit,
+  type SeriesStartChoice,
 } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
+import { firstSeriesDate } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import type { Weekday } from "@/domain/week";
 import type { ScheduledClass } from "@/domain/timetable";
@@ -26,7 +30,7 @@ import { FormSection } from "@/components/FormSection";
 import { ClassColorField } from "@/features/timetable/ClassColorField";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useI18n } from "@/i18n/I18nProvider";
-import { useAppState } from "@/state/AppStateContext";
+import { useAppState, type UpsertPlacementInput } from "@/state/AppStateContext";
 import { useTheme } from "@/theme/useTheme";
 import type { RecurrenceType, TimeSlot, Timetable } from "@/types/models";
 
@@ -48,13 +52,22 @@ interface ClassEditorModalProps {
    * change: the screen asks which occurrences they apply to first.
    */
   onRequestScope: (edit: PendingClassEdit) => void;
+  /**
+   * "Add another class at this time": reopen the editor on the same cell for a
+   * new class. Offered only while editing an existing one — it is the way to
+   * put a second class into a slot that already has one.
+   */
+  onAddAnother?: () => void;
 }
 
 /**
  * Which picker is open — at most one at a time. The colour unfolds in place;
- * a one-off's date opens a sheet over the form.
+ * a one-off's date and a series' start date each open a sheet over the form.
  */
-type OpenPicker = "date" | "color" | null;
+type OpenPicker = "date" | "startDate" | "color" | null;
+
+/** The two answers to "Starts", as the choice row names them. */
+type StartMode = "timetable" | "date";
 
 /** Answers Android's Back before the editor does; true when it handled it. */
 type BackInterceptor = (() => boolean) | null;
@@ -70,6 +83,7 @@ export function ClassEditorModal({
   timetable,
   existing,
   onRequestScope,
+  onAddAnother,
 }: ClassEditorModalProps) {
   /*
    * Back inside a native Modal arrives as `onRequestClose` and never as a
@@ -105,6 +119,7 @@ export function ClassEditorModal({
           timetable={timetable}
           existing={existing}
           onRequestScope={onRequestScope}
+          onAddAnother={onAddAnother}
         />
       ) : null}
     </Modal>
@@ -122,6 +137,7 @@ function ClassEditorForm({
   timetable,
   existing,
   onRequestScope,
+  onAddAnother,
 }: Omit<ClassEditorModalProps, "visible"> & { onBackInterceptorChange: (handler: BackInterceptor) => void }) {
   const { colors, spacing, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
@@ -158,6 +174,16 @@ function ClassEditorForm({
    * the reminder *this occurrence* has, which a one-off edit may have set
    * apart from the rest of its series.
    */
+  /*
+   * Where a repeating class begins. Seeded from the stored series — with the
+   * timetable, or the first lesson of a series that has its own start — and
+   * sent with the save only once the user has touched it, so opening the
+   * editor on a class can never re-anchor it by accident.
+   */
+  const initialStart = editorSeriesStart(existing?.basePlacement, date, timetable.anchorDate);
+  const [startMode, setStartMode] = useState<StartMode>(initialStart.withTimetable ? "timetable" : "date");
+  const [startDate, setStartDate] = useState(initialStart.date);
+  const [startTouched, setStartTouched] = useState(false);
   const [reminderMinutes, setReminderMinutes] = useState<ReminderMinutes>(
     existing ? existing.placement.reminderMinutes : defaultReminderMinutes,
   );
@@ -166,22 +192,55 @@ function ClassEditorForm({
   const [openPicker, setOpenPicker] = useState<OpenPicker>(null);
   const [nameError, setNameError] = useState<DomainError | undefined>();
   const [formError, setFormError] = useState<DomainError | undefined>();
+  /**
+   * A save that stopped at an overlap, waiting for "Add anyway". It holds the
+   * exact input, so confirming saves precisely what was about to be saved.
+   */
+  const [overlap, setOverlap] = useState<{ name: string; input: UpsertPlacementInput } | null>(null);
 
   const isOneOff = recurrenceType === "once";
 
   /*
-   * The series' dates, which the user is not asked for and does not see —
-   * only a one-off's date is offered, because it is the lesson itself. A
+   * The series' dates. A one-off's date is offered because it is the lesson
+   * itself; a repeating class offers only where it starts. Untouched, a
    * stored series keeps its anchor, end and `startsWithTimetable` exactly as
    * they are; a new one anchors on the tapped week. See `classEditorSchedule`.
    */
+  const startChoice: SeriesStartChoice | undefined = !startTouched
+    ? undefined
+    : startMode === "timetable"
+      ? { withTimetable: true }
+      : { withTimetable: false, date: startDate };
   const schedule = classEditorSchedule({
     recurrenceType,
     tappedDate: date,
     onceDate,
     timetableStart: timetable.anchorDate,
     base: existing?.basePlacement,
+    start: startChoice,
   });
+
+  const START_OPTIONS: { label: string; value: StartMode }[] = [
+    { label: t("classEditor.startsWithTimetable"), value: "timetable" },
+    { label: t("classEditor.startsOnDate"), value: "date" },
+  ];
+
+  /*
+   * The first lesson the chosen start actually produces — the next matching
+   * weekday on or after it, and for an every-two-weeks class the one that
+   * fixes which half of the fortnight it is on. Named in the summary so a
+   * Wednesday picked for a Monday class reads as the Monday it means.
+   */
+  const firstLesson =
+    !isOneOff && startMode === "date"
+      ? firstSeriesDate({
+          weekday: existing?.basePlacement.weekday ?? weekday,
+          recurrenceType,
+          startsOn: startDate,
+          endsOn: schedule.endsOn,
+          startsWithTimetable: false,
+        })
+      : null;
 
   const RECURRENCE_OPTIONS: { label: string; value: RecurrenceType }[] = [
     { label: t("recurrence.weekly"), value: "weekly" },
@@ -216,9 +275,13 @@ function ClassEditorForm({
    */
   const summaryText = isOneOff
     ? t("classEditor.summaryOnce", { date: format.dateLong(onceDate) })
-    : recurrenceType === "biweekly"
-      ? t("classEditor.summaryBiweekly")
-      : t("classEditor.summaryWeekly");
+    : firstLesson
+      ? recurrenceType === "biweekly"
+        ? t("classEditor.summaryBiweeklyFrom", { date: format.dateLong(firstLesson) })
+        : t("classEditor.summaryWeeklyFrom", { date: format.dateLong(firstLesson) })
+      : recurrenceType === "biweekly"
+        ? t("classEditor.summaryBiweekly")
+        : t("classEditor.summaryWeekly");
 
   const slotText =
     slotSpan > 1
@@ -240,7 +303,7 @@ function ClassEditorForm({
     setOpenPicker((current) => (current === picker ? null : picker));
   }
 
-  const dateSheetOpen = openPicker === "date";
+  const dateSheetOpen = openPicker === "date" || openPicker === "startDate";
 
   // While the date sheet is open, Back closes the sheet and leaves the editor.
   useEffect(() => {
@@ -253,8 +316,18 @@ function ClassEditorForm({
   }, [dateSheetOpen, onBackInterceptorChange]);
 
   function handleDateConfirm(value: string) {
-    setOnceDate(value);
+    if (openPicker === "startDate") {
+      setStartDate(value);
+      setStartTouched(true);
+    } else {
+      setOnceDate(value);
+    }
     setOpenPicker(null);
+  }
+
+  function handleStartModeChange(mode: StartMode) {
+    setStartMode(mode);
+    setStartTouched(true);
   }
 
   function handleSave() {
@@ -312,7 +385,7 @@ function ClassEditorForm({
       return;
     }
 
-    const result = upsertPlacement({
+    const input: UpsertPlacementInput = {
       placementId: existing?.basePlacement.id,
       weekday,
       timeSlotId: timeSlot.id,
@@ -327,8 +400,25 @@ function ClassEditorForm({
       endsOn: schedule.endsOn,
       startsWithTimetable: schedule.startsWithTimetable ?? true,
       reminderMinutes,
-    });
+    };
+    const result = upsertPlacement(input);
 
+    if (!result.ok && result.overlapWith) {
+      setOverlap({ name: result.overlapWith, input });
+      return;
+    }
+    if (!result.ok) {
+      setFormError(result.error);
+      return;
+    }
+    onClose();
+  }
+
+  function handleOverlapConfirm() {
+    const pending = overlap;
+    setOverlap(null);
+    if (!pending) return;
+    const result = upsertPlacement(pending.input, { allowOverlap: true });
     if (!result.ok) {
       setFormError(result.error);
       return;
@@ -515,12 +605,27 @@ function ClassEditorForm({
                 sheetTitle={t("recurrence.label")}
               />
 
-              {/* Only a one-off has a date to pick: it is the lesson itself. A
-                  repeating class has no start-date row — where its series is
-                  anchored is internal, and the timetable's start is the date
-                  the user controls. Opens the date sheet over the form. */}
+              {/* A one-off's date is the lesson itself. Opens the date sheet
+                  over the form. */}
               {schedule.dateField === "occurrenceDate" ? (
                 <DateField label={t("classEditor.date")} value={onceDate} onPress={() => setOpenPicker("date")} />
+              ) : null}
+
+              {/* A repeating class starts with the timetable unless the user
+                  says otherwise. Choosing a date stops everything before its
+                  first lesson — the grid, reminders, the clash check and the
+                  calendar export all read the same bound. */}
+              {isOneOff ? null : (
+                <ChoiceRowField
+                  label={t("classEditor.starts")}
+                  value={startMode}
+                  options={START_OPTIONS}
+                  onChange={handleStartModeChange}
+                  sheetTitle={t("classEditor.starts")}
+                />
+              )}
+              {!isOneOff && startMode === "date" ? (
+                <DateField label={t("classEditor.startDate")} value={startDate} onPress={() => setOpenPicker("startDate")} />
               ) : null}
             </FormSection>
           ) : null}
@@ -532,7 +637,13 @@ function ClassEditorForm({
           ) : null}
 
           {existing ? (
-            <View style={{ marginTop: spacing.md, borderTopWidth: borderWidth.thin, borderColor: colors.divider, paddingTop: spacing.lg }}>
+            <View style={{ marginTop: spacing.md, borderTopWidth: borderWidth.thin, borderColor: colors.divider, paddingTop: spacing.lg, gap: spacing.md }}>
+              {/* Beside the class rather than hidden in the grid: a slot that
+                  already holds a class cannot be tapped "empty", and this is
+                  the plain way to put a second one next to it. */}
+              {onAddAnother ? (
+                <Button label={t("classEditor.addAnotherHere")} variant="secondary" onPress={onAddAnother} />
+              ) : null}
               <Button label={t("classEditor.deleteClass")} variant="destructive" onPress={handleDelete} />
             </View>
           ) : null}
@@ -544,10 +655,21 @@ function ClassEditorForm({
           what keeps the month pager's swipe working in here. */}
       {dateSheetOpen ? (
         <DatePickerSheet
-          title={t("classEditor.date")}
-          value={onceDate}
+          title={openPicker === "startDate" ? t("classEditor.startDate") : t("classEditor.date")}
+          value={openPicker === "startDate" ? startDate : onceDate}
+          note={openPicker === "startDate" ? t("classEditor.startDateNote") : undefined}
           onCancel={() => setOpenPicker(null)}
           onConfirm={handleDateConfirm}
+        />
+      ) : null}
+
+      {overlap ? (
+        <ConfirmDialog
+          title={t("overlap.title")}
+          message={t("overlap.message", { name: overlap.name })}
+          confirmLabel={existing ? t("overlap.saveAnyway") : t("overlap.addAnyway")}
+          onConfirm={handleOverlapConfirm}
+          onCancel={() => setOverlap(null)}
         />
       ) : null}
     </GestureHandlerRootView>

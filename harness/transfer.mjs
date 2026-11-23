@@ -119,7 +119,7 @@ const LATER = "2026-09-12T10:30:00.000Z";
 /** A timetable the creation flow would produce, as its inputs. */
 function newTimetableInput(name, overrides = {}) {
   const settings = {
-    weekendMode: "saturdaySunday",
+    visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
     academicDayStart: "07:30",
     defaultLessonDurationMinutes: 45,
     defaultBreakDurationMinutes: 10,
@@ -150,7 +150,7 @@ function newTimetableInput(name, overrides = {}) {
 
 const EMPTY_STATE = {
   settings: {
-    weekendMode: "saturdaySunday",
+    visibleWeekdays: ["monday", "tuesday", "wednesday", "thursday", "friday"],
     gridOrientation: "vertical",
     academicDayStart: "07:30",
     defaultLessonDurationMinutes: 45,
@@ -521,6 +521,8 @@ async function testExport() {
       "defaultBreakDurationMinutes",
       "defaultLessonDurationMinutes",
       "slotCount",
+      "visibleWeekdays",
+      // The legacy mirror an older build reads; see `SnapshotSettings`.
       "weekendMode",
     ]),
   );
@@ -545,7 +547,7 @@ async function testExport() {
 
   const summary = summarizeTimetableSnapshot(snapshot);
   equal("a preview reads the start date off it", summary.startDate, "2026-09-07");
-  equal("...the days it shows", summary.weekendMode, "saturdaySunday");
+  equal("...the days it shows", summary.visibleWeekdays.join(","), "monday,tuesday,wednesday,thursday,friday");
   equal("...the first period's start", summary.dayStart, "07:30");
   equal("...the last period's end", summary.dayEnd, "12:50");
   equal("...and counts only the classes that are not deleted", summary.classCount, 5);
@@ -642,7 +644,7 @@ async function testImportIntoEmptyApp(text) {
   const state = result.state;
   equal("its name came across", state.timetable.name, "Computer Science");
   equal("its start date came across", state.timetable.anchorDate, "2026-09-07");
-  equal("its days shown came across", state.settings.weekendMode, "saturdaySunday");
+  equal("its days shown came across", state.settings.visibleWeekdays.join(","), "monday,tuesday,wednesday,thursday,friday");
   equal("its academic day start came across", state.settings.academicDayStart, "07:30");
   equal("...its lesson length", state.settings.defaultLessonDurationMinutes, 45);
   equal("...its break length", state.settings.defaultBreakDurationMinutes, 10);
@@ -860,7 +862,7 @@ async function testImportOnFreshInstall(text) {
   );
   // ...but the timetable's own half of settings did come from the file.
   equal("the academic day came from the file", result.state.settings.academicDayStart, "07:30");
-  equal("...and so did the days shown", result.state.settings.weekendMode, "saturdaySunday");
+  equal("...and so did the days shown", result.state.settings.visibleWeekdays.join(","), "monday,tuesday,wednesday,thursday,friday");
   equal("...and the period count", result.state.settings.slotCount, 6);
 
   db.closeSync();
@@ -1122,6 +1124,20 @@ async function testRefusals(text) {
       kind: "damaged",
       text: withSnapshot((snapshot) => {
         snapshot.settings.weekendMode = "thursdays off";
+      }),
+    },
+    {
+      what: "a visible day that is not a weekday",
+      kind: "damaged",
+      text: withSnapshot((snapshot) => {
+        snapshot.settings.visibleWeekdays = ["monday", "funday"];
+      }),
+    },
+    {
+      what: "no visible day at all",
+      kind: "damaged",
+      text: withSnapshot((snapshot) => {
+        snapshot.settings.visibleWeekdays = [];
       }),
     },
     {

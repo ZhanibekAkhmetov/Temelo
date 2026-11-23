@@ -90,7 +90,7 @@ export function ImportPreviewDialog({ pending, busy, error, onConfirm, onCancel 
 
   const facts: { key: string; label: string; value: string }[] = [
     { key: "startsOn", label: t("timetables.startsOn"), value: format.dateLong(pending.summary.startDate) },
-    { key: "days", label: t("timetables.days"), value: daysLabel(t, format, pending.summary.weekendMode) },
+    { key: "days", label: t("timetables.days"), value: daysLabel(t, format, pending.summary.visibleWeekdays) },
     ...(hours ? [{ key: "academicDay", label: t("timetables.academicDay"), value: hours }] : []),
     { key: "classes", label: t("transfer.importClasses"), value: String(pending.summary.classCount) },
   ];

@@ -3,7 +3,14 @@ import type { SQLiteDatabase } from "expo-sqlite";
 
 import { nextClassColorId } from "@/domain/classColor";
 import { applyClassEditScope, type ClassEditDraft, type EditScope } from "@/domain/classEdit";
-import { findOccurrenceConflict, findPlacementConflict, type PlacementCandidate } from "@/domain/conflict";
+import {
+  findOccurrenceConflict,
+  findPlacementConflict,
+  overlapRefusal,
+  sameOccupancy,
+  type OverlapOptions,
+  type PlacementCandidate,
+} from "@/domain/conflict";
 import { isIsoDateBeforeOrEqual, isValidIsoDate } from "@/domain/date";
 import { domainError, type DomainError } from "@/domain/errors";
 import { createId } from "@/domain/id";
@@ -11,7 +18,7 @@ import { isOnOrAfterTimetableStart, type Occurrence } from "@/domain/occurrence"
 import { seriesRangeMovedTo } from "@/domain/recurrence";
 import type { ReminderMinutes } from "@/domain/reminder";
 import { generateTimeSlots } from "@/domain/time";
-import type { Weekday, WeekendMode } from "@/domain/week";
+import { normalizeVisibleWeekdays, sameWeekdays, type Weekday } from "@/domain/week";
 import type { LanguagePreference } from "@/i18n/language";
 import type { AppearancePreference } from "@/theme/appearance";
 import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
@@ -66,7 +73,12 @@ export interface AppState {
   exceptions: OccurrenceException[];
 }
 
-export type ActionResult = { ok: true } | { ok: false; error: DomainError };
+/**
+ * `overlapWith` is present only when the action stopped because it would
+ * overlap another class — the one refusal the user may overrule by repeating
+ * the action with `allowOverlap`. It names the class in the way.
+ */
+export type ActionResult = { ok: true } | { ok: false; error: DomainError; overlapWith?: string };
 
 /**
  * The result of a lifecycle operation — create, archive, restore, delete.
@@ -75,9 +87,9 @@ export type ActionResult = { ok: true } | { ok: false; error: DomainError };
  * one, with the storage failures translated into the app's own error keys on
  * the way out. That translation is here rather than in storage because a
  * `DomainError` carries a translation key, and storage has no business knowing
- * the app has languages.
+ * the app has languages. Never an overlap: a lifecycle swap places no class.
  */
-export type LifecycleActionResult = ActionResult;
+export type LifecycleActionResult = { ok: true } | { ok: false; error: DomainError };
 
 /**
  * A lifecycle operation's result: `ActionResult` with whatever the successful
@@ -163,7 +175,8 @@ export interface CreateTimetableInput {
   defaultName: string;
   /** ISO date; anything that is not a real date falls back to this week's Monday. */
   startDate: string;
-  weekendMode: WeekendMode;
+  /** Which days the new timetable shows; at least one. */
+  visibleWeekdays: Weekday[];
   academicDay: AcademicDayConfigInput;
 }
 
@@ -237,7 +250,11 @@ interface AppStateContextValue {
   persistence: PersistenceStatus;
   /** Development only: what the database on this device really looks like. */
   readStorageReport: () => Promise<StorageReport | null>;
-  setWeekendMode: (input: { weekendMode: WeekendMode }) => void;
+  /**
+   * Which days the active timetable shows. Presentation only — nothing about a
+   * class on a hidden day changes. Refuses an empty set.
+   */
+  setVisibleWeekdays: (input: { visibleWeekdays: Weekday[] }) => ActionResult;
   setGridOrientation: (input: { gridOrientation: GridOrientation }) => void;
   /**
    * Light, dark or follow-the-device. Applied the moment it is called —
@@ -328,9 +345,17 @@ interface AppStateContextValue {
    * decide whether to offer "restore a timetable" at all.
    */
   archivedCount: number;
-  upsertPlacement: (input: UpsertPlacementInput) => ActionResult;
-  movePlacement: (input: MovePlacementInput) => ActionResult;
-  /** Read-only: whether a proposed position is free for a whole series. */
+  /**
+   * Creates or updates a class. Stops at an overlap with another class and
+   * reports it, unless the user has already confirmed it (`allowOverlap`).
+   */
+  upsertPlacement: (input: UpsertPlacementInput, options?: OverlapOptions) => ActionResult;
+  movePlacement: (input: MovePlacementInput, options?: OverlapOptions) => ActionResult;
+  /**
+   * Read-only: whether a proposed position is free for a whole series. An
+   * overlap comes back with `overlapWith`, which a drag treats as a warning
+   * rather than a refusal.
+   */
   checkPlacement: (input: MovePlacementInput) => ActionResult;
   /** Read-only: the same question asked of a single date. Changes nothing. */
   checkOccurrence: (input: OccurrencePositionInput) => ActionResult;
@@ -338,7 +363,7 @@ interface AppStateContextValue {
    * The only way a drafted edit to a recurring class reaches the store —
    * and only ever with a scope the user has chosen.
    */
-  applyClassEdit: (draft: ClassEditDraft, scope: EditScope) => ActionResult;
+  applyClassEdit: (draft: ClassEditDraft, scope: EditScope, options?: OverlapOptions) => ActionResult;
   deletePlacement: (placementId: string) => void;
   /** Development only; see `createSampleTimetable`. No-op in a release build. */
   loadSampleTimetable: () => void;
@@ -408,11 +433,11 @@ function beforeStartError(): ActionResult {
 }
 
 function conflictError(conflict: Occurrence): ActionResult {
-  return { ok: false, error: domainError("errors.slotInUse", { name: conflict.course.name }) };
+  return overlapRefusal(conflict);
 }
 
 /** A storage lifecycle failure, in words the UI can show. */
-function lifecycleError(failure: LifecycleFailure): ActionResult {
+function lifecycleError(failure: LifecycleFailure): { ok: false; error: DomainError } {
   switch (failure.kind) {
     case "nameRequired":
       return { ok: false, error: domainError("errors.timetableNameRequired") };
@@ -638,11 +663,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return readStorageReport_(db, bootstrapRef.current?.repairedColumns ?? []);
     };
 
-    const setWeekendMode: AppStateContextValue["setWeekendMode"] = (input) => {
-      setState((prev) => ({
-        ...prev,
-        settings: { ...prev.settings, weekendMode: input.weekendMode },
-      }));
+    const setVisibleWeekdays: AppStateContextValue["setVisibleWeekdays"] = (input) => {
+      const visibleWeekdays = normalizeVisibleWeekdays(input.visibleWeekdays);
+      if (!visibleWeekdays) return { ok: false, error: domainError("errors.noVisibleDays") };
+      setState((prev) =>
+        sameWeekdays(prev.settings.visibleWeekdays, visibleWeekdays)
+          ? prev
+          : { ...prev, settings: { ...prev.settings, visibleWeekdays } },
+      );
+      return { ok: true };
     };
 
     const setGridOrientation: AppStateContextValue["setGridOrientation"] = (input) => {
@@ -839,7 +868,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         name,
         defaultName: input.defaultName,
         settings: {
-          weekendMode: input.weekendMode,
+          visibleWeekdays: normalizeVisibleWeekdays(input.visibleWeekdays) ?? DEFAULT_SETTINGS.visibleWeekdays,
           academicDayStart: input.academicDay.academicDayStart,
           defaultLessonDurationMinutes: input.academicDay.defaultLessonDurationMinutes,
           defaultBreakDurationMinutes: input.academicDay.defaultBreakDurationMinutes,
@@ -956,7 +985,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         return { ok: true, destination: result.destination, timetableId: result.timetableId };
       });
 
-    const upsertPlacement: AppStateContextValue["upsertPlacement"] = (input) => {
+    const upsertPlacement: AppStateContextValue["upsertPlacement"] = (input, options = {}) => {
       // A class has to belong to a timetable. Nothing can reach here without
       // one today — the grid is not drawn without one — but the store is where
       // that has to be true, not the screen.
@@ -980,7 +1009,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const slotSpan = Math.max(1, input.slotSpan ?? 1);
       // A one-off is only ever its own date; the flag says nothing about it.
       const startsWithTimetable = input.recurrenceType !== "once" && input.startsWithTimetable;
-      const conflict = findConflict(state, {
+      const candidate: PlacementCandidate = {
         placementId: input.placementId,
         weekday: input.weekday,
         timeSlotId: input.timeSlotId,
@@ -989,14 +1018,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         startsOn: input.startsOn,
         endsOn: input.endsOn,
         startsWithTimetable,
-      });
-      if (conflict) return conflictError(conflict);
+      };
+      const existing = input.placementId
+        ? state.placements.find((placement) => placement.id === input.placementId)
+        : undefined;
+      if (input.placementId && !existing) return { ok: false, error: domainError("errors.classGone") };
+
+      // An update that leaves the class exactly where it was cannot overlap
+      // anything it did not already overlap — and that one was accepted.
+      const mayOverlap = !options.allowOverlap && !(existing && sameOccupancy(existing, candidate));
+      if (mayOverlap) {
+        const conflict = findConflict(state, candidate);
+        if (conflict) return conflictError(conflict);
+      }
 
       const now = new Date().toISOString();
 
-      if (input.placementId) {
-        const existing = state.placements.find((placement) => placement.id === input.placementId);
-        if (!existing) return { ok: false, error: domainError("errors.classGone") };
+      if (existing) {
 
         setState((prev) => ({
           ...prev,
@@ -1128,7 +1166,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      * so the course and the recurrence rule are left untouched; the date
      * range travels with the move rather than staying behind.
      */
-    const movePlacement: AppStateContextValue["movePlacement"] = (input) => {
+    const movePlacement: AppStateContextValue["movePlacement"] = (input, options = {}) => {
       const existing = state.placements.find((placement) => placement.id === input.placementId);
       if (!existing || existing.deletedAt) return { ok: false, error: domainError("errors.classGone") };
       if (isBeforeTimetableStart(state, input.date)) return beforeStartError();
@@ -1142,8 +1180,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         existing.startsOn === dates.startsOn;
       if (unchanged) return { ok: true };
 
-      const conflict = findConflict(state, candidate);
-      if (conflict) return conflictError(conflict);
+      if (!options.allowOverlap) {
+        const conflict = findConflict(state, candidate);
+        if (conflict) return conflictError(conflict);
+      }
 
       const now = new Date().toISOString();
       setState((prev) => ({
@@ -1169,7 +1209,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
      * recurrence reasoning lives in the domain; this only decides when its
      * result becomes state.
      */
-    const applyClassEdit: AppStateContextValue["applyClassEdit"] = (draft, scope) => {
+    const applyClassEdit: AppStateContextValue["applyClassEdit"] = (draft, scope, options = {}) => {
       if (isBeforeTimetableStart(state, draft.effectiveDate)) return beforeStartError();
       const result = applyClassEditScope(
         {
@@ -1182,8 +1222,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         draft,
         scope,
         new Date().toISOString(),
+        options,
       );
-      if (!result.ok) return { ok: false, error: result.error };
+      if (!result.ok) return result.overlapWith ? { ok: false, error: result.error, overlapWith: result.overlapWith } : { ok: false, error: result.error };
 
       setState((prev) => ({
         ...prev,
@@ -1254,7 +1295,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       persistence,
       archivedCount,
       readStorageReport,
-      setWeekendMode,
+      setVisibleWeekdays,
       setGridOrientation,
       setAppearancePreference,
       setLanguagePreference,

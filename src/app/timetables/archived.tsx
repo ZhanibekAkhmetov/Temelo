@@ -221,7 +221,7 @@ export default function ArchivedTimetableScreen() {
                 <FieldValue muted>{format.dateLong(contents.startDate)}</FieldValue>
               </FieldRow>
               <FieldRow label={t("timetables.days")}>
-                <FieldValue muted>{daysLabel(t, format, contents.weekendMode)}</FieldValue>
+                <FieldValue muted>{daysLabel(t, format, contents.visibleWeekdays)}</FieldValue>
               </FieldRow>
               {hours ? (
                 <FieldRow label={t("timetables.academicDay")} last>

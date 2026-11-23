@@ -74,6 +74,8 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
   app stops because of a date the user was asked to guess.
 - Periods are generated from the academic-day configuration, with a live
   preview of the resulting day while the values are being chosen.
+- Any set of weekdays can be shown — Mon–Fri, Mon/Wed/Fri, the whole week.
+  Hiding a day only hides it from the grid; its classes and reminders stay.
 - The name, the days shown and the academic day can all be changed later from
   the timetable's own screen. Changing the academic day regenerates the periods
   and clears the timetable, which the app asks about first; editing an
@@ -102,7 +104,11 @@ A look at Temelo's timetable, class editing, and recurring scheduling.
   "indefinitely" costs no stored records.
 - Conflict checking resolves recurrence onto concrete dates, so two alternating
   biweekly classes can share the same weekday and period without being treated
-  as a clash.
+  as a clash. A real overlap is a warning, not a refusal: the user can keep two
+  classes in one slot on purpose, drawn side by side and each reachable on its
+  own.
+- A repeating class starts with the timetable, or on a date the user picks;
+  nothing of it is shown, reminded about or exported before that date.
 - Edits to a repeating class ask what they apply to: **Only this occurrence**,
   **This and future occurrences**, or **All occurrences** — implemented as
   per-occurrence exceptions and series splitting rather than duplicated

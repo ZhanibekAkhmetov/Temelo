@@ -118,7 +118,7 @@ export default function TimetablesScreen() {
 
   const current = state.timetable;
   const currentSummary = current
-    ? timetableSummary(t, format, shapeOfActive(state.settings.weekendMode, state.timeSlots))
+    ? timetableSummary(t, format, shapeOfActive(state.settings.visibleWeekdays, state.timeSlots))
     : null;
 
   const archivedCount = archived?.length ?? 0;

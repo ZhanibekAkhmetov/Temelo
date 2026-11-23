@@ -206,13 +206,14 @@ async function fullSyncDiff<T extends Identified>(
  */
 const UPSERT_SETTINGS = `
   INSERT INTO settings (
-    id, weekend_mode, grid_orientation, academic_day_start,
+    id, weekend_mode, visible_weekdays, grid_orientation, academic_day_start,
     default_lesson_duration_minutes, default_break_duration_minutes,
     slot_count, default_reminder_minutes, appearance_preference,
     language_preference, onboarding_completed
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET
     weekend_mode = excluded.weekend_mode,
+    visible_weekdays = excluded.visible_weekdays,
     grid_orientation = excluded.grid_orientation,
     academic_day_start = excluded.academic_day_start,
     default_lesson_duration_minutes = excluded.default_lesson_duration_minutes,
@@ -323,6 +324,7 @@ export async function upsertSettingsWithin(db: SQLiteDatabase, settings: Setting
     UPSERT_SETTINGS,
     row.id,
     row.weekend_mode,
+    row.visible_weekdays,
     row.grid_orientation,
     row.academic_day_start,
     row.default_lesson_duration_minutes,
