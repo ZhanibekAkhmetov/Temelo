@@ -5,6 +5,9 @@ import java.sql.SQLException;
 
 import javax.sql.DataSource;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
@@ -23,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  * public, and a stranger needs nothing more than up or down.
  */
 @RestController
+@Tag(name = "Health", description = "Whether the server can reach its database.")
 class HealthController {
 
 	private static final Logger log = LoggerFactory.getLogger(HealthController.class);
@@ -37,6 +41,8 @@ class HealthController {
 	}
 
 	@GetMapping("/api/health")
+	@Operation(summary = "Check the server",
+			description = "200 with UP when the database answers, 503 with DOWN when it does not.")
 	ResponseEntity<HealthResponse> health() {
 		HealthResponse.Status database = databaseReachable() ? HealthResponse.Status.UP : HealthResponse.Status.DOWN;
 		HttpStatus httpStatus = database == HealthResponse.Status.UP ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;

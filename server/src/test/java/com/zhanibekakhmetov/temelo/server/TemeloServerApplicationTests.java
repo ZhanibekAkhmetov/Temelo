@@ -2,6 +2,7 @@ package com.zhanibekakhmetov.temelo.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -42,6 +43,18 @@ class TemeloServerApplicationTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.status").value("UP"))
 			.andExpect(jsonPath("$.database").value("UP"));
+	}
+
+	@Test
+	void theBareAddressLeadsToTheApiDocumentation() throws Exception {
+		this.mvc.perform(get("/"))
+			.andExpect(status().isFound())
+			.andExpect(header().string("Location", "/swagger-ui.html"));
+	}
+
+	@Test
+	void theRedirectIsNotPartOfTheApiDescription() throws Exception {
+		this.mvc.perform(get("/v3/api-docs")).andExpect(jsonPath("$.paths['/']").doesNotExist());
 	}
 
 	@Test

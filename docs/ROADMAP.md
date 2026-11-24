@@ -296,6 +296,23 @@ current implementation status.
       Described with OpenAPI and covered by MockMvc and Testcontainers tests.
       The app still validates whatever it downloads with the same snapshot
       validator a restore uses — the server is never trusted.
+      *Status: done.* `POST /api/shares` stores a `.temelo` file and answers
+      `201` with an id and expiry; `GET /api/shares/{id}` returns it byte for
+      byte. The server checks what the app's `parseTemeloFile` checks before
+      the snapshot — type, envelope version 1, exactly the envelope fields,
+      the snapshot's shape, at most 20,000 records — plus 1 MB and strict
+      UTF-8, and leaves record-by-record validation to the app. Links expire
+      after two weeks (`temelo.share.ttl`); an expired link answers like an
+      unknown one, and an hourly purge deletes expired rows. Ids are 128
+      random bits; there are no accounts. Refusals are RFC 9457 problem
+      details with a stable `reason` for 14.6 to translate. Flyway's first
+      migration creates `shared_timetables`. springdoc-openapi 3.2.1 (asked
+      for and approved in this step) serves the OpenAPI 3.1 description and
+      Swagger UI, whose example is a real file exported by the app.
+      `mvnw test` runs 54 tests: unit tests for the validator and the size
+      limit, MockMvc slices, and Testcontainers tests for the round trip,
+      expiry (with a movable clock), the purge, Flyway and the OpenAPI
+      description. CORS is left to 14.6 and upload rate limiting to 14.7.
     - **14.6 Share links in the app.** "Share link" beside "Share Temelo
       file" and "Export to calendar"; opening a link leads to the same import
       preview, and importing still clones every id. How a link reaches the
@@ -357,15 +374,15 @@ import, one-way `.ics` export, localization, theming and branding — and Beta 2
 added intentional overlaps, chosen start dates and any set of visible weekdays.
 
 Milestone 14 is under way: the web version (14.1), its desktop layout (14.2),
-the move to Node's built-in test runner (14.3) and the Spring Boot server
-scaffold in `server/` (14.4) are done. The web version runs locally with
+the move to Node's built-in test runner (14.3), the Spring Boot server
+scaffold in `server/` (14.4) and its share-link API (14.5) are done. The web version runs locally with
 `npm run web` and the server with `docker compose up` and `./mvnw
 spring-boot:run`; neither has been hosted yet (14.7).
 
 ## Next milestone
 
-The share-link API (14.5) on the server scaffold, then share links in the app
-(14.6), tested with JUnit, MockMvc and Testcontainers on the Java side. Tester feedback on Beta 2 keeps priority over
+Share links in the app (14.6) on top of the share-link API from 14.5, then
+hosting the web build and the server (14.7). Tester feedback on Beta 2 keeps priority over
 new work: high-impact bugs are fixed first, preserving the data model and the
 upgrade path.
 Synchronization, optional accounts and store distribution remain deliberately

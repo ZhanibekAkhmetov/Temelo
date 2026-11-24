@@ -32,7 +32,8 @@ Read from the repository's actual configuration, not assumed:
 - Web: the same app through `react-native-web` and Metro (`npm run web`),
   with a desktop layout from 1024 px — see "Web build" below.
 - Server (optional, `server/`): Java 21, Spring Boot `4.2.0`, PostgreSQL 18,
-  Flyway, Maven wrapper — see "The optional server" below. A separate project
+  Flyway, springdoc-openapi `3.2.1`, Maven wrapper — see "The optional
+  server" below. A separate project
   with its own build; the app has no dependency on it.
 
 Consult the versioned Expo docs for this exact release before writing
@@ -467,9 +468,10 @@ codebase and no second data model.
 
 ## The optional server
 
-`server/` is a Spring Boot application (milestone 14.4) whose first job will
-be sharing a timetable as a link (14.5–14.6). It is additive: the phone app
-and the web app keep working, unchanged, with no server running at all.
+`server/` is a Spring Boot application (scaffolded in milestone 14.4) that
+shares a timetable as a link (the API in 14.5, the app's side in 14.6). It is
+additive: the phone app and the web app keep working, unchanged, with no
+server running at all.
 
 - **Separate project.** Java 21, Spring Boot 4.2 (Spring Web MVC, Bean
   Validation, Spring Data JPA), built with Maven through the committed
@@ -484,19 +486,62 @@ and the web app keep working, unchanged, with no server running at all.
   the server reads the same variable). Its credentials exist only for that
   container.
 - **Flyway owns the schema**, from `src/main/resources/db/migration`;
-  Hibernate runs with `ddl-auto=validate` and never alters a table. The
-  scaffold has no migration yet — the share-link table is 14.5's first — so
-  Flyway logs "No migrations found" until then. `open-in-view` is off.
+  Hibernate runs with `ddl-auto=validate` and never alters a table.
+  `V1__create_shared_timetables.sql` is the first migration. Shipped
+  migrations are never edited, as on the app side. `open-in-view` is off.
 - **Health.** `GET /api/health` answers `200 {"status":"UP","database":"UP"}`
   or `503` with `DOWN`, decided by `Connection.isValid` on a pooled
   connection. It is a plain controller rather than Spring Boot Actuator,
   which was not among the dependencies approved for 14.4. The body names no
   host, version or error, and the pool gives up on a connection after 5 s so
   the check answers promptly with the database gone.
-- **Organised by feature** (`health/`, later `share/`), not by layer.
+- **Organised by feature** (`health/`, `share/`), not by layer.
 - **The server is never trusted by the app.** Whatever the app downloads from
   it is validated with the same snapshot validator a restore uses, and
-  imported through the same cloning import (14.5–14.6).
+  imported through the same cloning import (14.6).
+
+### Share links (`server/.../share/`)
+
+- **A share is a stored `.temelo` file**, never a second representation of a
+  timetable. `POST /api/shares` takes the file as `application/json` and
+  answers `201` with `{id, expiresAt}` and a relative `Location`;
+  `GET /api/shares/{id}` returns the file exactly as uploaded. The envelope is
+  kept in a `text` column, not `jsonb`, because the server never queries
+  inside a timetable and the link must return the very file that was shared.
+- **The server checks the envelope, not the timetable.**
+  `TemeloEnvelopeValidator` mirrors the first four steps of the app's
+  `parseTemeloFile` — the `temelo-timetable` type, `formatVersion` 1,
+  exactly the four envelope fields, the snapshot's object and array shape,
+  and at most `MAX_TEMELO_FILE_RECORDS` (20,000) records — and stops there.
+  Rebuilding every record would put a second definition of a timetable in
+  Java; the app re-validates every download anyway. A newer *snapshot*
+  version inside a known envelope is accepted, for the app to judge. The
+  bytes are decoded as strict UTF-8 before parsing, so the stored text is
+  exactly the text that was checked.
+- **Size** is bounded while reading (`BoundedRequestBody`): refused from
+  `Content-Length` when there is one, otherwise after one byte over the
+  limit (1 MB, `temelo.share.max-size`), so an oversized chunked upload is
+  never held whole.
+- **No accounts; the id is the key.** 128 bits from `SecureRandom` as 22
+  URL-safe characters (`ShareIds`) — unguessable, not merely unique. A
+  malformed id is answered 404 before any query.
+- **Expiry** (`temelo.share.ttl`, two weeks) is enforced on every read, and
+  an expired link answers exactly like one that never existed. An hourly
+  `@Scheduled` purge deletes expired rows; it only reclaims space, so a host
+  that suspends an idle server costs storage, not correctness. Time comes
+  from an injected `Clock`, which the tests move.
+- **Refusals are RFC 9457 problem details** with a stable `reason`
+  (`too-large` 413, `not-temelo`, `unsupported-version` and `malformed`
+  422, `not-found` 404) for the app to map to its own localized message;
+  `detail` is for logs. Spring MVC's own errors (415, 405) use the same
+  format (`spring.mvc.problemdetails.enabled`).
+- **OpenAPI** is generated from the controllers by springdoc-openapi
+  (approved in 14.5): `/v3/api-docs` and Swagger UI at `/swagger-ui.html`,
+  both public on purpose. The request example is
+  `openapi/example-timetable.temelo`, a real file written by the app's
+  `buildValidatedTemeloFile`, which the tests also share.
+- **Not yet:** CORS for the web app's origin (14.6) and rate limiting of
+  uploads (to decide with hosting in 14.7).
 
 ## Future synchronization considerations
 
@@ -563,8 +608,11 @@ into a corner:
   MockMvc) replace the database with a Mockito mock, which is the only way
   to see the "database down" answers; application tests start the whole
   server against a real PostgreSQL via Testcontainers, on the image
-  `compose.yaml` uses, so they need a running Docker daemon. Mockito is loaded
-  as a `-javaagent` by Surefire instead of attaching itself at runtime.
+  `compose.yaml` uses, so they need a running Docker daemon. Rules that need
+  neither (the envelope validator, the bounded body) are plain unit tests.
+  Expiry is tested by moving an injected `Clock`, not by waiting. Mockito is
+  loaded as a `-javaagent` by Surefire instead of attaching itself at
+  runtime.
 
 ## Dependency policy
 
@@ -575,7 +623,8 @@ into a corner:
   being implemented.
 - The same rule holds in `server/`: its dependencies are exactly the ones
   approved for milestone 14.4 (Spring Web, Validation, Data JPA, PostgreSQL,
-  Flyway, Testcontainers), and anything beyond them is asked for first.
+  Flyway, Testcontainers) and 14.5 (springdoc-openapi with Swagger UI), and
+  anything beyond them is asked for first.
 - Prefer solving problems with the existing stack (Expo, React Native,
   TypeScript) before reaching for a new package.
 

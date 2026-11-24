@@ -35,8 +35,9 @@ Server (`server/`, milestone 14; Java 21, Spring Boot 4.2, run from
 - `docker compose up -d --wait` — development PostgreSQL 18 on
   `127.0.0.1:5433` (`TEMELO_DB_PORT` moves it); `docker compose down` stops it
 - `./mvnw spring-boot:run` — the server on `http://localhost:8080`
-  (`GET /api/health`); `./mvnw spring-boot:test-run` runs it against a
-  throwaway Testcontainers database instead
+  (Swagger UI at `/swagger-ui.html`; `POST /api/shares`,
+  `GET /api/shares/{id}`, `GET /api/health`); `./mvnw spring-boot:test-run`
+  runs it against a throwaway Testcontainers database instead
 - `./mvnw test` — JUnit 5 + MockMvc + Testcontainers; must stay green after
   any server change
 
@@ -44,8 +45,13 @@ Server (`server/`, milestone 14; Java 21, Spring Boot 4.2, run from
 
 - `server/` is a separate, optional Maven project. The app never depends on
   it, imports from it or needs it running; its dependencies live only in
-  `server/pom.xml`. Flyway owns the server schema (`ddl-auto=validate`).
-  Whatever the app receives from it is validated like any `.temelo` file.
+  `server/pom.xml`. Flyway owns the server schema (`ddl-auto=validate`);
+  shipped migrations are never edited.
+- A share link stores a `.temelo` file as uploaded. The server checks only
+  the envelope (`TemeloEnvelopeValidator`, mirroring `parseTemeloFile` up to
+  the snapshot) — never a second Java definition of a timetable — and the app
+  validates and clone-imports whatever it downloads, like any `.temelo` file.
+  Refusal `reason` codes are API: don't change published ones.
 - `src/app/` — Expo Router routes and layouts ONLY, no substantial logic.
 - Reusable UI components live outside `src/app` (e.g. `src/components/`).
 - Domain logic (`src/domain/`) must not import React or RN UI primitives.
