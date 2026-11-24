@@ -4,7 +4,7 @@ import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { addWeeksIso, startOfWeekIso } from "@/domain/calendar";
+import { addWeeksIso, startOfWeekIso, weeksBetweenIso } from "@/domain/calendar";
 import {
   blockedScopeReasons,
   createPendingClassEdit,
@@ -13,8 +13,12 @@ import {
 } from "@/domain/classEdit";
 import { addDaysIso } from "@/domain/date";
 import { isOnOrAfterTimetableStart } from "@/domain/occurrence";
+import { DesktopAboutDialog } from "@/features/desktop/DesktopAboutDialog";
+import { DesktopSidebar } from "@/features/desktop/DesktopSidebar";
+import { DesktopToolbar } from "@/features/desktop/DesktopToolbar";
 import { ClassEditorModal } from "@/features/timetable/ClassEditorModal";
 import { EditScopeSheet } from "@/features/timetable/EditScopeSheet";
+import { DESKTOP_READABLE_SLOT_HEIGHT } from "@/features/timetable/geometry";
 import { SlotClassesSheet } from "@/features/timetable/SlotClassesSheet";
 import {
   TimetableSurface,
@@ -31,6 +35,7 @@ import { useNow } from "@/features/timetable/useNow";
 import type { SelectedCell, SlotChoice } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState, type ActionResult, type MovePlacementInput } from "@/state/AppStateContext";
+import { useIsDesktop } from "@/theme/useIsDesktop";
 import { useTheme } from "@/theme/useTheme";
 
 /** Thursday names the month a week belongs to when it straddles two. */
@@ -68,6 +73,10 @@ export default function TimetableScreen() {
   /** A tapped cell holding several classes, asking which one was meant. */
   const [slotChoice, setSlotChoice] = useState<SlotChoice | null>(null);
   const [overlapPrompt, setOverlapPrompt] = useState<OverlapPrompt | null>(null);
+  // Desktop only: the sidebar beside the week, and About over it.
+  const isDesktop = useIsDesktop();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // The tick is also what carries the timetable over midnight, so the date
   // comes from it rather than from a bare call here: everything below is
@@ -100,6 +109,11 @@ export default function TimetableScreen() {
       return;
     }
     setVisibleWeekStart(currentWeekStart);
+  }
+
+  /** The week containing a date picked in the desktop sidebar's month. */
+  function goToDate(isoDate: string) {
+    goToRelativeWeek(weeksBetweenIso(visibleWeekStart, startOfWeekIso(isoDate)));
   }
 
   /**
@@ -222,6 +236,152 @@ export default function TimetableScreen() {
     [format, state.timetable, t],
   );
 
+  const timetable = state.timetable;
+
+  // The week itself — the same element in both layouts. Null with no timetable.
+  const grid = timetable ? (
+    <View
+      style={styles.flex}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setGridSize((previous) => (previous.width === width && previous.height === height ? previous : { width, height }));
+      }}
+    >
+      {isVertical ? (
+        <TimetableSurface
+          // Re-anchoring at a week boundary is rare and a remount is the
+          // simplest way to keep page index 0 meaning "this week".
+          key={currentWeekStart}
+          ref={surfaceRef}
+          anchorWeekStart={currentWeekStart}
+          weekdays={weekdays}
+          timeSlots={state.timeSlots}
+          placements={state.placements}
+          courses={state.courses}
+          exceptions={state.exceptions}
+          preview={pendingEdit?.preview ?? null}
+          timetableStart={timetable.anchorDate}
+          today={today}
+          now={now.time}
+          onVisibleWeekChange={setVisibleWeekStart}
+          onOpenEditor={handleOpenEditor}
+          onOpenSlot={setSlotChoice}
+          onMoveClass={handleMoveClass}
+          canPlaceClass={handleCanPlaceClass}
+          canPlaceOccurrence={handleCanPlaceOccurrence}
+          // A desktop window lets the day grow to fill it.
+          readableSlotHeight={isDesktop ? DESKTOP_READABLE_SLOT_HEIGHT : undefined}
+        />
+      ) : gridSize.width === 0 ? null : (
+        <WeekGridHorizontal
+          weekStart={visibleWeekStart}
+          weekdays={weekdays}
+          timeSlots={state.timeSlots}
+          placements={state.placements}
+          courses={state.courses}
+          exceptions={state.exceptions}
+          preview={pendingEdit?.preview ?? null}
+          timetableStart={timetable.anchorDate}
+          today={today}
+          now={now.time}
+          width={gridSize.width}
+          height={gridSize.height}
+          onCellPress={handleOpenEditor}
+          onSlotPress={setSlotChoice}
+        />
+      )}
+    </View>
+  ) : null;
+
+  // Everything that opens over the week: the editor, the slot chooser, the
+  // overlap question and the scope question.
+  const dialogs = timetable ? (
+    <>
+      {selected ? (
+        <ClassEditorModal
+          visible
+          onClose={() => setSelected(null)}
+          weekday={selected.weekday}
+          date={selected.date}
+          timeSlot={selected.timeSlot}
+          slotSpan={selected.slotSpan}
+          endTime={selected.endTime}
+          timetable={timetable}
+          existing={selected.existing}
+          onRequestScope={setPendingEdit}
+          // The same cell, as a brand-new class: the way to put a second class
+          // beside one that is already there.
+          onAddAnother={() => setSelected((current) => (current ? { ...current, existing: undefined } : current))}
+        />
+      ) : null}
+
+      {slotChoice && !selected ? (
+        <SlotClassesSheet
+          choice={slotChoice}
+          onSelect={(selection) => {
+            setSlotChoice(null);
+            handleOpenEditor(selection);
+          }}
+          onAdd={(selection) => {
+            setSlotChoice(null);
+            handleOpenEditor(selection);
+          }}
+          onCancel={() => setSlotChoice(null)}
+        />
+      ) : null}
+
+      {overlapPrompt ? (
+        <ConfirmDialog
+          title={t("overlap.title")}
+          message={t("overlap.message", { name: overlapPrompt.name })}
+          confirmLabel={t("overlap.saveAnyway")}
+          onConfirm={handleOverlapConfirm}
+          onCancel={handleOverlapCancel}
+        />
+      ) : null}
+
+      {/* Never in the same frame as the editor: they are two native modals,
+          and the editor's save is what raises this one. */}
+      {pendingEdit && !selected && !overlapPrompt ? (
+        <EditScopeSheet
+          effectiveDate={pendingEdit.draft.effectiveDate}
+          blockedReasons={blockedScopeReasons(pendingEdit.draft)}
+          onSelect={handleScopeSelect}
+          onCancel={handleScopeCancel}
+        />
+      ) : null}
+    </>
+  ) : null;
+
+  /*
+   * Desktop: a toolbar across the top, the sidebar down the left, the week in
+   * the rest. Settings that are one choice live in the sidebar; everything
+   * else opens as a dialog over the week (see `useDesktopDialogOptions`).
+   */
+  if (isDesktop) {
+    return (
+      <View style={[styles.flex, { backgroundColor: colors.background }]}>
+        <DesktopToolbar
+          title={format.monthYear(addDaysIso(visibleWeekStart, MONTH_LABEL_DAY_OFFSET))}
+          onToggleSidebar={() => setSidebarOpen((open) => !open)}
+          navigation={
+            timetable
+              ? { onToday: goToCurrentWeek, onPrevious: () => goToRelativeWeek(-1), onNext: () => goToRelativeWeek(1) }
+              : null
+          }
+        />
+        <View style={[styles.flex, styles.row]}>
+          {sidebarOpen ? (
+            <DesktopSidebar today={today} onSelectDate={goToDate} onOpenAbout={() => setAboutOpen(true)} />
+          ) : null}
+          <View style={styles.flex}>{grid ?? <NoTimetable />}</View>
+        </View>
+        {dialogs}
+        {aboutOpen ? <DesktopAboutDialog onClose={() => setAboutOpen(false)} /> : null}
+      </View>
+    );
+  }
+
   /*
    * No active timetable: there is nothing to page through, so the week
    * navigation and the grid are both wrong. The empty state replaces the whole
@@ -232,7 +392,7 @@ export default function TimetableScreen() {
    * The menu stays, as the one thing still worth reaching — Settings, and
    * through it everything about timetables.
    */
-  if (!state.timetable) {
+  if (!timetable) {
     return (
       <SafeAreaView
         style={[styles.flex, { backgroundColor: colors.background }]}
@@ -317,109 +477,9 @@ export default function TimetableScreen() {
 
       {/* No rule between the month and the weekday strip: the strip's own
           underline is the only separator the grid needs. */}
-      <View
-        style={styles.flex}
-        onLayout={(event) => {
-          const { width, height } = event.nativeEvent.layout;
-          setGridSize((previous) => (previous.width === width && previous.height === height ? previous : { width, height }));
-        }}
-      >
-        {isVertical ? (
-          <TimetableSurface
-            // Re-anchoring at a week boundary is rare and a remount is the
-            // simplest way to keep page index 0 meaning "this week".
-            key={currentWeekStart}
-            ref={surfaceRef}
-            anchorWeekStart={currentWeekStart}
-            weekdays={weekdays}
-            timeSlots={state.timeSlots}
-            placements={state.placements}
-            courses={state.courses}
-            exceptions={state.exceptions}
-            preview={pendingEdit?.preview ?? null}
-            timetableStart={state.timetable.anchorDate}
-            today={today}
-            now={now.time}
-            onVisibleWeekChange={setVisibleWeekStart}
-            onOpenEditor={handleOpenEditor}
-            onOpenSlot={setSlotChoice}
-            onMoveClass={handleMoveClass}
-            canPlaceClass={handleCanPlaceClass}
-            canPlaceOccurrence={handleCanPlaceOccurrence}
-          />
-        ) : gridSize.width === 0 ? null : (
-          <WeekGridHorizontal
-            weekStart={visibleWeekStart}
-            weekdays={weekdays}
-            timeSlots={state.timeSlots}
-            placements={state.placements}
-            courses={state.courses}
-            exceptions={state.exceptions}
-            preview={pendingEdit?.preview ?? null}
-            timetableStart={state.timetable.anchorDate}
-            today={today}
-            now={now.time}
-            width={gridSize.width}
-            height={gridSize.height}
-            onCellPress={handleOpenEditor}
-            onSlotPress={setSlotChoice}
-          />
-        )}
-      </View>
+      {grid}
 
-      {selected ? (
-        <ClassEditorModal
-          visible
-          onClose={() => setSelected(null)}
-          weekday={selected.weekday}
-          date={selected.date}
-          timeSlot={selected.timeSlot}
-          slotSpan={selected.slotSpan}
-          endTime={selected.endTime}
-          timetable={state.timetable}
-          existing={selected.existing}
-          onRequestScope={setPendingEdit}
-          // The same cell, as a brand-new class: the way to put a second class
-          // beside one that is already there.
-          onAddAnother={() => setSelected((current) => (current ? { ...current, existing: undefined } : current))}
-        />
-      ) : null}
-
-      {slotChoice && !selected ? (
-        <SlotClassesSheet
-          choice={slotChoice}
-          onSelect={(selection) => {
-            setSlotChoice(null);
-            handleOpenEditor(selection);
-          }}
-          onAdd={(selection) => {
-            setSlotChoice(null);
-            handleOpenEditor(selection);
-          }}
-          onCancel={() => setSlotChoice(null)}
-        />
-      ) : null}
-
-      {overlapPrompt ? (
-        <ConfirmDialog
-          title={t("overlap.title")}
-          message={t("overlap.message", { name: overlapPrompt.name })}
-          confirmLabel={t("overlap.saveAnyway")}
-          onConfirm={handleOverlapConfirm}
-          onCancel={handleOverlapCancel}
-        />
-      ) : null}
-
-      {/* Never in the same frame as the editor: they are two native modals,
-          and the editor's save is what raises this one. */}
-      {pendingEdit && !selected && !overlapPrompt ? (
-        <EditScopeSheet
-          effectiveDate={pendingEdit.draft.effectiveDate}
-          blockedReasons={blockedScopeReasons(pendingEdit.draft)}
-          onSelect={handleScopeSelect}
-          onCancel={handleScopeCancel}
-        />
-      ) : null}
+      {dialogs}
     </SafeAreaView>
   );
 }
@@ -427,6 +487,9 @@ export default function TimetableScreen() {
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
+  },
+  row: {
+    flexDirection: "row",
   },
   header: {
     justifyContent: "center",

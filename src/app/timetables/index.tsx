@@ -228,7 +228,7 @@ export default function TimetablesScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScreenContainer
+      <ScreenContainer desktopDialog
         header={
           <ScreenHeader
             title={t("timetables.title")}

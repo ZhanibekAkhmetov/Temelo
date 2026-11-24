@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import Animated, {
   runOnJS,
   useAnimatedScrollHandler,
@@ -36,6 +36,15 @@ const OPACITY_RESTING = 0.38;
  * check after the drag ends decides whether the wheel is already at rest.
  */
 const SETTLE_FALLBACK_MS = 140;
+
+/**
+ * A browser scrolls the wheel with a mouse wheel or a trackpad, and neither
+ * produces a drag or a momentum phase — so the two events a phone settles on
+ * never arrive, and the wheel would stop wherever the last scroll step left it,
+ * between two rows. On web every scroll step therefore schedules the same
+ * settle a released drag does, and the wheel snaps once scrolling stops.
+ */
+const SETTLES_ON_SCROLL = Platform.OS === "web";
 
 interface WheelPickerProps {
   values: number[];
@@ -191,6 +200,11 @@ export function WheelPicker({ values, value, onChange, accessibilityLabel }: Whe
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       offsetY.set(event.contentOffset.y);
+      if (SETTLES_ON_SCROLL) {
+        isMoving.set(1);
+        settledIndex.set(-1);
+        runOnJS(scheduleSettle)();
+      }
       const index = indexForOffset(event.contentOffset.y, itemCount.get());
       // Rounding flips at the halfway point, which is the moment the row
       // crosses the centre band — so this runs once per crossed value, not

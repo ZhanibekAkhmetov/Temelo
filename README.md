@@ -42,8 +42,15 @@ calendar export, light/dark themes, and English, Russian and German
 localization. Updating from Beta 1 keeps existing timetables.
 
 Android is the platform it is developed and tested on. It has **not** been
-released to Google Play or the App Store, and there is no web version, cloud
-sync, or account system. See
+released to Google Play or the App Store, and there is no cloud sync or account
+system.
+
+**A web version is in progress** (milestone 14). The same app runs in a desktop
+browser, storing its data locally in the browser, with a desktop layout from
+1024 px wide: a sidebar holding the settings, and dialogs over the week instead
+of full-screen pages. Timetables move between the phone and the browser as
+`.temelo` files. It runs locally with `npm run web` and is not hosted yet;
+reminders are phone-only. See
 [docs/BETA2_RELEASE_NOTES.md](docs/BETA2_RELEASE_NOTES.md) for what Beta 2
 changes, and [docs/BETA1_RELEASE_NOTES.md](docs/BETA1_RELEASE_NOTES.md) for
 the first release.
@@ -195,6 +202,8 @@ Versions are read from [package.json](package.json):
 - `expo-notifications` `~57.0.9` for class reminders
 - `expo-localization` `~57.0.1` for device language detection
 - `expo-dev-client` `~57.0.10`
+- `react-native-web` `~0.21.0` for the web version, where `expo-sqlite`
+  runs as WebAssembly in the browser
 
 The app runs from an Expo **development build**, not Expo Go: it depends on
 native modules (SQLite, notifications, localization, Reanimated, Gesture
@@ -267,6 +276,19 @@ npx expo start --dev-client
 Open the app from the installed development build. The phone and the computer
 must be able to reach each other on the same local network.
 
+### Web version
+
+```bash
+npm run web
+```
+
+Opens the app in a browser at the address Metro prints. The web build stores
+its data in the browser's private file storage, which needs a cross-origin
+isolated page; [metro.config.js](metro.config.js) sends the two headers that
+make the dev server's page isolated, and any host of the exported build
+(`npx expo export --platform web`) has to send the same two. Temelo can be
+open in one tab at a time. Windows 1024 px and wider get the desktop layout.
+
 Ordinary JavaScript/TypeScript changes reload straight through Metro. Adding or
 upgrading a native dependency, or changing native configuration in
 [app.json](app.json), requires a **new development build** — an existing one
@@ -327,9 +349,13 @@ Russian and German localization.
 Beta 2 (0.2.0), adding intentional overlapping classes, chosen start dates for
 repeating classes, and any set of visible weekdays.
 
+**In progress** — milestone 14: the web version and its desktop layout are
+done; next are a TypeScript test runner and an optional Spring Boot service
+for sharing a timetable as a link (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+
 **Later, not committed to** — reusing an existing course across placements,
-two-way calendar synchronization, a web version, optional account-based
-synchronization, and possible store distribution.
+two-way calendar synchronization, optional account-based synchronization, and
+possible store distribution.
 
 ## Repository structure
 
@@ -340,14 +366,15 @@ src/
   domain/       Pure TypeScript: recurrence, occurrences, conflicts,
                 edit scopes, dates, reminder planning
   features/     Feature UI and logic: timetable surface, reminders,
-                dev-only diagnostics
+                the desktop sidebar and toolbar, dev-only diagnostics
   i18n/         Translations (en/ru/de), locale detection, formatting
   state/        App state provider and defaults
   storage/      SQLite: database, schema, migrations, repository, and the
                 file formats (`.temelo`, `.ics`)
   theme/        Design tokens, appearance preference, class colours
   types/        Shared model types
-  util/         Native-module wrappers (notifications, haptics, files)
+  util/         Native-module wrappers (notifications, haptics, files),
+                each with a `.web.ts` twin for the browser
 docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md,
                 BETA1_RELEASE_NOTES.md, BETA2_RELEASE_NOTES.md
 harness/        Node-based domain and storage checks

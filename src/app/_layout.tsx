@@ -9,6 +9,7 @@ import { ShareReceiver } from "@/features/timetables/ShareReceiver";
 import { I18nProvider } from "@/i18n/I18nProvider";
 import { AppStateProvider } from "@/state/AppStateContext";
 import { ThemeProvider } from "@/theme/ThemeProvider";
+import { useDesktopDialogOptions } from "@/theme/desktopDialog";
 import { useTheme } from "@/theme/useTheme";
 
 export default function RootLayout() {
@@ -78,11 +79,24 @@ export default function RootLayout() {
  */
 function AppStack() {
   const { colors, scheme } = useTheme();
+  // On a desktop browser the screens *about* the timetable open as dialogs
+  // over the week, the way a desktop calendar's settings do, instead of
+  // replacing it. Expo Router draws `presentation: "modal"` as a centred dialog
+  // on web; the options are empty everywhere else, so the phone app navigates
+  // exactly as before. Creating a timetable stays a page of its own: on first
+  // launch there is no week for it to sit over.
+  const dialog = useDesktopDialogOptions();
 
   return (
     <>
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+        <Stack.Screen name="settings" options={dialog} />
+        <Stack.Screen name="timetables/index" options={dialog} />
+        <Stack.Screen name="timetables/current" options={dialog} />
+        <Stack.Screen name="timetables/archived" options={dialog} />
+        <Stack.Screen name="timetables/academic-day" options={dialog} />
+      </Stack>
     </>
   );
 }

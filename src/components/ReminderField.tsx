@@ -23,6 +23,8 @@ interface ReminderFieldProps {
   value: ReminderMinutes;
   onChange: (minutes: ReminderMinutes) => void;
   helperText?: string;
+  /** How the row is drawn; see `FieldRow`'s `appearance`. */
+  appearance?: "row" | "select";
 }
 
 function kindOf(value: ReminderMinutes): ReminderKind {
@@ -43,7 +45,7 @@ function kindOf(value: ReminderMinutes): ReminderKind {
  * picker beats a keyboard. Everything the sheet edits is a draft, so Cancel
  * and the scrim need only close.
  */
-export function ReminderField({ label, value, onChange, helperText }: ReminderFieldProps) {
+export function ReminderField({ label, value, onChange, helperText, appearance }: ReminderFieldProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
   const { t, format } = useI18n();
   const [isOpen, setOpen] = useState(false);
@@ -86,6 +88,7 @@ export function ReminderField({ label, value, onChange, helperText }: ReminderFi
       onPress={openPicker}
       accessibilityLabel={`${label}, ${format.reminderValue(value)}`}
       helperText={helperText}
+      appearance={appearance}
       panel={
         <Modal visible={isOpen} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
           <View style={[styles.scrim, { backgroundColor: colors.overlay, padding: spacing.lg }]}>

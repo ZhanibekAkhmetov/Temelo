@@ -46,6 +46,13 @@ function nameLinesFor(span: number, settledSlotHeight: number): number {
   return Math.max(1, Math.min(MAX_NAME_LINES, Math.floor(textHeight / NAME_LINE_HEIGHT)));
 }
 
+/** "09:20–10:50": from the first period's start to the last one's end. */
+function timeRangeOf(timeSlots: TimeSlot[], startIndex: number, span: number): string | undefined {
+  const first = timeSlots[startIndex];
+  const last = timeSlots[Math.min(timeSlots.length - 1, startIndex + span - 1)];
+  return first && last ? `${first.startTime}–${last.endTime}` : undefined;
+}
+
 interface WeekPageProps {
   /**
    * The week this page is currently drawing; everything below derives from it.
@@ -339,6 +346,7 @@ function WeekPageComponent({
                 appearanceId={block.course.appearanceId}
                 name={block.course.name}
                 room={block.course.room}
+                timeRange={timeRangeOf(timeSlots, block.startIndex, block.span)}
                 nameLines={nameLinesFor(block.span, settledSlotHeight)}
                 variant="class"
                 accessibilityLabel={t("timetable.classAt", {

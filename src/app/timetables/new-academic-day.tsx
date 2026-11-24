@@ -92,6 +92,7 @@ export default function NewAcademicDayScreen() {
   return (
     <View style={{ flex: 1 }}>
     <ScreenContainer
+      desktopCard
       header={
         <ScreenHeader
           title={t("onboarding.academicDayTitle")}

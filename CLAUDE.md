@@ -60,6 +60,11 @@ development build, not Expo Go.
   and nothing in it knows what a timetable is.
 - Records intended to be future-sync-able use device-generated string IDs
   plus `createdAt`/`updatedAt`/`deletedAt`.
+- Web: a platform edge in `src/util/` gets a `.web.ts` twin typed
+  `typeof Native.x` against the native file and importing no module at
+  runtime (`harness/architecture.mjs` section AC). The desktop layout is
+  gated on `useIsDesktop()` (web and ≥ 1024 px); every desktop change must
+  leave the phone app — native, and narrow web — exactly as it was.
 
 ## Product defaults worth remembering
 

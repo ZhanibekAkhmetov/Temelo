@@ -82,7 +82,7 @@ export default function CurrentTimetableScreen() {
    */
   if (!timetable) {
     return (
-      <ScreenContainer
+      <ScreenContainer desktopDialog
         header={
           <ScreenHeader
             title={t("timetables.detailsTitle")}
@@ -153,7 +153,7 @@ export default function CurrentTimetableScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-    <ScreenContainer
+    <ScreenContainer desktopDialog
       header={
         <ScreenHeader
           title={t("timetables.detailsTitle")}

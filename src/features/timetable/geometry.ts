@@ -49,6 +49,17 @@ export const BASE_SLOT_HEIGHT = 76;
 export const MIN_SLOT_HEIGHT = 52;
 export const MAX_SLOT_HEIGHT = 260;
 
+/**
+ * The readable period height on a desktop.
+ *
+ * A desktop window is tall and the grid is the whole of what the app is for,
+ * so there the day is allowed to grow into the room it has — up to this —
+ * instead of sitting at the phone's readable height in the middle of an empty
+ * band. Passed as `readableHeight` to the functions below; every other caller
+ * leaves it at `BASE_SLOT_HEIGHT`.
+ */
+export const DESKTOP_READABLE_SLOT_HEIGHT = 120;
+
 /** Widest a single day column may become, so one day never fills the screen. */
 export const MAX_COLUMN_WIDTH = 340;
 /** Only ever used for a viewport that has not been measured yet. */
@@ -97,11 +108,15 @@ export function clampValue(value: number, min: number, max: number): number {
  * viewport by a quarter of a period at the one zoom level where the whole day
  * is supposed to be visible.
  */
-export function minSlotHeightFor(bodyHeight: number, slotCount: number): number {
+export function minSlotHeightFor(
+  bodyHeight: number,
+  slotCount: number,
+  readableHeight: number = BASE_SLOT_HEIGHT,
+): number {
   "worklet";
-  if (bodyHeight <= 0 || slotCount <= 0) return BASE_SLOT_HEIGHT;
+  if (bodyHeight <= 0 || slotCount <= 0) return readableHeight;
   const fitting = bodyHeight / slotCount;
-  if (fitting >= BASE_SLOT_HEIGHT) return BASE_SLOT_HEIGHT;
+  if (fitting >= readableHeight) return readableHeight;
   return Math.max(MIN_SLOT_HEIGHT, fitting);
 }
 
@@ -159,18 +174,29 @@ export function maxColumnWidthFor(bodyWidth: number, dayCount: number): number {
  * axis clamps itself, so the one that ran out simply stops growing while
  * the other carries on.
  */
-export function maxZoomFor(bodyWidth: number, bodyHeight: number, dayCount: number, slotCount: number): number {
+export function maxZoomFor(
+  bodyWidth: number,
+  bodyHeight: number,
+  dayCount: number,
+  slotCount: number,
+  readableHeight: number = BASE_SLOT_HEIGHT,
+): number {
   "worklet";
-  const minHeight = minSlotHeightFor(bodyHeight, slotCount);
+  const minHeight = minSlotHeightFor(bodyHeight, slotCount, readableHeight);
   const minWidth = minColumnWidthFor(bodyWidth, dayCount);
   const verticalRange = minHeight > 0 ? MAX_SLOT_HEIGHT / minHeight : 1;
   const horizontalRange = minWidth > 0 ? maxColumnWidthFor(bodyWidth, dayCount) / minWidth : 1;
   return Math.max(1, verticalRange, horizontalRange);
 }
 
-export function slotHeightForZoom(zoom: number, bodyHeight: number, slotCount: number): number {
+export function slotHeightForZoom(
+  zoom: number,
+  bodyHeight: number,
+  slotCount: number,
+  readableHeight: number = BASE_SLOT_HEIGHT,
+): number {
   "worklet";
-  const minHeight = minSlotHeightFor(bodyHeight, slotCount);
+  const minHeight = minSlotHeightFor(bodyHeight, slotCount, readableHeight);
   return clampValue(minHeight * zoom, minHeight, MAX_SLOT_HEIGHT);
 }
 

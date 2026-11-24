@@ -154,6 +154,13 @@ export const ru: Translations = {
   "reminders.unavailable":
     "Напоминания работают в приложении Temelo на телефоне. Здесь они сохраняются у каждого занятия и переносятся в файле .temelo.",
 
+  "desktop.toggleSidebar": "Главное меню",
+  "desktop.previousMonth": "Предыдущий месяц",
+  "desktop.nextMonth": "Следующий месяц",
+  "desktop.allTimetables": "Все расписания",
+  "desktop.sectionView": "Вид",
+  "desktop.aboutTemelo": "О Temelo",
+
   "storageInUse.title": "Temelo открыт в другой вкладке",
   "storageInUse.body": "Temelo можно использовать только в одной вкладке. Закройте другую вкладку или окно и перезагрузите эту.",
   "storageInUse.reload": "Перезагрузить",

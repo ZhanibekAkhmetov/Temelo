@@ -3,6 +3,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import type { SelectedCell, SlotChoice } from "@/features/timetable/types";
 import { useI18n } from "@/i18n/I18nProvider";
 import { getClassColors } from "@/theme/classColors";
+import { useSheetFrame } from "@/theme/useSheetFrame";
 import { useTheme } from "@/theme/useTheme";
 
 interface SlotClassesSheetProps {
@@ -28,13 +29,15 @@ interface SlotClassesSheetProps {
  */
 export function SlotClassesSheet({ choice, onSelect, onAdd, onCancel }: SlotClassesSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  // A centred dialog on a desktop; unchanged on a phone.
+  const frame = useSheetFrame();
   const { t, format } = useI18n();
 
   const cell = choice.newClass;
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent>
-      <View style={styles.root}>
+      <View style={[styles.root, frame.root]}>
         <Pressable
           style={[styles.scrim, { backgroundColor: colors.scrim }]}
           onPress={onCancel}
@@ -51,6 +54,7 @@ export function SlotClassesSheet({ choice, onSelect, onAdd, onCancel }: SlotClas
               borderColor: colors.divider,
               paddingBottom: spacing.xl,
             },
+            frame.sheet,
           ]}
         >
           <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md }}>

@@ -59,7 +59,7 @@ export default function AcademicDayScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-    <ScreenContainer
+    <ScreenContainer desktopDialog
       header={
         // Save in the header's trailing slot, where the current timetable's
         // screen one step back has it — not as a button at the foot of the form.

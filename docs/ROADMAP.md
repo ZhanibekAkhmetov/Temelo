@@ -238,6 +238,17 @@ current implementation status.
     - **14.2 Desktop layout.** A wide-screen layout that shows the whole week,
       and grid manipulation that works with mouse and trackpad.
       *Done when:* every phone interaction has a desktop equivalent.
+      *Status: done.* From 1024 px (`useIsDesktop`, web only) the week sits
+      under a toolbar (Today, week arrows, the month) beside a sidebar: a month
+      to jump through, then one card each for the timetable, the view (days
+      shown, layout), general settings (appearance, language) and reminders,
+      with About at its foot. One-choice settings apply in the sidebar; the
+      timetable screens, Settings, the class editor and every bottom sheet open
+      as centred dialogs over the week; creating a timetable is a centred card.
+      Blocks stop short of the next column and show their time range, and the
+      day grows to fill the window. Dragging and resizing a class with a mouse
+      (press, hold, drag) works as on a phone. Below 1024 px, and on every
+      phone, nothing changed.
     - **14.3 TypeScript test runner.** Resolves the deferred "test runner"
       decision in [ARCHITECTURE.md](ARCHITECTURE.md). The domain suites move
       to it; `harness/` stays until everything it checks is covered.
@@ -305,16 +316,23 @@ implemented and are described in the README:
   English/Russian/German UI, both stored as *preferences* rather than as the
   value they currently resolve to, so "System" keeps following the device.
 
+## Current stage
+
+Temelo **Beta 2** (version 0.2.0, `v0.2.0-beta.1`) is the latest Android
+release; Beta 1 (0.1.0, `v0.1.0-beta.2`) completed the planned mobile
+foundation — the timetable and recurrence model, SQLite persistence and
+migrations, the timetable lifecycle, local reminders, `.temelo` backup and
+import, one-way `.ics` export, localization, theming and branding — and Beta 2
+added intentional overlaps, chosen start dates and any set of visible weekdays.
+
+Milestone 14 is under way: the web version (14.1) and its desktop layout
+(14.2) are done; it runs locally with `npm run web` and has not been hosted
+yet (14.7).
+
 ## Next milestone
 
-Stabilization and a standalone, offline Android build (`preview` profile in
-[eas.json](../eas.json)) that a tester can install without a development
-machine. Milestone 13 was the last new feature planned for Beta 1, so what
-remains before release is verification rather than construction — in
-particular, the share-sheet and calendar-import behaviour that only a real
-device can show, since the emulator cannot complete a calendar import without
-signing a Google account into it.
-
-Milestone 14's first part — the web version and share links — is scoped
-above, step by step. Accounts and cross-device synchronization stay
-deliberately unscoped until they are actually started.
+Step 14.3, the TypeScript test runner, then the Spring Boot share-link service
+(14.4–14.6). Tester feedback on Beta 2 keeps priority over new work: high-impact
+bugs are fixed first, preserving the data model and the upgrade path.
+Synchronization, optional accounts and store distribution remain deliberately
+unscoped until they are actually started.

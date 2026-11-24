@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -31,6 +31,7 @@ import { ClassColorField } from "@/features/timetable/ClassColorField";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState, type UpsertPlacementInput } from "@/state/AppStateContext";
+import { useIsDesktop } from "@/theme/useIsDesktop";
 import { useTheme } from "@/theme/useTheme";
 import type { RecurrenceType, TimeSlot, Timetable } from "@/types/models";
 
@@ -96,17 +97,19 @@ export function ClassEditorModal({
     backInterceptor.current = handler;
   }, []);
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      onRequestClose={() => {
-        if (backInterceptor.current?.()) return;
-        onClose();
-      }}
-      presentationStyle={Platform.OS === "ios" ? "fullScreen" : undefined}
-    >
-      {visible ? (
+  /*
+   * On a phone the editor is a whole screen sliding up. On a desktop it is a
+   * dialog over the week — the week stays in view behind it, the way a desktop
+   * calendar's event editor sits over the calendar. Clicking outside it is the
+   * same request as Back or Escape, and goes through the same interceptor.
+   */
+  const isDesktop = useIsDesktop();
+  function requestClose() {
+    if (backInterceptor.current?.()) return;
+    onClose();
+  }
+
+  const form = visible ? (
         <ClassEditorForm
           key={`${weekday}-${date}-${timeSlot.id}-${existing?.occurrenceId ?? "new"}`}
           onBackInterceptorChange={setBackInterceptor}
@@ -121,8 +124,49 @@ export function ClassEditorModal({
           onRequestScope={onRequestScope}
           onAddAnother={onAddAnother}
         />
-      ) : null}
+      ) : null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={isDesktop}
+      animationType={isDesktop ? "fade" : "slide"}
+      onRequestClose={requestClose}
+      presentationStyle={Platform.OS === "ios" ? "fullScreen" : undefined}
+    >
+      {isDesktop && form ? <DesktopEditorFrame onDismiss={requestClose}>{form}</DesktopEditorFrame> : form}
     </Modal>
+  );
+}
+
+/** The desktop dialog the editor sits in: a backdrop, and a card in the middle. */
+function DesktopEditorFrame({ onDismiss, children }: { onDismiss: () => void; children: ReactNode }) {
+  const { colors, radii, borderWidth } = useTheme();
+  const { t } = useI18n();
+  return (
+    <View style={styles.desktopRoot}>
+      <Pressable
+        style={[StyleSheet.absoluteFill, { backgroundColor: colors.overlay }]}
+        onPress={onDismiss}
+        accessibilityRole="button"
+        accessibilityLabel={t("common.close")}
+      />
+      <View
+        accessibilityViewIsModal
+        style={[
+          styles.desktopCard,
+          {
+            borderRadius: radii.lg * 1.4,
+            borderWidth: borderWidth.thin,
+            borderColor: colors.divider,
+            backgroundColor: colors.background,
+            shadowColor: colors.shadow,
+          },
+        ]}
+      >
+        {children}
+      </View>
+    </View>
   );
 }
 
@@ -684,6 +728,22 @@ function ClassEditorForm({
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
+  },
+  desktopRoot: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  desktopCard: {
+    width: "100%",
+    maxWidth: 560,
+    height: "100%",
+    maxHeight: 860,
+    overflow: "hidden",
+    shadowOpacity: 0.3,
+    shadowRadius: 32,
+    shadowOffset: { width: 0, height: 12 },
   },
   headerRow: {
     flexDirection: "row",

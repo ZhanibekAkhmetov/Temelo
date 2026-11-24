@@ -28,6 +28,8 @@ Read from the repository's actual configuration, not assumed:
 - Gestures and animation: `react-native-gesture-handler` and
   `react-native-reanimated`. Reminders: `expo-notifications`. Device language:
   `expo-localization`.
+- Web: the same app through `react-native-web` and Metro (`npm run web`),
+  with a desktop layout from 1024 px — see "Web build" below.
 
 Consult the versioned Expo docs for this exact release before writing
 framework-dependent code: https://docs.expo.dev/versions/v57.0.0/
@@ -426,6 +428,32 @@ codebase and no second data model.
   devices that can share files); importing uses the browser's file chooser,
   through the same parser, preview and cloning import as on a phone. "Open in
   calendar" is Android-only, so an `.ics` is downloaded.
+- **Desktop layout** is decided by one hook, `theme/useIsDesktop` — web and
+  at least 1024 px wide; never on a phone. It switches the timetable route to
+  `features/desktop/` (toolbar, sidebar, About dialog), gives `GridBlock` its
+  desktop geometry, lets the surface grow periods to fill the window
+  (`readableSlotHeight`), and turns `ScreenContainer` into a column, a card
+  (`desktopCard`) or a dialog (`desktopDialog`). Dialog routes are presented
+  as `transparentModal` (`theme/desktopDialog`) so the week stays drawn
+  beneath; Expo Router's own web modal is not used because in SDK 57 it sits
+  behind an unstable CLI flag. A dialog route loaded straight from its URL has
+  nothing beneath it and falls back to a page.
+- **Desktop sidebar.** One card per subject — timetable, view (days shown,
+  layout), general (appearance, language), reminders — each control with its
+  label above it, About as a footer link. One-choice settings apply in place
+  (`SegmentedControl`, weekday chips); language and the default reminder are
+  `FieldRow`'s `select` appearance, which opens the same small pop-up the
+  phone uses. Settings and the sidebar share their option lists and the
+  reminder hint through `features/settings/options`.
+- **Sheets become dialogs.** Every bottom sheet (scope question, share/export,
+  slot chooser, calendar export, date picker) takes its placement from
+  `theme/useSheetFrame`: empty on a phone, a centred 480 px card on a desktop.
+  The class editor, a full-screen modal on a phone, is a centred card too.
+- **Web-only workarounds**, each guarded so native is untouched:
+  `runOnUISync` does not exist on web (Reanimated keeps shared values on the
+  JS thread), so the surface's week jump runs its settle directly there; and a
+  mouse wheel produces no drag or momentum events, so `WheelPicker` schedules
+  its settle on every scroll step on web and snaps once scrolling stops.
 - **Not on web**: reminders (permission reads as `"unavailable"`, and the
   reminder fields say where reminders work; lead times are still stored and
   travel in a `.temelo`), haptics, and receiving a share from another app.

@@ -162,6 +162,14 @@ export const en = {
     "Reminders work in the Temelo phone app. They're saved with each class here and come along in a .temelo file.",
 
   // A second browser tab, while the first one holds the database.
+  // The desktop layout of the web build: the sidebar and the toolbar.
+  "desktop.toggleSidebar": "Main menu",
+  "desktop.previousMonth": "Previous month",
+  "desktop.nextMonth": "Next month",
+  "desktop.allTimetables": "All timetables",
+  "desktop.sectionView": "View",
+  "desktop.aboutTemelo": "About Temelo",
+
   "storageInUse.title": "Temelo is open in another tab",
   "storageInUse.body": "Temelo can only be used in one tab at a time. Close the other tab or window, then reload this one.",
   "storageInUse.reload": "Reload",

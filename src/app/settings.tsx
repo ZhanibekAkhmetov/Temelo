@@ -14,42 +14,12 @@ import { RemindersDiagnostics } from "@/features/diagnostics/RemindersDiagnostic
 import { StorageDiagnostics } from "@/features/diagnostics/StorageDiagnostics";
 import { useReminderStatus } from "@/features/reminders/useReminderStatus";
 import { AboutSection } from "@/features/settings/AboutSection";
+import { reminderHelperKey, useSettingOptions } from "@/features/settings/options";
 import { shapeOfActive, timetableSummary } from "@/features/timetables/summary";
 import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
 import { useI18n } from "@/i18n/I18nProvider";
-import { LANGUAGE_PREFERENCES, type LanguagePreference } from "@/i18n/language";
-import type { TranslationKey } from "@/i18n/translate";
 import { useAppState } from "@/state/AppStateContext";
-import { APPEARANCE_PREFERENCES, type AppearancePreference } from "@/theme/appearance";
 import { useTheme } from "@/theme/useTheme";
-import type { GridOrientation } from "@/types/models";
-
-const APPEARANCE_LABEL_KEY: Record<AppearancePreference, TranslationKey> = {
-  system: "settings.appearanceSystem",
-  light: "settings.appearanceLight",
-  dark: "settings.appearanceDark",
-};
-
-const LAYOUT_LABEL_KEY: Record<GridOrientation, TranslationKey> = {
-  vertical: "settings.layoutVertical",
-  horizontal: "settings.layoutHorizontal",
-};
-
-const LAYOUT_ORDER: GridOrientation[] = ["vertical", "horizontal"];
-
-/**
- * The languages are named *in themselves*, not translated.
- *
- * "Русский" is what a Russian speaker looks for in a language list, whatever
- * language the app currently happens to be in — which is exactly the list
- * they need when the app is in a language they cannot read. Only "System" is
- * translated, because it names a behaviour rather than a language.
- */
-const LANGUAGE_ENDONYM: Record<Exclude<LanguagePreference, "system">, string> = {
-  en: "English",
-  ru: "Русский",
-  de: "Deutsch",
-};
 
 /**
  * Settings.
@@ -91,20 +61,10 @@ export default function SettingsScreen() {
   /** Which of this screen's two whole-app confirmations is open, if either. */
   const [confirming, setConfirming] = useState<"reset" | "sample" | null>(null);
 
-  const appearanceOptions = APPEARANCE_PREFERENCES.map((preference) => ({
-    value: preference,
-    label: t(APPEARANCE_LABEL_KEY[preference]),
-  }));
-
-  const languageOptions = LANGUAGE_PREFERENCES.map((preference) => ({
-    value: preference,
-    label: preference === "system" ? t("settings.languageSystem") : LANGUAGE_ENDONYM[preference],
-  }));
-
-  const layoutOptions = LAYOUT_ORDER.map((orientation) => ({
-    value: orientation,
-    label: t(LAYOUT_LABEL_KEY[orientation]),
-  }));
+  const options = useSettingOptions();
+  const appearanceOptions = options.appearance;
+  const languageOptions = options.language;
+  const layoutOptions = options.layout;
 
   /*
    * The one line under the timetable's name: the days it covers and the hours
@@ -137,7 +97,7 @@ export default function SettingsScreen() {
     // at the leading edge. It used to be a Close at the trailing edge, which
     // put the way out on the opposite side from the Timetables screen one tap
     // further in.
-    <ScreenContainer
+    <ScreenContainer desktopDialog
       header={
         <ScreenHeader
           title={t("settings.title")}
@@ -229,20 +189,9 @@ export default function SettingsScreen() {
           label={t("reminders.defaultForNewClasses")}
           value={state.settings.defaultReminderMinutes}
           onChange={(reminderMinutes) => setDefaultReminder({ reminderMinutes })}
-          /* Three answers, not two. "Denied" is the only one that is a
-             problem; "undetermined" is the ordinary first-run state, and
-             saying when the prompt will come is the whole of the rationale
-             this screen owes the user — the OS asks at the moment a reminder
-             is first due, not here. */
-          helperText={
-            reminderStatus.permission === "unavailable"
-              ? t("reminders.unavailable")
-              : reminderStatus.permission === "denied"
-              ? t("reminders.permissionDenied")
-              : reminderStatus.permission === "undetermined"
-                ? t("reminders.permissionExplainer")
-                : t("reminders.existingKeepTheirOwn")
-          }
+          // Why reminders may not be arriving, or where they work; see
+          // `reminderHelperKey`.
+          helperText={t(reminderHelperKey(reminderStatus.permission))}
         />
       </FormSection>
 

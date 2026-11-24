@@ -5,6 +5,7 @@ import { EDIT_SCOPE_ORDER, type EditScope } from "@/domain/classEdit";
 import type { DomainError } from "@/domain/errors";
 import { useI18n } from "@/i18n/I18nProvider";
 import type { TranslationKey } from "@/i18n/translate";
+import { useSheetFrame } from "@/theme/useSheetFrame";
 import { useTheme } from "@/theme/useTheme";
 
 interface EditScopeSheetProps {
@@ -48,6 +49,8 @@ const SCOPE_HINT_KEY: Record<EditScope, TranslationKey> = {
  */
 export function EditScopeSheet({ effectiveDate, blockedReasons, onSelect, onCancel }: EditScopeSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  // A centred dialog on a desktop; unchanged on a phone.
+  const frame = useSheetFrame();
   const { t, format } = useI18n();
   // A choice takes a frame or two to settle; a second tap in that window
   // would apply the same edit twice, at two different scopes.
@@ -70,7 +73,7 @@ export function EditScopeSheet({ effectiveDate, blockedReasons, onSelect, onCanc
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
-      <View style={styles.root}>
+      <View style={[styles.root, frame.root]}>
         <Pressable
           style={[styles.scrim, { backgroundColor: colors.scrim }]}
           onPress={dismiss}
@@ -87,6 +90,7 @@ export function EditScopeSheet({ effectiveDate, blockedReasons, onSelect, onCanc
               borderColor: colors.divider,
               paddingBottom: spacing.xl,
             },
+            frame.sheet,
           ]}
         >
           <Text

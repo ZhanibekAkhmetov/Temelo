@@ -101,11 +101,11 @@ export default function ArchivedTimetableScreen() {
     />
   );
 
-  if (entry === undefined) return <ScreenContainer header={header}>{null}</ScreenContainer>;
+  if (entry === undefined) return <ScreenContainer desktopDialog header={header}>{null}</ScreenContainer>;
 
   if (entry === null) {
     return (
-      <ScreenContainer header={header}>
+      <ScreenContainer desktopDialog header={header}>
         <Text style={[typography.body, { color: colors.textSecondary, marginTop: spacing.lg }]}>
           {t("errors.archiveGone")}
         </Text>
@@ -184,7 +184,7 @@ export default function ArchivedTimetableScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScreenContainer header={header}>
+      <ScreenContainer desktopDialog header={header}>
         {/* Arriving straight from an import, the first thing on the screen says
             so — and says what to do next, because the timetable is here but is
             not in use, which is the one thing a user could mistake for the

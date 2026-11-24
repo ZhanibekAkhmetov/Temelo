@@ -29,6 +29,13 @@ interface FieldRowProps {
   helperText?: string;
   /** The last row of a group, where the group's own edge is the separator. */
   last?: boolean;
+  /**
+   * "select" draws the label above a bordered box holding the value and a
+   * chevron — the shape of a desktop drop-down, for a narrow column such as
+   * the desktop sidebar where every other control also has its label above
+   * it. No divider under it: it is a control in a group, not a row in a list.
+   */
+  appearance?: "row" | "select";
 }
 
 /**
@@ -64,8 +71,43 @@ export function FieldRow({
   error,
   helperText,
   last = false,
+  appearance = "row",
 }: FieldRowProps) {
-  const { colors, spacing, typography, borderWidth } = useTheme();
+  const { colors, spacing, typography, borderWidth, radii } = useTheme();
+
+  if (appearance === "select") {
+    return (
+      <View>
+        <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: 6 }]}>{label}</Text>
+        <Pressable
+          onPress={onPress}
+          disabled={!onPress}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel ?? label}
+          style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+            styles.select,
+            {
+              borderWidth: borderWidth.thin,
+              borderColor: colors.dividerStrong,
+              borderRadius: radii.md,
+              paddingHorizontal: spacing.md,
+              backgroundColor: hovered ? colors.surfaceMuted : "transparent",
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+        >
+          <View style={styles.selectValue}>{children}</View>
+          <Text style={[styles.chevron, { color: colors.textMuted }]}>▾</Text>
+        </Pressable>
+        {panel}
+        {error ? (
+          <Text style={[typography.caption, { color: colors.danger, marginTop: 6 }]}>{error}</Text>
+        ) : helperText ? (
+          <Text style={[typography.caption, { color: colors.textMuted, marginTop: 6 }]}>{helperText}</Text>
+        ) : null}
+      </View>
+    );
+  }
 
   const labelText = (
     <Text style={[typography.label, styles.label, { color: colors.textSecondary }]} numberOfLines={2}>
@@ -152,5 +194,18 @@ const styles = StyleSheet.create({
   },
   valueText: {
     textAlign: "right",
+  },
+  select: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 36,
+  },
+  selectValue: {
+    flex: 1,
+    alignItems: "flex-start",
+  },
+  chevron: {
+    fontSize: 12,
+    marginLeft: 8,
   },
 });

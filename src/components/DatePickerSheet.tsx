@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MonthPager } from "@/components/MonthPager";
 import { todayIsoDate } from "@/domain/date";
 import { useI18n } from "@/i18n/I18nProvider";
+import { useSheetFrame } from "@/theme/useSheetFrame";
 import { useTheme } from "@/theme/useTheme";
 
 /** How far below its resting place the sheet starts its entry, in points. */
@@ -46,6 +47,8 @@ interface DatePickerSheetProps {
  */
 export function DatePickerSheet({ title, value, onCancel, onConfirm, note }: DatePickerSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  // A centred dialog on a desktop; unchanged on a phone.
+  const frame = useSheetFrame();
   const { t, format } = useI18n();
   const insets = useSafeAreaInsets();
 
@@ -79,7 +82,7 @@ export function DatePickerSheet({ title, value, onCancel, onConfirm, note }: Dat
   const translateY = entry.interpolate({ inputRange: [0, 1], outputRange: [ENTRY_OFFSET, 0] });
 
   return (
-    <View style={styles.host}>
+    <View style={[styles.host, frame.root]}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.overlay, opacity: entry }]}>
         <Pressable
           style={StyleSheet.absoluteFill}
@@ -106,6 +109,7 @@ export function DatePickerSheet({ title, value, onCancel, onConfirm, note }: Dat
             opacity: entry,
             transform: [{ translateY }],
           },
+          frame.sheet,
         ]}
       >
         {/* The same header as the class editor's: Cancel and Done as full
