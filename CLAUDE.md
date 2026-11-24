@@ -18,6 +18,9 @@ development build, not Expo Go.
 
 - `npx expo start --dev-client` — run the app (phone and computer must share
   a local network)
+- `npm run web` — run the web build in a browser (milestone 14; platform
+  edges are `.web.ts` twins of `src/util/` wrappers — see "Web build" in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 - `npm run lint` — lint (`expo lint`); run after code changes
 - `npm run harness` — the harness suites in `harness/` (geometry, navigation,
   storage, lifecycle, transfer, calendar, overlaps, series start, visible
@@ -57,6 +60,11 @@ development build, not Expo Go.
   and nothing in it knows what a timetable is.
 - Records intended to be future-sync-able use device-generated string IDs
   plus `createdAt`/`updatedAt`/`deletedAt`.
+- Web: a platform edge in `src/util/` gets a `.web.ts` twin typed
+  `typeof Native.x` against the native file and importing no module at
+  runtime (`harness/architecture.mjs` section AC). The desktop layout is
+  gated on `useIsDesktop()` (web and ≥ 1024 px); every desktop change must
+  leave the phone app — native, and narrow web — exactly as it was.
 
 ## Product defaults worth remembering
 

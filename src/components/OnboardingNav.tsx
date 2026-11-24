@@ -2,6 +2,7 @@ import { StyleSheet, View } from "react-native";
 
 import { Button } from "@/components/Button";
 import { useI18n } from "@/i18n/I18nProvider";
+import { useIsDesktop } from "@/theme/useIsDesktop";
 import { useTheme } from "@/theme/useTheme";
 
 interface OnboardingNavProps {
@@ -20,15 +21,26 @@ interface OnboardingNavProps {
 export function OnboardingNav({ onBack, onContinue, continueLabel, continueDisabled }: OnboardingNavProps) {
   const { spacing } = useTheme();
   const { t } = useI18n();
+  // A phone splits the width between the two buttons, where a thumb can reach
+  // either. A desktop puts them at the trailing edge at their own width, the
+  // way a desktop dialog's actions sit — never a button the width of a form.
+  const isDesktop = useIsDesktop();
+  const side = isDesktop ? styles.sideDesktop : styles.side;
 
   return (
-    <View style={[styles.row, { marginTop: spacing.xl, marginBottom: spacing.sm, gap: spacing.sm }]}>
+    <View
+      style={[
+        styles.row,
+        isDesktop && styles.rowDesktop,
+        { marginTop: spacing.xl, marginBottom: spacing.sm, gap: spacing.sm },
+      ]}
+    >
       {onBack ? (
-        <View style={styles.side}>
+        <View style={side}>
           <Button label={t("common.back")} variant="secondary" onPress={onBack} />
         </View>
       ) : null}
-      <View style={styles.side}>
+      <View style={side}>
         <Button
           label={continueLabel ?? t("common.continue")}
           variant="primary"
@@ -44,7 +56,13 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
   },
+  rowDesktop: {
+    justifyContent: "flex-end",
+  },
   side: {
     flex: 1,
+  },
+  sideDesktop: {
+    minWidth: 140,
   },
 });

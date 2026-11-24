@@ -256,7 +256,9 @@ effort:
 These are directions the product may grow into, not commitments for the
 current build:
 
-- A desktop-oriented web application.
+- A desktop-oriented web application. *(In progress — milestone 14: the same
+  app runs in a desktop browser, local-first, with a desktop layout. Not yet
+  hosted; no reminders on web.)*
 - Synchronization between a user's devices.
 - Optional accounts, used only to enable synchronization.
 - Direct integration with the device's native calendar — a live, two-way link

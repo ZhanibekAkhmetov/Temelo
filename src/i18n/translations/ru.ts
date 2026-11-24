@@ -151,6 +151,19 @@ export const ru: Translations = {
   "reminders.channelDescription": "Беззвучные напоминания с короткой вибрацией перед началом занятия.",
   "reminders.permissionExplainer":
     "Temelo запросит разрешение на уведомления, когда вы настроите напоминание. Всё остальное работает и без него.",
+  "reminders.unavailable":
+    "Напоминания работают в приложении Temelo на телефоне. Здесь они сохраняются у каждого занятия и переносятся в файле .temelo.",
+
+  "desktop.toggleSidebar": "Главное меню",
+  "desktop.previousMonth": "Предыдущий месяц",
+  "desktop.nextMonth": "Следующий месяц",
+  "desktop.allTimetables": "Все расписания",
+  "desktop.sectionView": "Вид",
+  "desktop.aboutTemelo": "О Temelo",
+
+  "storageInUse.title": "Temelo открыт в другой вкладке",
+  "storageInUse.body": "Temelo можно использовать только в одной вкладке. Закройте другую вкладку или окно и перезагрузите эту.",
+  "storageInUse.reload": "Перезагрузить",
 
   "settings.title": "Настройки",
   "settings.appearance": "Тема",

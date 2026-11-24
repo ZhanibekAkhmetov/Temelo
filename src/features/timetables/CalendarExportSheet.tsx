@@ -14,6 +14,7 @@ import {
 import type { DomainError } from "@/domain/errors";
 import { CAN_OPEN_IN_APP, type CalendarDelivery, type CalendarExportOutcome } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
+import { useSheetFrame } from "@/theme/useSheetFrame";
 import { useTheme } from "@/theme/useTheme";
 
 interface CalendarExportSheetProps {
@@ -71,6 +72,8 @@ export function CalendarExportSheet({
   onDismiss,
 }: CalendarExportSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  // A centred dialog on a desktop; unchanged on a phone.
+  const frame = useSheetFrame();
   const { t } = useI18n();
 
   // Seeded once. Re-deriving it would fight the user every time they changed a
@@ -159,7 +162,7 @@ export function CalendarExportSheet({
        * the date sheet below for why putting it here is what made the whole
        * window opaque.
        */}
-      <View style={styles.root}>
+      <View style={[styles.root, frame.root]}>
         <Pressable
           style={[styles.scrim, { backgroundColor: colors.scrim }]}
           onPress={onDismiss}
@@ -180,6 +183,7 @@ export function CalendarExportSheet({
               paddingHorizontal: spacing.lg,
               paddingBottom: spacing.xl,
             },
+            frame.sheet,
           ]}
         >
           <Text

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useI18n } from "@/i18n/I18nProvider";
+import { useSheetFrame } from "@/theme/useSheetFrame";
 import { useTheme } from "@/theme/useTheme";
 
 export interface TimetableAction {
@@ -64,6 +65,8 @@ interface TimetableActionSheetProps {
  */
 export function TimetableActionSheet({ name, actions, onDismiss }: TimetableActionSheetProps) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
+  // A centred dialog on a desktop; unchanged on a phone.
+  const frame = useSheetFrame();
   const { t } = useI18n();
   // An action takes a frame or two to open its own sheet or dialog; a second
   // tap in that window would run it twice — two share sheets, two dialogs.
@@ -82,7 +85,7 @@ export function TimetableActionSheet({ name, actions, onDismiss }: TimetableActi
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
-      <View style={styles.root}>
+      <View style={[styles.root, frame.root]}>
         <Pressable
           style={[styles.scrim, { backgroundColor: colors.scrim }]}
           onPress={dismiss}
@@ -100,6 +103,7 @@ export function TimetableActionSheet({ name, actions, onDismiss }: TimetableActi
               borderColor: colors.divider,
               paddingBottom: spacing.xl,
             },
+            frame.sheet,
           ]}
         >
           <Text

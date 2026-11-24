@@ -23,7 +23,7 @@ import type { LanguagePreference } from "@/i18n/language";
 import type { AppearancePreference } from "@/theme/appearance";
 import { DEFAULT_SETTINGS, timetableStartDateFrom } from "@/state/defaults";
 import { createSampleTimetable } from "@/state/sampleTimetable";
-import { bootstrapStorage } from "@/storage/bootstrap";
+import { bootstrapStorage, StorageInUseError } from "@/storage/bootstrap";
 import { readStorageReport as readStorageReport_, type StorageReport } from "@/storage/diagnostics";
 import { buildTimetableSnapshot, timetableSettingsOf, type TimetableSnapshot } from "@/storage/snapshot";
 import {
@@ -243,6 +243,12 @@ interface AppStateContextValue {
    */
   storageError: string | null;
   /**
+   * True when another browser tab of this app holds the database. Unlike
+   * `storageError` the app does *not* carry on in memory — edits made here
+   * would be lost — so `BootGate` draws only a notice. Never true on a phone.
+   */
+  storageInUse: boolean;
+  /**
    * Whether writes are actually landing. A screen that tells the user their
    * change was saved has to consult this, not merely the fact that the action
    * passed its validation.
@@ -460,6 +466,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(buildInitialState);
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [storageInUse, setStorageInUse] = useState(false);
   const [persistence, setPersistence] = useState<PersistenceStatus>(INITIAL_PERSISTENCE);
   /**
    * How many archived timetables exist.
@@ -532,6 +539,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       })
       .catch((error: unknown) => {
         if (cancelled) return;
+        // Another tab has the database. Not a reason to run in memory — that
+        // tab holds the real timetable, and edits here would be lost.
+        if (error instanceof StorageInUseError) {
+          setStorageInUse(true);
+          return;
+        }
         // Storage is unavailable — most likely a development build that
         // predates expo-sqlite. Carry on in memory rather than presenting a
         // dead app, but never pretend the data is being saved.
@@ -1292,6 +1305,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       state,
       hydrated,
       storageError,
+      storageInUse,
       persistence,
       archivedCount,
       readStorageReport,
@@ -1322,7 +1336,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       loadSampleTimetable,
       deleteAllData,
     };
-  }, [state, hydrated, storageError, persistence, archivedCount]);
+  }, [state, hydrated, storageError, storageInUse, persistence, archivedCount]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

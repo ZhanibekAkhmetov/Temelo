@@ -226,9 +226,65 @@ function testOpeningAndSharingStaySeparate() {
   check("a missing calendar app is its own outcome", /kind:\s*["']noCalendarApp["']/.test(transfer));
 }
 
+/** Every name a module exports, sorted — declarations and re-exports alike. */
+function exportedNames(source) {
+  const code = codeOf(source);
+  const names = new Set();
+  for (const match of code.matchAll(
+    /^export\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm,
+  )) {
+    names.add(match[1]);
+  }
+  for (const match of code.matchAll(/^export\s+(?:type\s+)?\{([^}]*)\}/gm)) {
+    for (const part of match[1].split(",")) {
+      const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()?.trim();
+      if (name) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+/**
+ * A web variant is the same module, not a second one.
+ *
+ * Metro bundles `x.web.ts` in place of `x.ts` for the browser, and TypeScript —
+ * which knows nothing about platform extensions — only ever type-checks callers
+ * against `x.ts`. So a name the native file exports and the web file forgot
+ * compiles cleanly and then fails in the browser, at the moment it is called.
+ * The web files type each export as `typeof Native.*`, which catches a changed
+ * signature; this catches a missing or extra name, which that cannot.
+ *
+ * And a web variant exists *because* the native module does not run in a
+ * browser, so it must not import one: only type imports, from its sibling.
+ */
+function testWebVariantsMatchTheirNativeFiles() {
+  section("AC. Every web variant exports what its native file exports");
+
+  const files = everySourceFile();
+  const byPath = new Map(files.map((file) => [file.path, file.source]));
+  const variants = files.filter(({ path }) => /\.web\.tsx?$/.test(path));
+
+  check("web variants were found", variants.length >= 4, `found ${variants.length}`);
+
+  for (const { path, source } of variants) {
+    const nativePath = path.replace(/\.web(\.tsx?)$/, "$1");
+    const native = byPath.get(nativePath);
+    check(`${path} has a native sibling`, native !== undefined, `no ${nativePath}`);
+    if (native === undefined) continue;
+
+    equal(`${path} exports the same names`, exportedNames(source).join(","), exportedNames(native).join(","));
+
+    const valueImports = [...codeOf(source).matchAll(/^import\s+(?!type\b)[^;]*?from\s+["']([^"']+)["']/gm)].map(
+      (match) => match[1],
+    );
+    equal(`${path} imports no module at runtime`, valueImports.join(","), "");
+  }
+}
+
 export function runArchitectureHarness() {
   testReceiverCannotNavigate();
   testNativeIntentStaysBoring();
   testNativeEdgeStaysAtOneFile();
   testOpeningAndSharingStaySeparate();
+  testWebVariantsMatchTheirNativeFiles();
 }

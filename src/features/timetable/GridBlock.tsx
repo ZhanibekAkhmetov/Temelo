@@ -3,12 +3,43 @@ import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reani
 
 import { TIME_GUTTER_WIDTH } from "@/features/timetable/geometry";
 import { getClassColors } from "@/theme/classColors";
+import { useIsDesktop } from "@/theme/useIsDesktop";
 import { useTheme } from "@/theme/useTheme";
 
 const BLOCK_INSET = 1.5;
 /** Outlines sit a little further in, so all four edges clear the day rules. */
 const OUTLINE_INSET = 2.5;
 const OUTLINE_WIDTH = 2;
+
+/**
+ * Desktop: the strip at the trailing edge of every day column that no block
+ * covers.
+ *
+ * On a phone a block fills its cell, because the cell is a thumb wide and every
+ * point of it is worth the text. On a desktop the columns are several times
+ * wider, and a block that fills one edge to edge reads as a painted cell rather
+ * than as a class sitting in a day — so, like a desktop calendar's events,
+ * blocks stop short of the next column and the day's own background shows down
+ * its side.
+ */
+const DESKTOP_TRAILING_GAP = 12;
+/** Desktop: the gap above and below a block, so back-to-back classes read as two. */
+const DESKTOP_VERTICAL_INSET = 2;
+
+/** How a block sits inside its cell — one geometry per layout. */
+interface BlockInsets {
+  /** Left and right inset of each lane. */
+  horizontal: number;
+  vertical: number;
+  /** Width at the end of the column no lane uses. */
+  trailing: number;
+}
+
+function blockInsets(isDesktop: boolean, base: number): BlockInsets {
+  return isDesktop
+    ? { horizontal: base, vertical: Math.max(base, DESKTOP_VERTICAL_INSET), trailing: DESKTOP_TRAILING_GAP }
+    : { horizontal: base, vertical: base, trailing: 0 };
+}
 
 export type BlockVariant = "class" | "provisional" | "dragging";
 
@@ -33,6 +64,12 @@ interface GridBlockProps {
   appearanceId?: string;
   name?: string;
   room?: string;
+  /**
+   * "09:20–10:50". Drawn only in the desktop layout, where a block is wide
+   * enough to say when it is as well as what; on a phone the gutter beside
+   * the row already says it.
+   */
+  timeRange?: string;
   /** Lines the name may use at the settled zoom level; taller blocks get more. */
   nameLines?: number;
   variant: BlockVariant;
@@ -62,11 +99,15 @@ export function GridBlock({
   appearanceId,
   name,
   room,
+  timeRange,
   nameLines,
   variant,
   accessibilityLabel,
 }: GridBlockProps) {
   const { colors, radii, typography } = useTheme();
+  const isDesktop = useIsDesktop();
+  const insets = blockInsets(isDesktop, BLOCK_INSET);
+  const { horizontal, vertical, trailing } = insets;
 
   // One palette for both schemes, so `scheme` is not consulted here at all.
   const appearance = appearanceId ? getClassColors(appearanceId) : null;
@@ -79,13 +120,13 @@ export function GridBlock({
     const width = columnWidth.get();
     // Lanes split the column evenly; each lane keeps the same inset on both
     // sides, so two blocks side by side have a visible gap between them.
-    const laneWidth = width / Math.max(1, laneCount);
+    const laneWidth = Math.max(0, width - trailing) / Math.max(1, laneCount);
     return {
-      width: Math.max(0, laneWidth - BLOCK_INSET * 2),
-      height: Math.max(0, currentSpan * height - BLOCK_INSET * 2),
+      width: Math.max(0, laneWidth - horizontal * 2),
+      height: Math.max(0, currentSpan * height - vertical * 2),
       transform: [
         { translateX: dayIndex * width + lane * laneWidth },
-        { translateY: currentStart * height + BLOCK_INSET },
+        { translateY: currentStart * height + vertical },
       ],
     };
   });
@@ -93,6 +134,8 @@ export function GridBlock({
   // A lane too narrow for a word reads better as a coloured strip than as two
   // clipped letters, so the room line goes first and then the name's wrap.
   const narrow = laneCount > 1;
+  // Desktop: when, then where, on one line under the name.
+  const detail = isDesktop ? [timeRange, room].filter(Boolean).join(" · ") : room;
 
   return (
     <Animated.View
@@ -102,8 +145,8 @@ export function GridBlock({
       style={[
         styles.block,
         {
-          left: TIME_GUTTER_WIDTH + BLOCK_INSET,
-          borderRadius: radii.sm,
+          left: TIME_GUTTER_WIDTH + horizontal,
+          borderRadius: isDesktop ? radii.md : radii.sm,
           // A proposed range is a translucent wash, so it can never be
           // mistaken for a class that is actually there.
           backgroundColor: variant === "provisional" || !appearance ? colors.provisionalFill : appearance.fill,
@@ -128,19 +171,27 @@ export function GridBlock({
       ) : (
         // Name at the top-left, room under it: the shape of the block is
         // what says how long the class is, so the text stays out of the way.
-        <View style={styles.content}>
+        <View style={[styles.content, isDesktop && styles.contentDesktop]}>
           <Text
-            style={[typography.gridText, { color: appearance ? appearance.ink : colors.textPrimary }]}
+            style={[
+              typography.gridText,
+              isDesktop && styles.nameDesktop,
+              { color: appearance ? appearance.ink : colors.textPrimary },
+            ]}
             numberOfLines={nameLines ?? 2}
           >
             {name}
           </Text>
-          {room && !narrow ? (
+          {detail && !narrow ? (
             <Text
-              style={[typography.gridSecondary, { color: appearance ? appearance.inkMuted : colors.textSecondary }]}
+              style={[
+                typography.gridSecondary,
+                isDesktop && styles.detailDesktop,
+                { color: appearance ? appearance.inkMuted : colors.textSecondary },
+              ]}
               numberOfLines={1}
             >
-              {room}
+              {detail}
             </Text>
           ) : null}
         </View>
@@ -192,19 +243,22 @@ export function SelectionOutline({
 }: SelectionOutlineProps) {
   const { colors, radii } = useTheme();
   const stroke = color ?? colors.accent;
+  // The same geometry as the block it rings, so it rings that block exactly.
+  const isDesktop = useIsDesktop();
+  const { horizontal, vertical, trailing } = blockInsets(isDesktop, OUTLINE_INSET);
 
   const style = useAnimatedStyle(() => {
     const currentSpan = spanShared ? spanShared.get() : span;
     const currentStart = startShared ? startShared.get() : startIndex;
     const height = slotHeight.get();
     const width = columnWidth.get();
-    const laneWidth = width / Math.max(1, laneCount);
+    const laneWidth = Math.max(0, width - trailing) / Math.max(1, laneCount);
     return {
-      width: Math.max(0, laneWidth - OUTLINE_INSET * 2),
-      height: Math.max(0, currentSpan * height - OUTLINE_INSET * 2),
+      width: Math.max(0, laneWidth - horizontal * 2),
+      height: Math.max(0, currentSpan * height - vertical * 2),
       transform: [
         { translateX: dayIndex * width + lane * laneWidth },
-        { translateY: currentStart * height + OUTLINE_INSET },
+        { translateY: currentStart * height + vertical },
       ],
     };
   });
@@ -215,10 +269,10 @@ export function SelectionOutline({
       style={[
         styles.outline,
         {
-          left: TIME_GUTTER_WIDTH + OUTLINE_INSET,
+          left: TIME_GUTTER_WIDTH + horizontal,
           borderColor: stroke,
           borderWidth: OUTLINE_WIDTH,
-          borderRadius: radii.sm,
+          borderRadius: isDesktop ? radii.md : radii.sm,
         },
         style,
       ]}
@@ -297,6 +351,18 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     paddingHorizontal: 5,
     paddingVertical: 3,
+  },
+  contentDesktop: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 2,
+  },
+  nameDesktop: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  detailDesktop: {
+    fontSize: 12,
   },
   center: {
     flex: 1,

@@ -19,6 +19,8 @@ interface ChoiceRowFieldProps<T extends string> {
   /** Heading of the sheet the row opens; defaults to the row's own label. */
   sheetTitle?: string;
   helperText?: string;
+  /** How the row is drawn; see `FieldRow`'s `appearance`. */
+  appearance?: "row" | "select";
 }
 
 /**
@@ -43,6 +45,7 @@ export function ChoiceRowField<T extends string>({
   onChange,
   sheetTitle,
   helperText,
+  appearance,
 }: ChoiceRowFieldProps<T>) {
   const { colors, spacing, radii, typography, borderWidth } = useTheme();
   const { t } = useI18n();
@@ -62,6 +65,7 @@ export function ChoiceRowField<T extends string>({
       onPress={() => setOpen(true)}
       accessibilityLabel={`${label}, ${valueText}`}
       helperText={helperText}
+      appearance={appearance}
       panel={
         <Modal visible={isOpen} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
           <View style={[styles.scrim, { backgroundColor: colors.overlay, padding: spacing.lg }]}>
@@ -99,6 +103,23 @@ export function ChoiceRowField<T extends string>({
                   />
                 ))}
               </View>
+
+              {/* A visible way out. Tapping beside the card also closes it,
+                  but nothing on screen says so — least of all with a mouse,
+                  where "click outside" is a guess rather than a habit. */}
+              <View style={[styles.actions, { marginTop: spacing.sm }]}>
+                <Pressable
+                  onPress={() => setOpen(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("common.cancel")}
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.action, { opacity: pressed ? 0.6 : 1 }]}
+                >
+                  <Text style={[typography.label, { color: colors.accentStrong, fontWeight: "600" }]}>
+                    {t("common.cancel")}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </Modal>
@@ -118,5 +139,15 @@ const styles = StyleSheet.create({
   card: {
     width: "100%",
     maxWidth: 340,
+  },
+  actions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
+  action: {
+    minHeight: 44,
+    minWidth: 64,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

@@ -1,5 +1,5 @@
 /**
- * Startup: open, migrate, load — in that order, once.
+ * Startup: claim, open, migrate, load — in that order, once.
  *
  * The memoized promise is not an optimization. React mounts effects twice in
  * development, and any remount would otherwise start a second startup while
@@ -17,6 +17,23 @@ import { openTemeloDatabase } from "@/storage/database";
 import { logDatabaseDiagnostics } from "@/storage/diagnostics";
 import { countArchivedTimetables } from "@/storage/timetableLifecycle";
 import { loadTimetable, type PersistedTimetable } from "@/storage/timetableRepository";
+import { claimStorageAsync } from "@/util/storageClaim";
+
+/**
+ * The database belongs to another tab of this app — only ever thrown in a
+ * browser; see `util/storageClaim.web.ts`.
+ *
+ * Its own type rather than an ordinary failure, because the ordinary answer to
+ * a database that will not open is to run in memory, and here that would be
+ * exactly wrong: this tab's edits would look saved and be lost, while the
+ * other tab holds the real timetable. The caller stops instead and says so.
+ */
+export class StorageInUseError extends Error {
+  constructor() {
+    super("the database is open in another tab or window");
+    this.name = "StorageInUseError";
+  }
+}
 
 export interface StorageBootstrap {
   db: SQLiteDatabase;
@@ -37,6 +54,10 @@ export interface StorageBootstrap {
 let bootstrapPromise: Promise<StorageBootstrap> | null = null;
 
 async function runBootstrap(): Promise<StorageBootstrap> {
+  // Before anything touches the file. Always granted on a phone.
+  const claim = await claimStorageAsync();
+  if (!claim.ok) throw new StorageInUseError();
+
   const { db, schemaVersion, repairedColumns } = await openTemeloDatabase();
   const timetable = await loadTimetable(db);
   const archivedCount = await countArchivedTimetables(db);

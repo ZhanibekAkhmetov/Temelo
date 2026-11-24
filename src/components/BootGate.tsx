@@ -15,6 +15,7 @@
 import { useEffect, type ReactNode } from "react";
 import * as SplashScreen from "expo-splash-screen";
 
+import { StorageInUseNotice } from "@/components/StorageInUseNotice";
 import { useAppState } from "@/state/AppStateContext";
 
 // Safe to call at module scope: it only stops the splash from hiding on its
@@ -22,11 +23,14 @@ import { useAppState } from "@/state/AppStateContext";
 void SplashScreen.preventAutoHideAsync();
 
 export function BootGate({ children }: { children: ReactNode }) {
-  const { hydrated } = useAppState();
+  const { hydrated, storageInUse } = useAppState();
 
   useEffect(() => {
-    if (hydrated) void SplashScreen.hideAsync();
-  }, [hydrated]);
+    if (hydrated || storageInUse) void SplashScreen.hideAsync();
+  }, [hydrated, storageInUse]);
 
+  // A browser tab whose database is held by another tab never hydrates; it
+  // says so instead of drawing an app that could not save anything.
+  if (storageInUse) return <StorageInUseNotice />;
   return hydrated ? <>{children}</> : null;
 }

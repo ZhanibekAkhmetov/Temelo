@@ -203,12 +203,80 @@ current implementation status.
     restored, and nothing is written to the database to export anything.
     See "Calendar export" in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-14. **Later synchronization and desktop work**
-    Cross-device synchronization, optional accounts, and a desktop-oriented
-    web experience.
-    *Done when:* scoped in detail at the time this milestone is actually
-    started — deliberately not defined further now (see "Intentionally
-    deferred decisions" in [ARCHITECTURE.md](ARCHITECTURE.md)).
+14. **Web version and share links** *(first part of synchronization and
+    desktop work)*
+    Temelo runs in a desktop browser as the same Expo app, and a timetable
+    can be shared as a link through a small optional web service. The app
+    still needs no account and no network: everything below is additive, and
+    the phone app works exactly as before without the service.
+    *Done when:* a timetable made on the phone can be opened in a browser —
+    by `.temelo` file or by link — previewed, imported and edited there, and
+    survives a reload.
+
+    Steps, in order. Each is one reviewable change, ends with
+    `npm run lint` and `npm run harness` green, and is started by asking for
+    it by number:
+
+    - **14.1 Web build.** `metro.config.js` for `expo-sqlite` on web (wasm
+      asset, COOP/COEP headers); `.web.ts` variants of `util/timetableFiles`
+      (download, file picker, Web Share API), `util/notifications` and
+      `util/haptics` (no-ops; reminders are stated as phone-only); the share
+      receiver stays native-only; WAL tolerated where the web VFS refuses it;
+      one active tab at a time; `navigator.storage.persist()`.
+      *Done when:* in a desktop browser a timetable can be created, edited,
+      exported and imported as `.temelo`, and is still there after a reload.
+      No new npm dependency.
+      *Status: done.* `util/timetableFiles`, `util/notifications`,
+      `util/haptics` and the new `util/storageClaim` each have a `.web.ts`
+      twin typed against the native file, and `harness/architecture.mjs`
+      checks they export the same names. Export downloads (the share sheet on
+      touch devices), import uses the browser's file chooser, reminders read
+      as `"unavailable"` and say where they work. A second tab is refused with
+      a notice rather than left to run in memory. WAL needed no special
+      handling: the pragma does not fail on the web database. Verified in
+      headless Chrome against both the dev server and the static export.
+    - **14.2 Desktop layout.** A wide-screen layout that shows the whole week,
+      and grid manipulation that works with mouse and trackpad.
+      *Done when:* every phone interaction has a desktop equivalent.
+      *Status: done.* From 1024 px (`useIsDesktop`, web only) the week sits
+      under a toolbar (Today, week arrows, the month) beside a sidebar: a month
+      to jump through, then one card each for the timetable, the view (days
+      shown, layout), general settings (appearance, language) and reminders,
+      with About at its foot. One-choice settings apply in the sidebar; the
+      timetable screens, Settings, the class editor and every bottom sheet open
+      as centred dialogs over the week; creating a timetable is a centred card.
+      Blocks stop short of the next column and show their time range, and the
+      day grows to fill the window. Dragging and resizing a class with a mouse
+      (press, hold, drag) works as on a phone. Below 1024 px, and on every
+      phone, nothing changed.
+    - **14.3 TypeScript test runner.** Resolves the deferred "test runner"
+      decision in [ARCHITECTURE.md](ARCHITECTURE.md). The domain suites move
+      to it; `harness/` stays until everything it checks is covered.
+      *Needs explicit approval of the dev dependency.*
+    - **14.4 Server scaffold.** A Spring Boot project in `server/` (Java 21,
+      Maven wrapper, Spring Web, Validation, Data JPA, PostgreSQL, Flyway,
+      Testcontainers), PostgreSQL via Docker Compose, a health endpoint, and
+      `mvnw test` green. Amends the "no backend" non-goal in
+      [PRODUCT.md](PRODUCT.md) and adds the server commands to `CLAUDE.md`.
+      The Expo app's dependencies are untouched.
+    - **14.5 Share-link API.** `POST` a `.temelo` envelope, get back an id and
+      an expiry; `GET` it by id. The server checks the envelope's version,
+      shape and size before storing it; links expire; there are no accounts.
+      Described with OpenAPI and covered by MockMvc and Testcontainers tests.
+      The app still validates whatever it downloads with the same snapshot
+      validator a restore uses — the server is never trusted.
+    - **14.6 Share links in the app.** "Share link" beside "Share Temelo
+      file" and "Export to calendar"; opening a link leads to the same import
+      preview, and importing still clones every id. How a link reaches the
+      native app is decided in this step.
+    - **14.7 Hosting and documentation.** The static web build hosted with
+      the COOP/COEP headers; the server runnable with one Docker Compose
+      command; README and [ARCHITECTURE.md](ARCHITECTURE.md) describe both.
+
+    *Deliberately out of scope:* accounts, cross-device synchronization and
+    web reminders (they would need push and therefore a server-side
+    schedule) — still unscoped, see "Intentionally deferred decisions" in
+    [ARCHITECTURE.md](ARCHITECTURE.md).
 
 15. **Timetable lifecycle** *(Beta 1)*
     The product's organising concept becomes one **active timetable** plus
@@ -248,15 +316,23 @@ implemented and are described in the README:
   English/Russian/German UI, both stored as *preferences* rather than as the
   value they currently resolve to, so "System" keeps following the device.
 
+## Current stage
+
+Temelo **Beta 2** (version 0.2.0, `v0.2.0-beta.1`) is the latest Android
+release; Beta 1 (0.1.0, `v0.1.0-beta.2`) completed the planned mobile
+foundation — the timetable and recurrence model, SQLite persistence and
+migrations, the timetable lifecycle, local reminders, `.temelo` backup and
+import, one-way `.ics` export, localization, theming and branding — and Beta 2
+added intentional overlaps, chosen start dates and any set of visible weekdays.
+
+Milestone 14 is under way: the web version (14.1) and its desktop layout
+(14.2) are done; it runs locally with `npm run web` and has not been hosted
+yet (14.7).
+
 ## Next milestone
 
-Stabilization and a standalone, offline Android build (`preview` profile in
-[eas.json](../eas.json)) that a tester can install without a development
-machine. Milestone 13 was the last new feature planned for Beta 1, so what
-remains before release is verification rather than construction — in
-particular, the share-sheet and calendar-import behaviour that only a real
-device can show, since the emulator cannot complete a calendar import without
-signing a Google account into it.
-
-Milestone 14 — synchronization, optional accounts and desktop work — stays
-deliberately unscoped until it is actually started.
+Step 14.3, the TypeScript test runner, then the Spring Boot share-link service
+(14.4–14.6). Tester feedback on Beta 2 keeps priority over new work: high-impact
+bugs are fixed first, preserving the data model and the upgrade path.
+Synchronization, optional accounts and store distribution remain deliberately
+unscoped until they are actually started.

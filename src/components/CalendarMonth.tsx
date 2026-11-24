@@ -18,6 +18,13 @@ const WEEKDAY_ROW_HEIGHT = 22;
  */
 const DAY_ROW_HEIGHT = 44;
 const DAY_MARKER_SIZE = 34;
+/**
+ * The compact month a desktop sidebar draws: aimed at with a mouse, so a
+ * cell only has to be big enough to read, and the month must leave room for
+ * the settings under it.
+ */
+const COMPACT_DAY_ROW_HEIGHT = 30;
+const COMPACT_DAY_MARKER_SIZE = 26;
 
 /** Fixed by the always-six-row grid, so the pager and the field can size to it. */
 export const CALENDAR_MONTH_GRID_HEIGHT = WEEKDAY_ROW_HEIGHT + DAY_ROW_HEIGHT * MONTH_GRID_ROW_COUNT;
@@ -30,6 +37,8 @@ interface CalendarMonthProps {
   value: string;
   today: string;
   onSelect: (isoDate: string) => void;
+  /** Smaller rows, for a pointer rather than a thumb; see `COMPACT_DAY_ROW_HEIGHT`. */
+  compact?: boolean;
 }
 
 /**
@@ -51,6 +60,7 @@ export const CalendarMonth = memo(function CalendarMonth({
   value,
   today,
   onSelect,
+  compact = false,
 }: CalendarMonthProps) {
   const { colors, typography } = useTheme();
   const { format } = useI18n();
@@ -73,7 +83,7 @@ export const CalendarMonth = memo(function CalendarMonth({
           down and rebuild all forty-two cells; position keys make it forty-two
           prop updates on views that already exist. */}
       {weeks.map((week, row) => (
-        <View key={row} style={[styles.week, { height: DAY_ROW_HEIGHT }]}>
+        <View key={row} style={[styles.week, { height: compact ? COMPACT_DAY_ROW_HEIGHT : DAY_ROW_HEIGHT }]}>
           {week.map((date, column) => (
             <DayCell
               key={column}
@@ -82,6 +92,7 @@ export const CalendarMonth = memo(function CalendarMonth({
               today={date === today}
               inMonth={isSameMonth(date, month)}
               onSelect={onSelect}
+              compact={compact}
             />
           ))}
         </View>
@@ -96,12 +107,14 @@ const DayCell = memo(function DayCell({
   today,
   inMonth,
   onSelect,
+  compact,
 }: {
   date: string;
   selected: boolean;
   today: boolean;
   inMonth: boolean;
   onSelect: (isoDate: string) => void;
+  compact: boolean;
 }) {
   const { colors, typography, radii } = useTheme();
   const press = useCallback(() => onSelect(date), [date, onSelect]);
@@ -118,7 +131,12 @@ const DayCell = memo(function DayCell({
   // three. Across five mounted months that is two hundred views not built.
   const marked = selected || today;
   const label = (
-    <Text style={[typography.body, { color: textColor, fontWeight: selected ? "700" : "400" }]}>
+    <Text
+      style={[
+        compact ? typography.caption : typography.body,
+        { color: textColor, fontWeight: selected ? "700" : "400" },
+      ]}
+    >
       {dayOfMonth(date)}
     </Text>
   );
@@ -136,8 +154,9 @@ const DayCell = memo(function DayCell({
         <View
           style={[
             styles.dayMarker,
+            compact && styles.dayMarkerCompact,
             {
-              borderRadius: radii.lg,
+              borderRadius: compact ? COMPACT_DAY_MARKER_SIZE / 2 : radii.lg,
               backgroundColor: selected ? colors.accent : "transparent",
               borderColor: today && !selected ? colors.accent : "transparent",
               borderWidth: today && !selected ? 1 : 0,
@@ -168,5 +187,9 @@ const styles = StyleSheet.create({
     height: DAY_MARKER_SIZE,
     alignItems: "center",
     justifyContent: "center",
+  },
+  dayMarkerCompact: {
+    width: COMPACT_DAY_MARKER_SIZE,
+    height: COMPACT_DAY_MARKER_SIZE,
   },
 });

@@ -152,6 +152,19 @@ export const de: Translations = {
   "reminders.channelDescription": "Lautlose Erinnerungen mit kurzer Vibration vor Kursbeginn.",
   "reminders.permissionExplainer":
     "Temelo fragt nach der Benachrichtigungsberechtigung, wenn du eine Erinnerung einstellst. Alles andere funktioniert auch ohne.",
+  "reminders.unavailable":
+    "Erinnerungen funktionieren in der Temelo-App auf dem Handy. Hier werden sie mit jedem Kurs gespeichert und in einer .temelo-Datei mitgenommen.",
+
+  "desktop.toggleSidebar": "Hauptmenü",
+  "desktop.previousMonth": "Vorheriger Monat",
+  "desktop.nextMonth": "Nächster Monat",
+  "desktop.allTimetables": "Alle Stundenpläne",
+  "desktop.sectionView": "Ansicht",
+  "desktop.aboutTemelo": "Über Temelo",
+
+  "storageInUse.title": "Temelo ist in einem anderen Tab geöffnet",
+  "storageInUse.body": "Temelo lässt sich nur in einem Tab gleichzeitig verwenden. Schließe den anderen Tab oder das andere Fenster und lade diesen neu.",
+  "storageInUse.reload": "Neu laden",
 
   "settings.title": "Einstellungen",
   "settings.appearance": "Darstellung",

@@ -19,6 +19,7 @@ import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { defaultTimetableAnchorDate } from "@/state/defaults";
 import { MAX_TIMETABLE_NAME_LENGTH } from "@/storage/timetableLifecycle";
+import { useIsDesktop } from "@/theme/useIsDesktop";
 import { useTheme } from "@/theme/useTheme";
 
 /**
@@ -62,6 +63,7 @@ import { useTheme } from "@/theme/useTheme";
  */
 export default function NewTimetableScreen() {
   const { colors, spacing, typography } = useTheme();
+  const isDesktop = useIsDesktop();
   const { t } = useI18n();
   const { state, readArchivedTimetables } = useAppState();
 
@@ -142,6 +144,7 @@ export default function NewTimetableScreen() {
       {/* Back at the top-left like every pushed screen. On first launch there
           is nothing to go back to, and the header keeps the slot empty. */}
       <ScreenContainer
+        desktopCard
         header={
           <ScreenHeader
             title={t("timetables.createTitle")}
@@ -202,7 +205,9 @@ export default function NewTimetableScreen() {
             one decision, they are the ordinary way forward and the way out for
             somebody who already has their timetable in a file. */}
         {current ? null : (
-          <View style={{ marginTop: spacing.sm }}>
+          // On a desktop, under Continue at its own width rather than the
+          // width of the form.
+          <View style={[{ marginTop: spacing.sm }, isDesktop && { alignItems: "flex-end" }]}>
             <Button
               label={t("transfer.importAction")}
               variant="secondary"

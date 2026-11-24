@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
-import { BackHandler, StyleSheet, View } from "react-native";
+import { BackHandler, Platform, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { cancelAnimation, runOnJS, useDerivedValue, useSharedValue, withDecay, withSpring } from "react-native-reanimated";
 import { runOnUISync } from "react-native-worklets";
@@ -12,6 +12,7 @@ import { blocksAtCell, resolveWeekBlocks, type ScheduledClass, type WeekBlock } 
 import type { Weekday } from "@/domain/week";
 import {
   clampValue,
+  BASE_SLOT_HEIGHT,
   columnWidthForZoom,
   DAY_HEADER_HEIGHT,
   maxOffsetXFor,
@@ -199,6 +200,12 @@ interface TimetableSurfaceProps {
   canPlaceClass: (input: PlacementPosition) => PlacementStatus;
   /** The same, asked of one date only — one occurrence, or a new range. */
   canPlaceOccurrence: (input: OccurrencePosition) => PlacementStatus;
+  /**
+   * The period height the day grows to when it has the room — see
+   * `minSlotHeightFor`. The phone's readable height unless a desktop layout
+   * asks for the day to fill a taller window.
+   */
+  readableSlotHeight?: number;
   ref?: Ref<TimetableSurfaceHandle>;
 }
 
@@ -275,6 +282,7 @@ export function TimetableSurface({
   onMoveClass,
   canPlaceClass,
   canPlaceOccurrence,
+  readableSlotHeight = BASE_SLOT_HEIGHT,
   ref,
 }: TimetableSurfaceProps) {
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -324,7 +332,7 @@ export function TimetableSurface({
    * and reads as one act — but each axis clamps itself, so whichever runs
    * out of room first simply stops while the other carries on.
    */
-  const maxZoom = maxZoomFor(bodyWidth, bodyHeight, dayCount, slotCount);
+  const maxZoom = maxZoomFor(bodyWidth, bodyHeight, dayCount, slotCount, readableSlotHeight);
 
   // Continuous page position in weeks; `baseIndex` is the settled one.
   const pos = useSharedValue(0);
@@ -514,13 +522,13 @@ export function TimetableSurface({
     if (bodyHeight <= 0 || bodyWidth <= 0 || slotCount <= 0 || dayCount <= 0) return;
 
     const first = !hasPositioned.current;
-    const minHeight = minSlotHeightFor(bodyHeight, slotCount);
+    const minHeight = minSlotHeightFor(bodyHeight, slotCount, readableSlotHeight);
     // From the height on screen, not from the stored factor: the factor is
     // relative to a minimum that has just changed underneath it.
     const heldHeight = slotHeight.get() * pinchScaleY.get();
     const nextZoom = first || heldHeight <= 0 ? 1 : clampValue(heldHeight / minHeight, 1, maxZoom);
 
-    const nextHeight = slotHeightForZoom(nextZoom, bodyHeight, slotCount);
+    const nextHeight = slotHeightForZoom(nextZoom, bodyHeight, slotCount, readableSlotHeight);
     const nextWidth = columnWidthForZoom(nextZoom, bodyWidth, dayCount);
     zoom.set(nextZoom);
     slotHeight.set(nextHeight);
@@ -548,7 +556,7 @@ export function TimetableSurface({
     offsetX.set(clampValue(offsetX.get(), 0, maxOffsetXFor(nextWidth, dayCount, bodyWidth)));
     // `now` only seeds the first position; later ticks must not scroll the grid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bodyHeight, bodyWidth, dayCount, maxZoom, slotCount, timeSlots]);
+  }, [bodyHeight, bodyWidth, dayCount, maxZoom, readableSlotHeight, slotCount, timeSlots]);
 
   /**
    * The period height as of the last settled zoom.
@@ -638,7 +646,7 @@ export function TimetableSurface({
    */
   const jumpToWeek = useCallback(
     (targetWeek: number) => {
-      const restingPage = runOnUISync(() => {
+      const settle = () => {
         "worklet";
         const page = Math.round(pos.get());
         // Committed *before* anything is cancelled. A settle still in flight
@@ -654,7 +662,11 @@ export function TimetableSurface({
         pos.set(page);
         offsetX.set(0);
         return page;
-      });
+      };
+      // On web there is no UI thread: Reanimated keeps shared values on the
+      // JavaScript thread, `runOnUISync` does not exist, and the same work is
+      // simply done here. Native runs it on the UI thread, as it always has.
+      const restingPage = Platform.OS === "web" ? settle() : runOnUISync(settle);
 
       const next = directJump(restingPage, targetWeek);
       setBaseIndex(next.baseIndex);
@@ -1688,7 +1700,7 @@ export function TimetableSurface({
       // restarting from whatever the detector happens to be counting from.
       const grip = pinchStartScale.get();
       const nextZoom = clampValue(pinchStartZoom.get() * (grip > 0 ? event.scale / grip : event.scale), 1, maxZoom);
-      const liveHeight = slotHeightForZoom(nextZoom, bodyHeight, slotCount);
+      const liveHeight = slotHeightForZoom(nextZoom, bodyHeight, slotCount, readableSlotHeight);
       const liveWidth = columnWidthForZoom(nextZoom, bodyWidth, dayCount);
       zoom.set(nextZoom);
 
