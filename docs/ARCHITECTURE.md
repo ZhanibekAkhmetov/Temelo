@@ -540,8 +540,58 @@ server running at all.
   both public on purpose. The request example is
   `openapi/example-timetable.temelo`, a real file written by the app's
   `buildValidatedTemeloFile`, which the tests also share.
-- **Not yet:** CORS for the web app's origin (14.6) and rate limiting of
-  uploads (to decide with hosting in 14.7).
+- **CORS** (`CorsConfiguration`) lets the web app's origin call `/api/**`
+  with GET and POST and nothing else: `temelo.cors.allowed-origins`
+  (`TEMELO_CORS_ALLOWED_ORIGINS`, default `http://localhost:8081`), never
+  `*`, no credentials. The phone app is not a browser and is not subject to
+  it.
+- **Not yet:** rate limiting of uploads (to decide with hosting in 14.9).
+
+### Share links in the app (milestone 14.6)
+
+- **A link is a web-app address**, `<web app>/shared/<id>`
+  (`domain/shareLink`: `shareLinkUrl`, `shareIdFromInput`), not a server
+  one: it opens in any browser, so the recipient needs nothing installed, and
+  the same route is where Android App Links will deliver a tapped link once
+  there is a hosted domain (14.7, verified once it is live in 14.9).
+- **Off unless configured.** `util/shareLinkApi.shareLinkConfig()` reads
+  `EXPO_PUBLIC_TEMELO_SERVER_URL` and `EXPO_PUBLIC_TEMELO_WEB_URL` (the page's
+  own origin in a browser), which Expo inlines at build time. Without them it
+  is null and no screen offers a link action — the app stays local-first and
+  needs no network. `.env.example` documents both; `.env.local` is gitignored.
+- **`util/shareLinkApi` is the network edge**, the counterpart of
+  `util/timetableFiles`: plain `fetch` (no native module, so no web twin), a
+  90-second timeout so a sleeping free-tier server can wake, nothing thrown,
+  and failures reduced to what a person can act on — `unreachable`, `server`,
+  `tooLarge`, `refused`, `notFound`. It carries text and ids and knows nothing
+  about timetables; it does not trust the server's answer either (an id that
+  is not 22 URL-safe characters or an expiry that is not a date is `server`).
+- **`util/linkSharing` hands the link to the user**: React Native's own
+  `Share` on a phone (whose sheet includes Copy), and in `.web.ts` the
+  clipboard plus the Web Share API where the browser has one.
+- **`features/timetables/transfer`** gains `useShareLink` — the same
+  `buildShareableFile` (snapshot → `buildValidatedTemeloFile`) that "Share
+  Temelo file" uses, then the upload; export still never mutates, and a
+  cancelled wait is dropped by a generation counter rather than reopening the
+  dialog — and `useImportTimetable().openLink`, which downloads and then
+  meets exactly the `previewTimetableFile` → preview → `confirm` path a picked
+  file does. One way in for every source of a `.temelo`, so the server is
+  never trusted: a download is length-bounded, fully validated and
+  clone-imported like any file.
+- **The route** `app/shared/[id].tsx` renders `SharedLinkScreen` (a
+  `desktopCard` page): it opens the link once, shows the preview, and after
+  importing goes where the Timetables screen would — the grid for a new active
+  timetable, the archived timetable's screen otherwise — or back to `/`, which
+  decides between setup and the grid. Importing into an empty app completes
+  setup, as every import into an empty app does.
+- **On a phone today**, a link is pasted into **Open share link** under
+  Import (`OpenLinkDialog`). A tapped link opens the browser. App Links
+  (`intentFilters` + `assetlinks.json`) need the hosted domain and the
+  release signing fingerprint: they are prepared in 14.7, and their
+  automatic verification is confirmed once the domain is live (14.9).
+- **Strings** (`transfer.shareLink*`, `shareLink.*`, `openLink.*`,
+  `sharedLink.*`, `errors.link*`) exist in all three languages; the server's
+  `reason` codes map to them in `linkError`.
 
 ## Future synchronization considerations
 
@@ -603,6 +653,12 @@ into a corner:
 - Component tests (React Native rendering) would need a different runner —
   Jest with `jest-expo` — and are not planned; the web build is checked in a
   real browser instead.
+- `tests/shareLinks.test.ts` covers the app's half of share links without a
+  server: link building and parsing, when the feature is on, every outcome of
+  the API client against a stubbed `fetch` (including the timeout), and that
+  a download is judged by `previewTimetableFile` — the server's own example
+  imports, a tampered one is refused. The flows on screen were checked in
+  headless Chrome against the real server.
 - **The server has its own tests**, JUnit 5 through `./mvnw test` in
   `server/`, separate from `npm test`. Web-layer tests (`@WebMvcTest`,
   MockMvc) replace the database with a Mockito mock, which is the only way

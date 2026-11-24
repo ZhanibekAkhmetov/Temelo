@@ -181,6 +181,9 @@ press — because they are easy to confuse and the difference matters:
 
 - **Share Temelo file** — a `.temelo`, for backup or for importing into Temelo
   on another device. It comes back: importing one reconstructs the timetable.
+- **Share link** — the same file, uploaded to Temelo's optional share-link
+  server, as a link anyone can open for two weeks. Offered only in a build
+  that has a server; see "Sharing a timetable as a link" below.
 - **Export to calendar** — an `.ics` for Google Calendar, Samsung Calendar,
   Apple Calendar or anything else that reads the standard format. It does not
   come back, and Temelo never reads one.
@@ -199,6 +202,30 @@ says so before the export happens.
 Archived timetables export too, read from their stored snapshot: exporting one
 never restores it and never changes anything. A range with no classes in it is
 said so in words rather than shared as an empty file.
+
+## Sharing a timetable as a link
+
+A file has to be sent somewhere and found again; a link is pasted into a chat.
+**Share link** uploads the timetable and shows the link, with the date it
+stops working — two weeks later — and Copy (in a browser) or the share sheet
+(on a phone, whose sheet has Copy built in).
+
+- The link is an address of the **web version**, `…/shared/<id>`. Anybody who
+  opens it — with Temelo installed or not — sees the same preview the Import
+  button shows, and nothing is imported until they confirm. Importing makes a
+  new copy with new identities, exactly like importing a file.
+- On a phone, **Open share link** under Import takes a pasted link (a whole
+  sentence from a chat works too). A link tapped on the phone opens in the
+  browser for now; opening the app straight from a link (Android App Links)
+  is the next step, and works fully once the web version is hosted.
+- There are no accounts. The link is the only key, so it is long and random,
+  and it stops working after two weeks. An expired link and a wrong one look
+  the same: "This link has expired or doesn't exist."
+- Sharing a link is the one thing in Temelo that sends a timetable over the
+  network, and only when the user chooses it — the action says it uploads a
+  copy. A build without a server shows no link actions at all.
+- What the server hands back is checked by the app exactly like a file from
+  disk; the server is never trusted.
 
 ## Receiving a timetable from another app
 

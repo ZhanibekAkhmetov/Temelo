@@ -309,8 +309,15 @@ docker compose up -d --wait   # PostgreSQL 18 on 127.0.0.1:5433
 ```
 
 On Windows, `mvnw.cmd` takes the place of `./mvnw`. The API stores a shared
-`.temelo` file for two weeks and returns it by id; the app does not call it
-yet (milestone 14.6). Details in [server/README.md](server/README.md).
+`.temelo` file for two weeks and returns it by id. Details in
+[server/README.md](server/README.md).
+
+**Share links** appear in the app only when it is built with a server address.
+Copy [.env.example](.env.example) to `.env.local` (gitignored) and restart
+`npm run web`: `EXPO_PUBLIC_TEMELO_SERVER_URL=http://localhost:8080` is
+enough for the web build. A phone on the same Wi-Fi needs the computer's LAN
+address instead of `localhost`, plus `EXPO_PUBLIC_TEMELO_WEB_URL` for the
+links it makes; a development build allows plain `http`.
 
 ### Development notes
 
@@ -387,10 +394,9 @@ Beta 2 (0.2.0), adding intentional overlapping classes, chosen start dates for
 repeating classes, and any set of visible weekdays.
 
 **In progress** — milestone 14: the web version and its desktop layout are
-done, the tests run on Node's built-in test runner, and the optional Spring
-Boot server in `server/` has its API for sharing a timetable as a link; next
-is using it from the app, then hosting both (see
-[docs/ROADMAP.md](docs/ROADMAP.md)).
+done, the tests run on Node's built-in test runner, and a timetable can be
+shared as a link through the optional Spring Boot server in `server/`; next is
+hosting both (see [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 **Later, not committed to** — reusing an existing course across placements,
 two-way calendar synchronization, optional account-based synchronization, and

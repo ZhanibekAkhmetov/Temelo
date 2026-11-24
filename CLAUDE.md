@@ -25,7 +25,8 @@ and Spring Boot `4.2.0` — versions in [server/pom.xml](server/pom.xml).
 - `npm run lint` — lint (`expo lint`); run after code changes
 - `npm test` — the test suites in `tests/` (geometry, navigation, storage,
   lifecycle, transfer, calendar, overlaps, series start, visible weekdays,
-  architecture), on Node's built-in test runner against Node's own SQLite.
+  share links, architecture), on Node's built-in test runner against Node's
+  own SQLite.
   No test dependency is installed. Must stay green. `npm run test:watch` and
   `npm run test:coverage` exist too.
 
@@ -52,6 +53,13 @@ Server (`server/`, milestone 14; Java 21, Spring Boot 4.2, run from
   the snapshot) — never a second Java definition of a timetable — and the app
   validates and clone-imports whatever it downloads, like any `.temelo` file.
   Refusal `reason` codes are API: don't change published ones.
+- Share links in the app are off unless `EXPO_PUBLIC_TEMELO_SERVER_URL` (and on
+  a phone `EXPO_PUBLIC_TEMELO_WEB_URL`) is set at build time — see
+  `.env.example`; without them no screen may mention a network. A link is a
+  web-app address `<web app>/shared/<id>`. The network is reached only through
+  `src/util/shareLinkApi.ts`, and every download goes through
+  `useImportTimetable` → `previewTimetableFile` → the cloning import, like a
+  file.
 - `src/app/` — Expo Router routes and layouts ONLY, no substantial logic.
 - Reusable UI components live outside `src/app` (e.g. `src/components/`).
 - Domain logic (`src/domain/`) must not import React or RN UI primitives.

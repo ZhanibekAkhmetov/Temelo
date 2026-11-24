@@ -12,8 +12,9 @@ import { TextField } from "@/components/TextField";
 import type { DomainError } from "@/domain/errors";
 import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
 import { daysLabel, hoursLabel } from "@/features/timetables/summary";
+import { ShareLinkDialog } from "@/features/timetables/ShareLinkDialog";
 import { TimetableActionSheet } from "@/features/timetables/TimetableActionSheet";
-import { useExportCalendar, useShareTimetable } from "@/features/timetables/transfer";
+import { useExportCalendar, useShareLink, useShareTimetable } from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import { MAX_TIMETABLE_NAME_LENGTH, type ArchivedTimetableSummary } from "@/storage/timetableLifecycle";
@@ -49,6 +50,7 @@ export default function ArchivedTimetableScreen() {
    */
   const justImported = params.imported === "1";
   const sharing = useShareTimetable();
+  const links = useShareLink();
   const calendar = useExportCalendar();
 
   const [entry, setEntry] = useState<ArchivedTimetableSummary | null | undefined>(undefined);
@@ -309,6 +311,22 @@ export default function ArchivedTimetableScreen() {
                 sharing.shareArchive(archiveId);
               },
             },
+          /* Offered only where a share-link server is configured; without
+             one Temelo stays entirely local and nothing here mentions a
+             network. */
+            ...(links.available
+              ? [
+                  {
+                    key: "link",
+                    label: t("transfer.shareLinkAction"),
+                    description: t("transfer.shareLinkHint"),
+                    onPress: () => {
+                      setTransferOpen(false);
+                      links.createForArchive(archiveId);
+                    },
+                  },
+                ]
+              : []),
             {
               key: "calendar",
               label: t("calendarExport.action"),
@@ -321,6 +339,10 @@ export default function ArchivedTimetableScreen() {
           ]}
           onDismiss={() => setTransferOpen(false)}
         />
+      ) : null}
+
+      {links.state.kind !== "idle" ? (
+        <ShareLinkDialog name={entry.name} state={links.state} onRetry={links.retry} onDismiss={links.dismiss} />
       ) : null}
 
       {/* Only with readable contents: the suggested range is derived from the

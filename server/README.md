@@ -90,6 +90,12 @@ expired rows hourly so they stop taking up space.
 Settings, in `application.properties`: `temelo.share.ttl` (default `14d`),
 `temelo.share.max-size` (`1MB`), `temelo.share.purge-interval` (`PT1H`).
 
+**CORS.** The web app runs on its own origin, so the browser only lets it call
+the API from origins listed in `temelo.cors.allowed-origins` — set with
+`TEMELO_CORS_ALLOWED_ORIGINS`, comma-separated, default
+`http://localhost:8081` (the Expo web dev server). GET and POST on `/api/**`
+only, no credentials. The phone app is not affected by CORS.
+
 ## Tests
 
 ```bash
@@ -108,6 +114,7 @@ runs.
 | `HealthControllerTests` | MockMvc slice | up and down, the database mocked |
 | `ShareApiIntegrationTests` | Testcontainers | byte-for-byte round trip, expiry with a movable clock, the purge, Flyway, the OpenAPI description |
 | `TemeloServerApplicationTests` | Testcontainers | the context, the PostgreSQL version, health, the root redirect |
+| `CorsTests` | Testcontainers | the web app's origin allowed, any other refused, only GET and POST |
 
 The example file (`src/main/resources/openapi/example-timetable.temelo`) was
 written by the app's own `buildValidatedTemeloFile`; the tests share it, and

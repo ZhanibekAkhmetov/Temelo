@@ -15,9 +15,10 @@ import type { DomainError } from "@/domain/errors";
 import { weekdaysWithClasses } from "@/domain/timetable";
 import type { Weekday } from "@/domain/week";
 import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
+import { ShareLinkDialog } from "@/features/timetables/ShareLinkDialog";
 import { daysLabel, hoursLabel, shapeOfActive } from "@/features/timetables/summary";
 import { TimetableActionSheet } from "@/features/timetables/TimetableActionSheet";
-import { useExportCalendar, useShareTimetable } from "@/features/timetables/transfer";
+import { useExportCalendar, useShareLink, useShareTimetable } from "@/features/timetables/transfer";
 import { VisibleWeekdaysField } from "@/features/timetables/VisibleWeekdaysField";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
@@ -56,6 +57,7 @@ export default function CurrentTimetableScreen() {
    */
   const sharing = useShareTimetable();
   const calendar = useExportCalendar();
+  const links = useShareLink();
 
   const { timetable } = state;
   const [name, setName] = useState(timetable?.name ?? "");
@@ -288,6 +290,22 @@ export default function CurrentTimetableScreen() {
                 sharing.shareActive();
               },
             },
+          /* Offered only where a share-link server is configured; without
+             one Temelo stays entirely local and nothing here mentions a
+             network. */
+            ...(links.available
+              ? [
+                  {
+                    key: "link",
+                    label: t("transfer.shareLinkAction"),
+                    description: t("transfer.shareLinkHint"),
+                    onPress: () => {
+                      setTransferOpen(false);
+                      links.createForActive();
+                    },
+                  },
+                ]
+              : []),
             {
               key: "calendar",
               label: t("calendarExport.action"),
@@ -300,6 +318,10 @@ export default function CurrentTimetableScreen() {
           ]}
           onDismiss={() => setTransferOpen(false)}
         />
+      ) : null}
+
+      {links.state.kind !== "idle" ? (
+        <ShareLinkDialog name={currentName} state={links.state} onRetry={links.retry} onDismiss={links.dismiss} />
       ) : null}
 
       {calendarOpen ? (
