@@ -31,6 +31,9 @@ Read from the repository's actual configuration, not assumed:
   `expo-localization`.
 - Web: the same app through `react-native-web` and Metro (`npm run web`),
   with a desktop layout from 1024 px — see "Web build" below.
+- Server (optional, `server/`): Java 21, Spring Boot `4.2.0`, PostgreSQL 18,
+  Flyway, Maven wrapper — see "The optional server" below. A separate project
+  with its own build; the app has no dependency on it.
 
 Consult the versioned Expo docs for this exact release before writing
 framework-dependent code: https://docs.expo.dev/versions/v57.0.0/
@@ -55,6 +58,9 @@ src/
 
 New directories are added when real code needs them — empty directories are
 not scaffolded speculatively.
+
+Beside `src/`, `server/` holds the optional Spring Boot service. Nothing in
+`src/` imports from it or names it, and it never imports app code.
 
 ### `src/app` — routes and layouts only
 
@@ -459,6 +465,39 @@ codebase and no second data model.
   reminder fields say where reminders work; lead times are still stored and
   travel in a `.temelo`), haptics, and receiving a share from another app.
 
+## The optional server
+
+`server/` is a Spring Boot application (milestone 14.4) whose first job will
+be sharing a timetable as a link (14.5–14.6). It is additive: the phone app
+and the web app keep working, unchanged, with no server running at all.
+
+- **Separate project.** Java 21, Spring Boot 4.2 (Spring Web MVC, Bean
+  Validation, Spring Data JPA), built with Maven through the committed
+  wrapper (`mvnw`, `mvnw.cmd`), so neither Maven nor PostgreSQL needs
+  installing. Its dependencies live in `server/pom.xml` only; the Expo app's
+  `package.json` is untouched by it. It was generated with Spring Initializr
+  under a placeholder group and moved to `com.zhanibekakhmetov.temelo.server`
+  locally.
+- **PostgreSQL in Docker.** `server/compose.yaml` runs PostgreSQL 18 for
+  development, published on `127.0.0.1:5433` — not 5432, so that a PostgreSQL
+  installed on the machine cannot clash with it (`TEMELO_DB_PORT` moves it;
+  the server reads the same variable). Its credentials exist only for that
+  container.
+- **Flyway owns the schema**, from `src/main/resources/db/migration`;
+  Hibernate runs with `ddl-auto=validate` and never alters a table. The
+  scaffold has no migration yet — the share-link table is 14.5's first — so
+  Flyway logs "No migrations found" until then. `open-in-view` is off.
+- **Health.** `GET /api/health` answers `200 {"status":"UP","database":"UP"}`
+  or `503` with `DOWN`, decided by `Connection.isValid` on a pooled
+  connection. It is a plain controller rather than Spring Boot Actuator,
+  which was not among the dependencies approved for 14.4. The body names no
+  host, version or error, and the pool gives up on a connection after 5 s so
+  the check answers promptly with the database gone.
+- **Organised by feature** (`health/`, later `share/`), not by layer.
+- **The server is never trusted by the app.** Whatever the app downloads from
+  it is validated with the same snapshot validator a restore uses, and
+  imported through the same cloning import (14.5–14.6).
+
 ## Future synchronization considerations
 
 Synchronization across devices is a future possibility, not a current
@@ -519,6 +558,13 @@ into a corner:
 - Component tests (React Native rendering) would need a different runner —
   Jest with `jest-expo` — and are not planned; the web build is checked in a
   real browser instead.
+- **The server has its own tests**, JUnit 5 through `./mvnw test` in
+  `server/`, separate from `npm test`. Web-layer tests (`@WebMvcTest`,
+  MockMvc) replace the database with a Mockito mock, which is the only way
+  to see the "database down" answers; application tests start the whole
+  server against a real PostgreSQL via Testcontainers, on the image
+  `compose.yaml` uses, so they need a running Docker daemon. Mockito is loaded
+  as a `-javaagent` by Surefire instead of attaching itself at runtime.
 
 ## Dependency policy
 
@@ -527,6 +573,9 @@ into a corner:
 - No backend, authentication, synchronization, calendar-integration, or
   database dependency until its corresponding roadmap milestone is actually
   being implemented.
+- The same rule holds in `server/`: its dependencies are exactly the ones
+  approved for milestone 14.4 (Spring Web, Validation, Data JPA, PostgreSQL,
+  Flyway, Testcontainers), and anything beyond them is asked for first.
 - Prefer solving problems with the existing stack (Expo, React Native,
   TypeScript) before reaching for a new package.
 

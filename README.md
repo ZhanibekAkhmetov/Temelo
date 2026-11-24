@@ -205,6 +205,11 @@ Versions are read from [package.json](package.json):
 - `react-native-web` `~0.21.0` for the web version, where `expo-sqlite`
   runs as WebAssembly in the browser
 
+The optional server in [server/](server/) is a separate Java project, with its
+versions in [server/pom.xml](server/pom.xml): Java 21, Spring Boot `4.2.0`
+(Spring Web MVC, Bean Validation, Spring Data JPA), PostgreSQL 18 with Flyway
+migrations, and JUnit 5 with MockMvc and Testcontainers for its tests.
+
 The app runs from an Expo **development build**, not Expo Go: it depends on
 native modules (SQLite, notifications, localization, Reanimated, Gesture
 Handler) that Expo Go does not include.
@@ -213,8 +218,10 @@ Handler) that Expo Go does not include.
 
 Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the short version:
 
-- **Local-first.** Everything needed to use the app lives on the device. No
-  backend is involved, and none is planned before the corresponding milestone.
+- **Local-first.** Everything needed to use the app lives on the device. The
+  app depends on no backend; the Spring Boot service in [server/](server/) is
+  optional and, from milestone 14.5 on, only for sharing a timetable as a
+  link.
 - **SQLite behind a repository boundary.** Screens never touch storage; all
   reads and writes go through [src/storage/](src/storage/), which loads the
   whole timetable at boot and saves diffs in a single transaction, because one
@@ -289,6 +296,24 @@ make the dev server's page isolated, and any host of the exported build
 (`npx expo export --platform web`) has to send the same two. Temelo can be
 open in one tab at a time. Windows 1024 px and wider get the desktop layout.
 
+### Server (optional)
+
+The share-link service in [server/](server/) needs a JDK 21 and a running
+Docker (Docker Desktop on Windows and macOS); the Maven wrapper brings Maven,
+and PostgreSQL runs in a container. From `server/`:
+
+```bash
+docker compose up -d --wait   # PostgreSQL 18 on 127.0.0.1:5433
+./mvnw spring-boot:run        # http://localhost:8080/api/health
+./mvnw test                   # JUnit 5, MockMvc, Testcontainers
+```
+
+On Windows, `mvnw.cmd` takes the place of `./mvnw`. So far it is a scaffold
+with a health endpoint; the share-link API is milestone 14.5. Details in
+[server/README.md](server/README.md).
+
+### Development notes
+
 Ordinary JavaScript/TypeScript changes reload straight through Metro. Adding or
 upgrading a native dependency, or changing native configuration in
 [app.json](app.json), requires a **new development build** — an existing one
@@ -362,9 +387,9 @@ Beta 2 (0.2.0), adding intentional overlapping classes, chosen start dates for
 repeating classes, and any set of visible weekdays.
 
 **In progress** — milestone 14: the web version and its desktop layout are
-done, and the tests run on Node's built-in test runner; next is an optional
-Spring Boot service
-for sharing a timetable as a link (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+done, the tests run on Node's built-in test runner, and the optional Spring
+Boot server is scaffolded in `server/`; next is its API for sharing a
+timetable as a link (see [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 **Later, not committed to** — reusing an existing course across placements,
 two-way calendar synchronization, optional account-based synchronization, and
@@ -391,6 +416,8 @@ src/
 docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md,
                 BETA1_RELEASE_NOTES.md, BETA2_RELEASE_NOTES.md
 tests/          Domain, storage and architecture tests (node --test)
+server/         Optional Spring Boot share-link service (Java 21, Maven,
+                PostgreSQL via Docker Compose) — its own README and tests
 assets/         branding/ holds the Temelo mark and the icon, adaptive-icon,
                 monochrome, notification and splash assets derived from it
 ```
