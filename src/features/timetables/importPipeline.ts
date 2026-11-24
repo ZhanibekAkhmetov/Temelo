@@ -12,10 +12,10 @@
  *    what the imported timetable will be called. Those decisions are made here,
  *    once, and neither caller has any others to offer.
  *  - **It can be tested where it matters.** No React, no native module, no
- *    database: a string in, a preview or a refusal out. The Node harness
- *    exercises *this* function, so "a file shared into the app goes through
+ *    database: a string in, a preview or a refusal out. The Node tests
+ *    exercise *this* function, so "a file shared into the app goes through
  *    exactly the same validator as one picked from Downloads" is something the
- *    harness proves rather than something a comment claims.
+ *    tests prove rather than something a comment claims.
  *
  * Nothing here writes. The most it produces is a description of a timetable and
  * a snapshot that `importTimetableSnapshot` would accept — which is why a file

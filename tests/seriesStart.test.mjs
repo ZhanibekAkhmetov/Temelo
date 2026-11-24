@@ -15,9 +15,10 @@
  *    no longer has are retired rather than left to draw stray lessons;
  *  - a split series cannot silently be stretched back over its other half.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/seriesStart.test.mjs` alone).
  */
 
+import { test } from "node:test";
 import { calendarOccurrencesIn } from "@/domain/calendarExport";
 import {
   applyClassEditScope,
@@ -34,7 +35,7 @@ import { resolveOccurrences } from "@/domain/occurrence";
 import { firstSeriesDate, OPEN_ENDED_DATE } from "@/domain/recurrence";
 import { planReminders } from "@/domain/reminderSchedule";
 import { generateTimeSlots } from "@/domain/time";
-import { check, equal, section } from "./report.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
 
 const NOW = "2026-09-11T09:00:00.000Z";
 const START = "2026-09-07"; // the timetable's start, a Monday
@@ -321,9 +322,20 @@ function testExistingClasses() {
   equal("...and the later half now starts on the new date", drawn(forward.next, "p-new")[0], "2026-11-02");
 }
 
-export function runSeriesStartHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("Start A. A class that begins after the timetable starts", () => {
   testLaterStart();
+});
+
+test("Start B. An alternating class counts its fortnight from its chosen first lesson", () => {
   testParity();
+});
+
+test("Start C. A start is a whole-series edit, and exceptions it orphans are retired", () => {
   testScopesAndExceptions();
+});
+
+test("Start D. Classes saved before Beta 2 keep their behaviour; splits stay apart", () => {
   testExistingClasses();
-}
+});

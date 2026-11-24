@@ -5,7 +5,7 @@
  * database file is its own. The question only exists in a browser, where the
  * same app can be open in several tabs at once — see `storageClaim.web.ts`,
  * which Metro picks for the web build. This file is what native builds and the
- * Node harness get.
+ * Node tests get.
  */
 
 export type StorageClaim =

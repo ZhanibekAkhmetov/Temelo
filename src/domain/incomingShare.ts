@@ -124,7 +124,7 @@ export interface AnsweredShares {
   has: (uri: string) => boolean;
   /** Records that the user has seen this file and answered — imported *or* cancelled. */
   add: (uri: string) => void;
-  /** Forgets everything. The harness uses it; the app never does. */
+  /** Forgets everything. The tests use it; the app never does. */
   clear: () => void;
 }
 
@@ -137,7 +137,7 @@ export interface AnsweredShares {
 export const ANSWERED_SHARE_MEMORY = 8;
 
 /**
- * A factory rather than a module-level object, so the harness can make its own
+ * A factory rather than a module-level object, so the tests can make their own
  * and so two of them cannot see each other's state. The app uses exactly one.
  */
 export function createAnsweredShares(memory: number = ANSWERED_SHARE_MEMORY): AnsweredShares {

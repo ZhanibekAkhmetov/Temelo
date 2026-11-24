@@ -1,5 +1,5 @@
 /**
- * Calendar export harness.
+ * Calendar export tests.
  *
  * Two questions, and the second is the one that matters.
  *
@@ -26,9 +26,10 @@
  * soft-deleted class pointing at a period that no longer exists. Five plain
  * weekly classes would pass all of this while proving nothing.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/calendar.test.mjs` alone).
  */
 
+import { after, before, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,8 +63,8 @@ import { openTemeloDatabase } from "@/storage/database";
 import { buildTimetableSnapshot, timetableSettingsOf } from "@/storage/snapshot";
 import { archiveActiveTimetable, createTimetable, readArchivedSnapshotRow } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
-import { check, equal, section } from "./report.mjs";
-import { useDatabaseFile } from "./sqlite-stub.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
+import { useDatabaseFile } from "./support/sqlite-stub.mjs";
 
 const directory = mkdtempSync(join(tmpdir(), "temelo-calendar-"));
 let databaseIndex = 0;
@@ -868,32 +869,76 @@ async function testArchivedExportChangesNothing() {
 
 /* -------------------------------------------------------------------- run */
 
-export async function runCalendarHarness() {
-  try {
-    const { snapshot } = await buildFixture();
-    const text = buildIcsCalendar({
-      calendarName: snapshot.timetable.name,
-      occurrences: calendarOccurrencesIn(snapshot, RANGE, TEXT),
-      exportedAt: "2026-09-14T07:15:00.000Z",
-    });
+/* ---------------------------------------------------------------- tests */
 
-    testEnvelope(text);
-    testEscaping(text);
-    testFolding(text);
-    testDateTimes(text);
-    testFileNames();
-    testRange();
-    testOccurrenceSemantics(snapshot);
-    testAgreesWithTheResolver(snapshot);
-    testBoundaries(snapshot);
-    testEmptyRange(snapshot);
-    testDeterminism(snapshot);
-    await testArchivedExportChangesNothing();
-  } finally {
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      console.log(`\n(left ${directory} behind; the platform still had it open)`);
-    }
+// One fixture timetable and its calendar file, built once and read by every
+// test below — the same file a user would export.
+let snapshot;
+let text;
+
+before(async () => {
+  ({ snapshot } = await buildFixture());
+  text = buildIcsCalendar({
+    calendarName: snapshot.timetable.name,
+    occurrences: calendarOccurrencesIn(snapshot, RANGE, TEXT),
+    exportedAt: "2026-09-14T07:15:00.000Z",
+  });
+});
+
+test("A. The file is an iCalendar object", () => {
+  testEnvelope(text);
+});
+
+test("B. RFC 5545 TEXT escaping", () => {
+  testEscaping(text);
+});
+
+test("C. Folding at 75 octets, without splitting a character", () => {
+  testFolding(text);
+});
+
+test("D. Floating local times, a UTC stamp, and stable UIDs", () => {
+  testDateTimes(text);
+});
+
+test("E. Filenames", () => {
+  testFileNames();
+});
+
+test("F. Range defaults and validation", () => {
+  testRange();
+});
+
+test("G. Weekly, alternating, one-off, moved, deleted and split", () => {
+  testOccurrenceSemantics(snapshot);
+});
+
+test("H. The exported calendar says exactly what the app shows", () => {
+  testAgreesWithTheResolver(snapshot);
+});
+
+test("I. Both ends of the range are inside it", () => {
+  testBoundaries(snapshot);
+});
+
+test("J. A range with no classes in it", () => {
+  testEmptyRange(snapshot);
+});
+
+test("K. The same export twice is the same file", () => {
+  testDeterminism(snapshot);
+});
+
+test("L. Exporting an archived timetable writes nothing at all", async () => {
+  await testArchivedExportChangesNothing();
+});
+
+// Windows keeps a handle on a WAL database for a moment after it is closed;
+// failing to tidy a temporary directory is not a test result.
+after(() => {
+  try {
+    rmSync(directory, { recursive: true, force: true });
+  } catch {
+    console.log(`(left ${directory} behind; the platform still had it open)`);
   }
-}
+});

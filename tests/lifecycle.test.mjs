@@ -1,5 +1,5 @@
 /**
- * Timetable lifecycle harness.
+ * Timetable lifecycle tests.
  *
  * What this exercises is the part of Beta 1 that can lose a term's worth of
  * work if it is wrong: the v5 → v6 migration, and the four operations that
@@ -15,9 +15,10 @@
  * does nothing but inject a statement failure mid-swap and check that the
  * timetable the user started with is exactly what they still have.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/lifecycle.test.mjs` alone).
  */
 
+import { after, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,8 +61,8 @@ import {
 } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
 import { defaultTimetableAnchorDate, timetableStartDateFrom } from "@/state/defaults";
-import { check, equal, section } from "./report.mjs";
-import { useDatabaseFile } from "./sqlite-stub.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
+import { useDatabaseFile } from "./support/sqlite-stub.mjs";
 
 const directory = mkdtempSync(join(tmpdir(), "temelo-lifecycle-"));
 let databaseIndex = 0;
@@ -238,7 +239,7 @@ async function buildV5Database() {
   useDatabaseFile(path);
   // Bypasses `openTemeloDatabase` deliberately — this has to be a v5
   // database, and that function would migrate it before we could look.
-  const { openDatabaseAsync } = await import("./sqlite-stub.mjs");
+  const { openDatabaseAsync } = await import("./support/sqlite-stub.mjs");
   const db = await openDatabaseAsync();
 
   await db.execAsync(`
@@ -2155,7 +2156,7 @@ function editorEdit(state, placementId, occurrenceDate, edits = {}) {
  * occurrence / this and future / all" about a structural boundary, and it was
  * how a series' anchor could be dragged around the first timetable week.
  * Beta 2 offers a start again, but only as an explicit choice that applies to
- * the whole series (`harness/seriesStart.mjs`). Left untouched — which is
+ * the whole series (`tests/seriesStart.test.mjs`). Left untouched — which is
  * every edit here — the anchors themselves — `startsOn`,
  * `startsWithTimetable`, parity, split boundaries — pass through exactly as
  * stored, and this is what proves it.
@@ -2368,30 +2369,82 @@ async function testOnceToRepeating() {
 
 /* -------------------------------------------------------------------- entry */
 
-export async function runLifecycleHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("A. v5 -> v6: an existing device's timetable survives", async () => {
+  await testMigration();
+});
+
+test("B. Creating the first timetable on a fresh install", async () => {
+  await testCreateFirst();
+});
+
+test("C. Creating a new timetable while one is active", async () => {
+  await testCreateWhileActive();
+});
+
+test("E. Archiving the active timetable", async () => {
+  await testArchiveAndRestore();
+});
+
+test("G. Restoring while another timetable is current", async () => {
+  await testRestoreOverCurrent();
+});
+
+test("H, I, J. Renaming and deleting", async () => {
+  await testRenameAndDelete();
+});
+
+test("K. A forced failure part-way through a swap leaves everything as it was", async () => {
+  await testForcedFailures();
+});
+
+test("M. Recurrence with no global term dates", async () => {
+  await testRecurrenceWithoutTermDates();
+});
+
+test("N. Reminders follow the active timetable", async () => {
+  await testReminderReconciliation();
+});
+
+test("With no active timetable: preferences still save, and deleting all data", async () => {
+  await testNoActiveTimetable();
+});
+
+test("Navigation gate: success means committed, failure means nothing moved", async () => {
+  await testNavigationGate();
+});
+
+test("O. The timetable's start date: v6's anchor, kept exactly", async () => {
+  await testTimetableStartDate();
+});
+
+test("P. Moving the timetable's start earlier extends the pattern, and only the pattern", async () => {
+  await testTimetableStartExtendsPattern();
+});
+
+test("Q. An editor edit that does not touch the start leaves every series anchor as stored", async () => {
+  await testClassEditorSchedule();
+});
+
+test("R. A one-time class turned into a repeating one repeats, open-ended", async () => {
+  await testOnceToRepeating();
+});
+
+test("Timetable names", () => {
+  testNames();
+});
+
+test("Optional names: blank becomes a localized default, numbered from 1", async () => {
+  await testOptionalNames();
+});
+
+// Windows keeps a handle on a WAL database for a moment after it is closed;
+// failing to tidy a temporary directory is not a test result.
+after(() => {
   try {
-    await testMigration();
-    await testCreateFirst();
-    await testCreateWhileActive();
-    await testArchiveAndRestore();
-    await testRestoreOverCurrent();
-    await testRenameAndDelete();
-    await testForcedFailures();
-    await testRecurrenceWithoutTermDates();
-    await testReminderReconciliation();
-    await testNoActiveTimetable();
-    await testNavigationGate();
-    await testTimetableStartDate();
-    await testTimetableStartExtendsPattern();
-    await testClassEditorSchedule();
-    await testOnceToRepeating();
-    testNames();
-    await testOptionalNames();
-  } finally {
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      console.log(`\n(left ${directory} behind; the platform still had it open)`);
-    }
+    rmSync(directory, { recursive: true, force: true });
+  } catch {
+    console.log(`(left ${directory} behind; the platform still had it open)`);
   }
-}
+});

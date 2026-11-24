@@ -10,7 +10,7 @@
 
 // A type-only import, written as one: `import { type X }` leaves an empty
 // runtime import behind, which drags the whole native module in for anything
-// that only wants these constants — the harness among them.
+// that only wants these constants — the tests among them.
 import type { WithSpringConfig } from "react-native-reanimated";
 
 /** Movement, in points, before a pan is allowed to claim an axis. */

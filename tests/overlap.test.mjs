@@ -1,5 +1,5 @@
 /**
- * Overlapping classes harness.
+ * Overlapping classes tests.
  *
  * Beta 2 lets the user keep two classes in the same slot on purpose — a lab
  * alongside a lecture, two electives of which they attend one. What has to be
@@ -13,9 +13,10 @@
  *    own;
  *  - reminders and the calendar export carry both, as two classes.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/overlap.test.mjs` alone).
  */
 
+import { after, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,8 +36,8 @@ import { openTemeloDatabase } from "@/storage/database";
 import { buildTimetableSnapshot, parseTimetableSnapshot, serializeTimetableSnapshot, timetableSettingsOf } from "@/storage/snapshot";
 import { createTimetable } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
-import { check, equal, section } from "./report.mjs";
-import { useDatabaseFile } from "./sqlite-stub.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
+import { useDatabaseFile } from "./support/sqlite-stub.mjs";
 
 const directory = mkdtempSync(join(tmpdir(), "temelo-overlap-"));
 let databaseIndex = 0;
@@ -375,18 +376,34 @@ async function testPersistence() {
   }
 }
 
-export async function runOverlapHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("Overlap A. Clashes are still found on concrete dates", () => {
+  testDetection();
+});
+
+test("Overlap B. Every edit scope stops at an overlap, and keeps both classes once confirmed", () => {
+  testEditScopes();
+});
+
+test("Overlap C. Both layouts draw both classes, each reachable on its own", () => {
+  testBothOrientations();
+});
+
+test("Overlap D. Reminders and the calendar export carry both classes, unchanged", () => {
+  testRemindersAndExport();
+});
+
+test("Overlap E. Both classes survive a cold reopen and a snapshot round trip", async () => {
+  await testPersistence();
+});
+
+// Windows keeps a handle on a WAL database for a moment after it is closed;
+// failing to tidy a temporary directory is not a test result.
+after(() => {
   try {
-    testDetection();
-    testEditScopes();
-    testBothOrientations();
-    testRemindersAndExport();
-    await testPersistence();
-  } finally {
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      console.log(`\n(left ${directory} behind; the platform still had it open)`);
-    }
+    rmSync(directory, { recursive: true, force: true });
+  } catch {
+    console.log(`(left ${directory} behind; the platform still had it open)`);
   }
-}
+});

@@ -32,7 +32,7 @@
  * positioned and places itself from its own `pageIndex`, so the one on screen
  * is decided by arithmetic rather than by where it sits in the list.
  *
- * Pure, and deliberately in its own module so the harness can assert the bound
+ * Pure, and deliberately in its own module so the tests can assert the bound
  * directly instead of inferring it from a component that cannot be mounted
  * outside a device build.
  */

@@ -7,7 +7,7 @@
  * the diagnostics panel says why rather than reporting a failure.
  *
  * Every export is typed against the native file (`typeof Native.*`), and
- * `harness/architecture.mjs` checks they export the same names.
+ * `tests/architecture.test.mjs` checks they export the same names.
  */
 
 import type * as Native from "@/util/haptics";

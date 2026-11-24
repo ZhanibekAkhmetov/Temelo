@@ -1,7 +1,7 @@
 /**
  * Properties of source files rather than of data.
  *
- * Everything else in the harness imports a module and exercises it. This suite
+ * Every other suite imports a module and exercises it. This suite
  * reads files, because what it guards is not a rule about timetables — it is a
  * rule about what a particular file is allowed to contain, and the thing it is
  * guarding against is a *regression of design* rather than of behaviour.
@@ -24,11 +24,12 @@
  *    the device checklist, not this file.
  */
 
+import { test } from "node:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { check, equal, section } from "./report.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
 
 const SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..", "src");
 
@@ -281,10 +282,24 @@ function testWebVariantsMatchTheirNativeFiles() {
   }
 }
 
-export function runArchitectureHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("Y. The share receiver has no navigation to get wrong", () => {
   testReceiverCannotNavigate();
+});
+
+test("Z. The native-intent hook still refuses to invent a destination", () => {
   testNativeIntentStaysBoring();
+});
+
+test("AA. The native file and intent modules are reached through one file", () => {
   testNativeEdgeStaysAtOneFile();
+});
+
+test("AB. Opening a file and sharing it stay two different things", () => {
   testOpeningAndSharingStaySeparate();
+});
+
+test("AC. Every web variant exports what its native file exports", () => {
   testWebVariantsMatchTheirNativeFiles();
-}
+});

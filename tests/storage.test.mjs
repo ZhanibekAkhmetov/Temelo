@@ -1,5 +1,5 @@
 /**
- * Storage harness.
+ * Storage tests.
  *
  * There is no test runner in this project, so this is a plain Node script that
  * exercises the real storage modules — the migrations, the schema repair, the
@@ -10,9 +10,10 @@
  * transactions, and whether a rolled-back write leaves the database on its
  * previous configuration — which is what this milestone is about.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/storage.test.mjs` alone).
  */
 
+import { after, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,8 +26,8 @@ import { createSampleTimetable } from "@/state/sampleTimetable";
 import { openTemeloDatabase } from "@/storage/database";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
 import { withTransaction } from "@/storage/transaction";
-import { check, equal, section } from "./report.mjs";
-import { useDatabaseFile } from "./sqlite-stub.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
+import { useDatabaseFile } from "./support/sqlite-stub.mjs";
 
 // ------------------------------------------------------------- app fixtures
 
@@ -520,22 +521,42 @@ async function testIncoherentPayloadRefused() {
   db.closeSync();
 }
 
-export async function runStorageHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("Academic day reconfigured repeatedly (8 -> 7 -> 8 -> 6 -> 10 -> 7)", async () => {
+  await testReconfiguration();
+});
+
+test("A rejected write leaves the database and the app on the previous academic day", async () => {
+  await testRollbackLeavesEverythingIntact();
+});
+
+test("Two writers on one connection (the timetable save and the reminder ledger)", async () => {
+  await testConcurrentWriters();
+});
+
+test("Control: the same two writers over expo-sqlite's withTransactionAsync", async () => {
+  await testUnserializedControl();
+});
+
+test("Ordinary persistence: preferences, recurrence, reminders, colour", async () => {
+  await testOrdinaryPersistence();
+});
+
+test("An academic day whose two halves disagree is refused", async () => {
+  await testIncoherentPayloadRefused();
+});
+
+test("The states the app builds for itself agree with themselves", async () => {
+  await testBuiltInStatesAreCoherent();
+});
+
+// Windows keeps a handle on a WAL database for a moment after it is closed;
+// failing to tidy a temporary directory is not a test result.
+after(() => {
   try {
-    await testReconfiguration();
-    await testRollbackLeavesEverythingIntact();
-    await testConcurrentWriters();
-    await testUnserializedControl();
-    await testOrdinaryPersistence();
-    await testIncoherentPayloadRefused();
-    await testBuiltInStatesAreCoherent();
-  } finally {
-    // Windows keeps a handle on a WAL database for a moment after it is
-    // closed; failing to tidy a temporary directory is not a test result.
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      console.log(`\n(left ${directory} behind; the platform still had it open)`);
-    }
+    rmSync(directory, { recursive: true, force: true });
+  } catch {
+    console.log(`(left ${directory} behind; the platform still had it open)`);
   }
-}
+});

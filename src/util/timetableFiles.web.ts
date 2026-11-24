@@ -7,7 +7,7 @@
  * the same promise that none of them throws. TypeScript, which does not know
  * about platform extensions, checks every export here against the native file's
  * signature through `typeof Native.*` — the two cannot drift apart silently,
- * and `harness/architecture.mjs` checks they export the same names.
+ * and `tests/architecture.test.mjs` checks they export the same names.
  *
  * Like the native file, this knows nothing about what a timetable is: a file
  * name, some text and a MIME type cross the boundary, never a format.

@@ -12,7 +12,7 @@
  * `.temelo` file arrives with its reminders.
  *
  * Every export is typed against the native file (`typeof Native.*`), so the
- * two cannot drift apart; `harness/architecture.mjs` checks they export the
+ * two cannot drift apart; `tests/architecture.test.mjs` checks they export the
  * same names.
  */
 
