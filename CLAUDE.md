@@ -18,6 +18,9 @@ development build, not Expo Go.
 
 - `npx expo start --dev-client` — run the app (phone and computer must share
   a local network)
+- `npm run web` — run the web build in a browser (milestone 14; platform
+  edges are `.web.ts` twins of `src/util/` wrappers — see "Web build" in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 - `npm run lint` — lint (`expo lint`); run after code changes
 - `npm run harness` — the harness suites in `harness/` (geometry, navigation,
   storage, lifecycle, transfer, calendar, overlaps, series start, visible

@@ -235,7 +235,9 @@ export default function SettingsScreen() {
              this screen owes the user — the OS asks at the moment a reminder
              is first due, not here. */
           helperText={
-            reminderStatus.permission === "denied"
+            reminderStatus.permission === "unavailable"
+              ? t("reminders.unavailable")
+              : reminderStatus.permission === "denied"
               ? t("reminders.permissionDenied")
               : reminderStatus.permission === "undetermined"
                 ? t("reminders.permissionExplainer")

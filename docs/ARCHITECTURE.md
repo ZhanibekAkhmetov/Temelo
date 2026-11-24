@@ -397,6 +397,39 @@ through the storage boundary described above. No ORM.
   until hydration finishes, so no screen ever sees an empty state that could
   then be written over stored data.
 
+## Web build
+
+The browser version is the same app, bundled by Metro for web (`npm run web`;
+`expo export --platform web` for the static build). There is no second
+codebase and no second data model.
+
+- **Storage** is `expo-sqlite`'s web build — SQLite compiled to WebAssembly,
+  running in a worker, persisted in the Origin Private File System. Labelled
+  *alpha* in the Expo 57 docs; everything above `src/storage/` is unaware of
+  it. It needs `SharedArrayBuffer`, so the page must be cross-origin isolated:
+  [metro.config.js](../metro.config.js) serves `.wasm` and sends
+  `Cross-Origin-Embedder-Policy: credentialless` and
+  `Cross-Origin-Opener-Policy: same-origin`, and any host of the static build
+  must send the same two headers.
+- **Platform edges are `.web.ts` twins** of the `src/util/` wrappers. Metro
+  picks `x.web.ts` over `x.ts` for web; TypeScript only ever checks callers
+  against `x.ts`, so each web export is typed `typeof Native.x`, and
+  `harness/architecture.mjs` (section AC) asserts that each twin exports
+  exactly the native file's names and imports no module at runtime.
+- **One tab at a time.** The OPFS handles the database lives in are exclusive,
+  so `util/storageClaim.web.ts` takes a Web Lock before `bootstrap` opens
+  anything. A tab that cannot get it throws `StorageInUseError`, and
+  `BootGate` shows a notice instead of the app — deliberately *not* the
+  in-memory fallback, which would let that tab's edits look saved and vanish.
+  The same moment requests `navigator.storage.persist()`.
+- **Files**: sharing downloads the file (the system share sheet on touch
+  devices that can share files); importing uses the browser's file chooser,
+  through the same parser, preview and cloning import as on a phone. "Open in
+  calendar" is Android-only, so an `.ics` is downloaded.
+- **Not on web**: reminders (permission reads as `"unavailable"`, and the
+  reminder fields say where reminders work; lead times are still stored and
+  travel in a `.temelo`), haptics, and receiving a share from another app.
+
 ## Future synchronization considerations
 
 Synchronization across devices is a future possibility, not a current

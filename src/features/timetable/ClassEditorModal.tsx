@@ -256,6 +256,9 @@ function ClassEditorForm({
    */
   const reminderDiffersFromDefault = reminderMinutes !== defaultReminderMinutes;
   const remindersBlocked = reminderStatus.permission === "denied";
+  // The web build: no notifications at all, so say where reminders do work —
+  // but only once the class actually has one.
+  const remindersUnavailable = reminderStatus.permission === "unavailable" && reminderMinutes !== null;
   /*
    * Why the OS has not asked yet, said at the one moment it is worth
    * knowing: the user has just chosen a lead time and nothing visible
@@ -540,7 +543,9 @@ function ClassEditorForm({
             value={reminderMinutes}
             onChange={setReminderMinutes}
             helperText={
-              remindersBlocked
+              remindersUnavailable
+                ? t("reminders.unavailable")
+                : remindersBlocked
                 ? t("classEditor.remindersBlocked")
                 : remindersUnasked
                   ? t("reminders.permissionExplainer")
