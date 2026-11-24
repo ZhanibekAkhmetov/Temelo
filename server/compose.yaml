@@ -1,0 +1,38 @@
+# The development database for the share-link server.
+#
+#   docker compose up -d     start PostgreSQL in the background
+#   docker compose down      stop it (the data volume is kept)
+#   docker compose down -v   stop it and delete the data
+#
+# The credentials match src/main/resources/application.properties and exist
+# only for this local container. The port is bound to 127.0.0.1, so the
+# database is not reachable from the rest of the network. It is 5433 rather
+# than PostgreSQL's usual 5432 so that it cannot collide with a PostgreSQL
+# installed on the machine itself; TEMELO_DB_PORT moves it, and the server
+# reads the same variable.
+#
+# Keep the image in step with TestcontainersConfiguration, so the tests run
+# against the same PostgreSQL as development does.
+name: temelo-server
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: temelo
+      POSTGRES_USER: temelo
+      POSTGRES_PASSWORD: temelo
+    ports:
+      - "127.0.0.1:${TEMELO_DB_PORT:-5433}:5432"
+    volumes:
+      # PostgreSQL 18 images keep their data in a versioned directory below
+      # /var/lib/postgresql, so the volume is mounted there, not at .../data.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temelo -d temelo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

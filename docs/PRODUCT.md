@@ -228,7 +228,11 @@ The Import button inside Temelo stays, and says so in one line: "Choose a
 The following are explicitly out of scope for the current implementation
 effort:
 
-- No backend, server, or authentication.
+- No backend the app depends on, and no authentication. The one server is
+  optional: a small share-link service (milestone 14, `server/`) for handing
+  a timetable to someone as a link. Every feature that works today works
+  without it, nothing is sent to it unless the user shares a link, and it
+  never sees an account because there is none.
 - No account of any kind.
 - No cloud synchronization between devices.
 - No calendar *synchronization*. Calendar export exists and is one-way: a

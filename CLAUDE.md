@@ -12,7 +12,8 @@ Milestone plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 Expo `~57.0.9`, React Native `0.86.2`, React `19.2.3`, TypeScript `~6.0.3`
 (strict), Expo Router `~57.0.9`, Expo Dev Client. Verify exact versions in
 [package.json](package.json) before assuming — do not guess. Runs via a
-development build, not Expo Go.
+development build, not Expo Go. The optional server in `server/` is Java 21
+and Spring Boot `4.2.0` — versions in [server/pom.xml](server/pom.xml).
 
 ## Commands
 
@@ -28,8 +29,23 @@ development build, not Expo Go.
   No test dependency is installed. Must stay green. `npm run test:watch` and
   `npm run test:coverage` exist too.
 
+Server (`server/`, milestone 14; Java 21, Spring Boot 4.2, run from
+`server/`, Docker Desktop must be running; `mvnw.cmd` on Windows):
+
+- `docker compose up -d --wait` — development PostgreSQL 18 on
+  `127.0.0.1:5433` (`TEMELO_DB_PORT` moves it); `docker compose down` stops it
+- `./mvnw spring-boot:run` — the server on `http://localhost:8080`
+  (`GET /api/health`); `./mvnw spring-boot:test-run` runs it against a
+  throwaway Testcontainers database instead
+- `./mvnw test` — JUnit 5 + MockMvc + Testcontainers; must stay green after
+  any server change
+
 ## Architecture boundaries
 
+- `server/` is a separate, optional Maven project. The app never depends on
+  it, imports from it or needs it running; its dependencies live only in
+  `server/pom.xml`. Flyway owns the server schema (`ddl-auto=validate`).
+  Whatever the app receives from it is validated like any `.temelo` file.
 - `src/app/` — Expo Router routes and layouts ONLY, no substantial logic.
 - Reusable UI components live outside `src/app` (e.g. `src/components/`).
 - Domain logic (`src/domain/`) must not import React or RN UI primitives.
@@ -117,7 +133,8 @@ development build, not Expo Go.
 - Do not add, remove, or upgrade dependencies without explicit instruction.
 - Never run `npm audit fix --force`.
 - Prefer small, reviewable changes.
-- Run `npm run lint` after code-related changes.
+- Run `npm run lint` after code-related changes, and `./mvnw test` in
+  `server/` after server changes.
 
 ## Process rules
 

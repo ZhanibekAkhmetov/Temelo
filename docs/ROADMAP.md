@@ -265,6 +265,31 @@ current implementation status.
       `mvnw test` green. Amends the "no backend" non-goal in
       [PRODUCT.md](PRODUCT.md) and adds the server commands to `CLAUDE.md`.
       The Expo app's dependencies are untouched.
+      *Decided:* Maven (not Gradle), group `com.zhanibekakhmetov.temelo`,
+      artifact `server`, the latest stable Spring Boot on Java 21. Asking for
+      this step approves exactly the server dependencies listed above, in
+      `server/` only; anything beyond them still needs asking. Java 21 and
+      Docker are installed on the development machine; Maven and PostgreSQL
+      are not and need not be — the generated `mvnw` wrapper brings Maven, and
+      PostgreSQL runs in Docker (Docker Desktop must be running for the
+      database and for Testcontainers). The project is generated with Spring
+      Initializr (start.spring.io) by the developer and unzipped into
+      `server/` — the group id carries a personal name, so it is not sent to
+      an outside service on anyone else's initiative.
+      *Status: done.* Spring Boot 4.2.0 on Java 21, Maven 3.10.1 through the
+      wrapper. Initializr was asked for the project under the placeholder
+      group `com.example`, and the group and package were renamed to
+      `com.zhanibekakhmetov.temelo.server` locally, so the personal name never
+      left the machine. `server/compose.yaml` runs PostgreSQL 18 on
+      `127.0.0.1:5433` (5432 was already taken by a PostgreSQL on the
+      development machine). `GET /api/health` answers `200`/`UP` or
+      `503`/`DOWN` by checking a database connection — a plain controller,
+      since Actuator was not among the approved dependencies. `mvnw test` runs
+      seven tests: four MockMvc web-layer tests with the database mocked (up,
+      invalid connection, refused connection, no error detail leaked) and
+      three on the whole application against PostgreSQL in Testcontainers.
+      Flyway is wired up with no migration yet; the share-link table is
+      14.5's first. The Expo app's dependencies are untouched.
     - **14.5 Share-link API.** `POST` a `.temelo` envelope, get back an id and
       an expiry; `GET` it by id. The server checks the envelope's version,
       shape and size before storing it; links expire; there are no accounts.
@@ -331,14 +356,16 @@ migrations, the timetable lifecycle, local reminders, `.temelo` backup and
 import, one-way `.ics` export, localization, theming and branding — and Beta 2
 added intentional overlaps, chosen start dates and any set of visible weekdays.
 
-Milestone 14 is under way: the web version (14.1), its desktop layout (14.2)
-and the move to Node's built-in test runner (14.3) are done. The web version
-runs locally with `npm run web` and has not been hosted yet (14.7).
+Milestone 14 is under way: the web version (14.1), its desktop layout (14.2),
+the move to Node's built-in test runner (14.3) and the Spring Boot server
+scaffold in `server/` (14.4) are done. The web version runs locally with
+`npm run web` and the server with `docker compose up` and `./mvnw
+spring-boot:run`; neither has been hosted yet (14.7).
 
 ## Next milestone
 
-The Spring Boot share-link service (14.4–14.6), whose tests will be JUnit and
-Testcontainers on the Java side. Tester feedback on Beta 2 keeps priority over
+The share-link API (14.5) on the server scaffold, then share links in the app
+(14.6), tested with JUnit, MockMvc and Testcontainers on the Java side. Tester feedback on Beta 2 keeps priority over
 new work: high-impact bugs are fixed first, preserving the data model and the
 upgrade path.
 Synchronization, optional accounts and store distribution remain deliberately
