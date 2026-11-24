@@ -208,7 +208,8 @@ Versions are read from [package.json](package.json):
 The optional server in [server/](server/) is a separate Java project, with its
 versions in [server/pom.xml](server/pom.xml): Java 21, Spring Boot `4.2.0`
 (Spring Web MVC, Bean Validation, Spring Data JPA), PostgreSQL 18 with Flyway
-migrations, and JUnit 5 with MockMvc and Testcontainers for its tests.
+migrations, an OpenAPI description with Swagger UI (springdoc-openapi), and
+JUnit 5 with MockMvc and Testcontainers for its tests.
 
 The app runs from an Expo **development build**, not Expo Go: it depends on
 native modules (SQLite, notifications, localization, Reanimated, Gesture
@@ -220,8 +221,7 @@ Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the short version:
 
 - **Local-first.** Everything needed to use the app lives on the device. The
   app depends on no backend; the Spring Boot service in [server/](server/) is
-  optional and, from milestone 14.5 on, only for sharing a timetable as a
-  link.
+  optional and only for sharing a timetable as a link.
 - **SQLite behind a repository boundary.** Screens never touch storage; all
   reads and writes go through [src/storage/](src/storage/), which loads the
   whole timetable at boot and saves diffs in a single transaction, because one
@@ -304,13 +304,13 @@ and PostgreSQL runs in a container. From `server/`:
 
 ```bash
 docker compose up -d --wait   # PostgreSQL 18 on 127.0.0.1:5433
-./mvnw spring-boot:run        # http://localhost:8080/api/health
+./mvnw spring-boot:run        # http://localhost:8080/swagger-ui.html
 ./mvnw test                   # JUnit 5, MockMvc, Testcontainers
 ```
 
-On Windows, `mvnw.cmd` takes the place of `./mvnw`. So far it is a scaffold
-with a health endpoint; the share-link API is milestone 14.5. Details in
-[server/README.md](server/README.md).
+On Windows, `mvnw.cmd` takes the place of `./mvnw`. The API stores a shared
+`.temelo` file for two weeks and returns it by id; the app does not call it
+yet (milestone 14.6). Details in [server/README.md](server/README.md).
 
 ### Development notes
 
@@ -388,8 +388,9 @@ repeating classes, and any set of visible weekdays.
 
 **In progress** — milestone 14: the web version and its desktop layout are
 done, the tests run on Node's built-in test runner, and the optional Spring
-Boot server is scaffolded in `server/`; next is its API for sharing a
-timetable as a link (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+Boot server in `server/` has its API for sharing a timetable as a link; next
+is using it from the app, then hosting both (see
+[docs/ROADMAP.md](docs/ROADMAP.md)).
 
 **Later, not committed to** — reusing an existing course across placements,
 two-way calendar synchronization, optional account-based synchronization, and

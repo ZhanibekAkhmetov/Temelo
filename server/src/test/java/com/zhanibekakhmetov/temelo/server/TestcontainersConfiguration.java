@@ -15,9 +15,9 @@ import org.testcontainers.utility.DockerImageName;
  * in step.
  */
 @TestConfiguration(proxyBeanMethods = false)
-class TestcontainersConfiguration {
+public class TestcontainersConfiguration {
 
-	static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse("postgres:18-alpine");
+	public static final DockerImageName POSTGRES_IMAGE = DockerImageName.parse("postgres:18-alpine");
 
 	@Bean
 	@ServiceConnection
