@@ -21,9 +21,10 @@ Read from the repository's actual configuration, not assumed:
   (see [tsconfig.json](../tsconfig.json))
 - Linting: `eslint-config-expo` via flat config
   ([eslint.config.js](../eslint.config.js))
-- No test runner or state management library is installed. Cross-screen state
-  is a single React context (`src/state/AppStateContext.tsx`); domain and
-  storage checks run through the Node script in `harness/` (`npm run harness`).
+- No state management library is installed. Cross-screen state is a single
+  React context (`src/state/AppStateContext.tsx`).
+- Tests run on Node's built-in test runner (`npm test`, suites in `tests/`);
+  no test dependency is installed. See "Testing strategy".
 - Persistence is `expo-sqlite`, accessed only through `src/storage/`.
 - Gestures and animation: `react-native-gesture-handler` and
   `react-native-reanimated`. Reminders: `expo-notifications`. Device language:
@@ -259,7 +260,7 @@ it. The `.temelo` itself is never modified.
 Platform access is confined to `util/timetableFiles`, which owns
 `expo-file-system` and `expo-sharing` and knows nothing about timetables —
 exactly the line `util/notifications` and `util/haptics` already draw. That is
-what lets the whole format be exercised by the Node harness, which has no native
+what lets the whole format be exercised by the Node tests, which have no native
 modules.
 
 ## Calendar export: one way, bounded, materialized
@@ -289,7 +290,7 @@ enumerates the dates and asks **`resolveOccurrences`** — the same function the
 grid draws from, the clash check asks and the reminder plan is built on — then
 writes one `VEVENT` per resolved occurrence. A cancelled occurrence emits
 nothing, a moved one emits exactly one event at the date it moved to, and a
-split series is two ordinary runs. `harness/calendar.mjs` suite H asserts the
+split series is two ordinary runs. `tests/calendar.test.mjs` test H asserts the
 exported set equals the resolver's set over several ranges, which is what stops
 the two drifting apart.
 
@@ -366,7 +367,7 @@ against a navigation state whose `<Stack>` had not mounted is built with
 `target: undefined` and reaches only Expo Router's internal slot navigator,
 producing "the action ... was not handled by any navigator". `navigationRef.isReady()` is already
 true when that happens, so no readiness check catches it.
-Removing the navigation removes the failure; `harness/architecture.mjs` asserts
+Removing the navigation removes the failure; `tests/architecture.test.mjs` asserts
 that the receiver still has no router to call.
 
 The payload is read into memory and cleared from the native singleton as soon as
@@ -375,7 +376,7 @@ the bytes arrive, before the user answers — so an import never depends on a
 (Android redelivers the launching intent when a reclaimed task is resumed)
 cannot present the same file twice.
 
-None of this can be proven off-device. The harness proves the decisions and the
+None of this can be proven off-device. The tests prove the decisions and the
 sequencing; task and activity behaviour is a device checklist.
 
 ## Local persistence
@@ -416,7 +417,7 @@ codebase and no second data model.
 - **Platform edges are `.web.ts` twins** of the `src/util/` wrappers. Metro
   picks `x.web.ts` over `x.ts` for web; TypeScript only ever checks callers
   against `x.ts`, so each web export is typed `typeof Native.x`, and
-  `harness/architecture.mjs` (section AC) asserts that each twin exports
+  `tests/architecture.test.mjs` (test AC) asserts that each twin exports
   exactly the native file's names and imports no module at runtime.
 - **One tab at a time.** The OPFS handles the database lives in are exclusive,
   so `util/storageClaim.web.ts` takes a Web Lock before `bootstrap` opens
@@ -475,32 +476,49 @@ into a corner:
 
 ## Testing strategy (high level)
 
-- No test runner is installed yet. What exists is `harness/` — a Node script
-  (`npm run harness`) that runs domain and storage checks directly, with
-  `expo-sqlite` redirected to Node's built-in SQLite. It is a stopgap, not a
-  substitute for a real runner.
+- **Node's built-in test runner** (`node --test`, Node 22), chosen in
+  milestone 14.3 over Vitest and Jest because it needs no dependency and the
+  suites already ran on Node: `npm test`, `npm run test:watch`,
+  `npm run test:coverage`. `tests/support/setup.mjs` is loaded first
+  (`--import`); it registers `resolve-hook.mjs` — the `@/` alias, and
+  `expo-sqlite` redirected to `sqlite-stub.mjs` over Node's own SQLite — and
+  sets `__DEV__`. Node strips the TypeScript in `src/`, so the real code runs
+  uncompiled.
+- The suites (`tests/*.test.mjs`) are the former harness, one `test(...)` per
+  section. Their assertions keep the harness's sentence-first `check` and
+  `equal` (`tests/support/assertions.mjs`), which now throw through
+  `node:assert`, so a test stops at its first failing check. Steps that share a
+  fixture (calendar, transfer) run in order in one file, as top-level tests do;
+  each storage suite opens its own temporary database, so files run in
+  parallel safely.
+- New tests may be written in TypeScript (`tests/*.test.ts`) with `describe` /
+  `it` and `node:assert`; they are type-checked by `npx tsc --noEmit`. Expo's
+  base tsconfig limits global types to React Native's, so such a file starts
+  with `/// <reference types="node" />` — `@types/node` arrives with Expo,
+  not as a dependency of ours.
 - Domain logic (`src/domain/`) is the highest-value target for unit tests,
   since it is plain TypeScript and encodes the rules most likely to have
   edge cases (slot generation, recurrence, date math).
 - UI/component testing is a lower near-term priority than domain logic
   coverage, given the current project stage.
-- `harness/architecture.mjs` is the one suite that reads source files rather
+- `tests/architecture.test.mjs` is the one suite that reads source files rather
   than exercising modules. It guards design properties whose violation would
   only show up on a physical device — today, that the share receiver has no
   router to call. Keep it small: a check belongs there only when the failure it
   prevents cannot be reproduced in Node at all.
-- `harness/calendar.mjs` checks the `.ics` against RFC 5545 literally rather
+- `tests/calendar.test.mjs` checks the `.ics` against RFC 5545 literally rather
   than through a library — a library sharing the same misunderstanding would
   prove nothing — and asserts the exported event set equals what
   `resolveOccurrences` produces. It cannot prove that any particular calendar
   application accepts the file; that is a device check.
-- **Nothing in the harness can prove Android task or activity behaviour.**
+- **Nothing in the tests can prove Android task or activity behaviour.**
   Which task a share-launched activity lands in, whether Done returns the user
   to the sending app, and what the Expo dev client does to the task on the way
   are device questions. They are verified with `adb shell dumpsys activity
   activities` and a physical phone, not here.
-- Adding a test runner (e.g. Jest, per Expo's own guide) should happen when
-  there is domain logic worth testing, not preemptively.
+- Component tests (React Native rendering) would need a different runner —
+  Jest with `jest-expo` — and are not planned; the web build is checked in a
+  real browser instead.
 
 ## Dependency policy
 
@@ -517,7 +535,6 @@ into a corner:
 The following are recognized as open questions, deliberately not decided
 yet:
 
-- Test runner choice and configuration.
 - Calendar export format/integration mechanism per target platform.
 - Synchronization protocol and any future account model.
 

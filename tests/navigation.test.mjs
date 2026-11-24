@@ -1,5 +1,5 @@
 /**
- * Week-navigation harness.
+ * Week-navigation tests.
  *
  * This suite exists because of a device report, and it is written to pin down
  * the thing that report was about: paging got slower the further it went, and a
@@ -20,6 +20,7 @@
  * freely as forwards, and a class still does not occur before its own start.
  */
 
+import { test } from "node:test";
 import { startOfWeekIso, weekDatesFrom } from "@/domain/calendar";
 import { addDaysIso } from "@/domain/date";
 import { findPeriodProgress, generateTimeSlots } from "@/domain/time";
@@ -47,7 +48,7 @@ import {
   PAGE_COMMIT_FRACTION,
   PAGE_FLICK_VELOCITY,
 } from "@/features/timetable/motion";
-import { check, equal, section } from "./report.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
 
 const WEEKDAYS = getOrderedWeekdays("saturdaySunday");
 const ANCHOR_WEEK = startOfWeekIso("2026-09-09");
@@ -839,15 +840,44 @@ function testMonthRingNeverStalls() {
   );
 }
 
-export function runNavigationHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("A. The mounted page window is bounded, and its pages are never rebuilt", () => {
   testBoundedPageWindow();
+});
+
+test("B. Resolving a week costs the same however far away it is", () => {
   testResolutionIsLocal();
+});
+
+test("C. Today jumps directly, whatever the distance", () => {
   testTodayJumpIsConstant();
+});
+
+test("D. Past weeks are navigable, before the anchor and before today", () => {
   testPastNavigation();
+});
+
+test("Conflict checking is bounded by the data, not by the viewed week", () => {
   testClashCheckStaysBounded();
+});
+
+test("The horizontal layout's current-time marker reads the same axis rule", () => {
   testHorizontalNowIndicator();
+});
+
+test("H. The month pager's rapid-swipe semantics are intact", () => {
   testMonthPagerSwipeSemantics();
+});
+
+test("I. Today after distant paging: three valid pages, on screen, at once", () => {
   testDirectJumpLandsOnScreen();
+});
+
+test("J. The timetable's start date is a lower bound on occurrences, and nothing more", () => {
   testTimetableStartBound();
+});
+
+test("K. The date picker pages through months continuously on a fixed ring of five", () => {
   testMonthRingNeverStalls();
-}
+});

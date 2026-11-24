@@ -1,5 +1,5 @@
 /**
- * Grid geometry harness.
+ * Grid geometry tests.
  *
  * The timetable's vertical scale is arithmetic, and arithmetic can be checked
  * without a device. What this covers is the two things the geometry has to
@@ -17,6 +17,7 @@
  * scrolled past its own end.
  */
 
+import { test } from "node:test";
 import { MAX_SLOT_COUNT } from "@/domain/time";
 import {
   BASE_SLOT_HEIGHT,
@@ -31,7 +32,7 @@ import {
   slotHeightForZoom,
   topInsetFor,
 } from "@/features/timetable/geometry";
-import { check, equal, section } from "./report.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
 
 /**
  * Body heights a real phone produces, in dp.
@@ -303,10 +304,24 @@ function testSharedOrigin() {
   check("a touch in the blank space above the grid falls outside", hit(inset - NUDGE) < 0, "it landed on a period");
 }
 
-export function runGeometryHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("Minimum vertical scale: the rules that hold everywhere", () => {
   testMinimumScaleInvariants();
+});
+
+test("A normal academic day at minimum zoom, on phone-sized viewports", () => {
   testPhoneSizedDays();
+});
+
+test("Changing the academic day leaves the geometry coherent", () => {
   testReconfigurationStaysCoherent();
+});
+
+test("A one-period change does not resize the rows underneath the user", () => {
   testHeightIsCarriedAcross();
+});
+
+test("One vertical origin for the gutter, the rules, the blocks and the marker", () => {
   testSharedOrigin();
-}
+});

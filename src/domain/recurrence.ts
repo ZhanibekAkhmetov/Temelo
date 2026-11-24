@@ -246,7 +246,7 @@ export interface SeriesHistoryRecord {
  * covers. Only the first is harmless, so the window is generous.
  *
  * Migration v7 applies the same rule in SQL, written out there as literals for
- * the usual reason; the harness checks the two agree. This copy is for archive
+ * the usual reason; the tests check the two agree. This copy is for archive
  * snapshots written before v7, which carry no flag of their own.
  */
 export function inferStartsWithTimetable(placements: SeriesHistoryRecord[]): Map<string, boolean> {

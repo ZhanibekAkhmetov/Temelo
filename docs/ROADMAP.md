@@ -214,7 +214,7 @@ current implementation status.
     survives a reload.
 
     Steps, in order. Each is one reviewable change, ends with
-    `npm run lint` and `npm run harness` green, and is started by asking for
+    `npm run lint` and `npm test` green, and is started by asking for
     it by number:
 
     - **14.1 Web build.** `metro.config.js` for `expo-sqlite` on web (wasm
@@ -228,7 +228,7 @@ current implementation status.
       No new npm dependency.
       *Status: done.* `util/timetableFiles`, `util/notifications`,
       `util/haptics` and the new `util/storageClaim` each have a `.web.ts`
-      twin typed against the native file, and `harness/architecture.mjs`
+      twin typed against the native file, and `tests/architecture.test.mjs`
       checks they export the same names. Export downloads (the share sheet on
       touch devices), import uses the browser's file chooser, reminders read
       as `"unavailable"` and say where they work. A second tab is refused with
@@ -252,7 +252,13 @@ current implementation status.
     - **14.3 TypeScript test runner.** Resolves the deferred "test runner"
       decision in [ARCHITECTURE.md](ARCHITECTURE.md). The domain suites move
       to it; `harness/` stays until everything it checks is covered.
-      *Needs explicit approval of the dev dependency.*
+      *Status: done.* Node's built-in runner was chosen, so no dependency was
+      added. All ten harness suites moved to `tests/` — every one, not only
+      the domain ones — as one `test(...)` per section with their assertions
+      intact, so `harness/` is gone and `npm run harness` is now `npm test`
+      (plus `test:watch` and `test:coverage`). A first TypeScript test covers
+      the desktop period height from 14.2. A deliberately broken centring rule
+      fails three tests across both styles.
     - **14.4 Server scaffold.** A Spring Boot project in `server/` (Java 21,
       Maven wrapper, Spring Web, Validation, Data JPA, PostgreSQL, Flyway,
       Testcontainers), PostgreSQL via Docker Compose, a health endpoint, and
@@ -325,14 +331,15 @@ migrations, the timetable lifecycle, local reminders, `.temelo` backup and
 import, one-way `.ics` export, localization, theming and branding — and Beta 2
 added intentional overlaps, chosen start dates and any set of visible weekdays.
 
-Milestone 14 is under way: the web version (14.1) and its desktop layout
-(14.2) are done; it runs locally with `npm run web` and has not been hosted
-yet (14.7).
+Milestone 14 is under way: the web version (14.1), its desktop layout (14.2)
+and the move to Node's built-in test runner (14.3) are done. The web version
+runs locally with `npm run web` and has not been hosted yet (14.7).
 
 ## Next milestone
 
-Step 14.3, the TypeScript test runner, then the Spring Boot share-link service
-(14.4–14.6). Tester feedback on Beta 2 keeps priority over new work: high-impact
-bugs are fixed first, preserving the data model and the upgrade path.
+The Spring Boot share-link service (14.4–14.6), whose tests will be JUnit and
+Testcontainers on the Java side. Tester feedback on Beta 2 keeps priority over
+new work: high-impact bugs are fixed first, preserving the data model and the
+upgrade path.
 Synchronization, optional accounts and store distribution remain deliberately
 unscoped until they are actually started.

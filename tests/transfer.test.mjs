@@ -1,5 +1,5 @@
 /**
- * Timetable export and import harness.
+ * Timetable export and import tests.
  *
  * The lifecycle harness next door asks whether a *swap* can lose a timetable.
  * This one asks the two questions a file raises that an archive does not.
@@ -38,9 +38,10 @@
  * reminder lead times throughout. A timetable of five plain weekly classes would
  * pass all of this while proving nothing.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/transfer.test.mjs` alone).
  */
 
+import { after, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,8 +91,8 @@ import {
 } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
 import { DEFAULT_SETTINGS } from "@/state/defaults";
-import { check, equal, section } from "./report.mjs";
-import { useDatabaseFile } from "./sqlite-stub.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
+import { useDatabaseFile } from "./support/sqlite-stub.mjs";
 
 const directory = mkdtempSync(join(tmpdir(), "temelo-transfer-"));
 let databaseIndex = 0;
@@ -1890,33 +1891,99 @@ async function testIncomingShareIsAnsweredOnce(text) {
 
 /* -------------------------------------------------------------------- entry */
 
-export async function runTransferHarness() {
+/* ---------------------------------------------------------------- tests */
+
+// Produced by the first test and read by the ones after it; tests in one
+// file run in order.
+let text;
+let snapshot;
+
+test("A. Exporting the active timetable", async () => {
+  ({ text, snapshot } = await testExport());
+});
+
+test("B. Exporting an archived timetable", async () => {
+  await testExportArchived();
+});
+
+test("C. Encode, parse, validate — a round trip", () => {
+  testRoundTrip(text, snapshot);
+});
+
+test("D. Importing with no active timetable makes it the active one", async () => {
+  await testImportIntoEmptyApp(text);
+});
+
+test("E2. Importing on a genuinely fresh install", async () => {
+  await testImportOnFreshInstall(text);
+});
+
+test("F. Importing while a timetable is active leaves that timetable alone", async () => {
+  await testImportBesideActive(text);
+});
+
+test("J. A file that is not a timetable changes nothing at all", async () => {
+  await testRefusals(text);
+});
+
+test("K. A forced failure during an import leaves everything as it was", async () => {
+  await testForcedImportFailure(text);
+});
+
+test("L. Reminder history and notification identity never travel", async () => {
+  await testReminderLedgerStaysHome(text);
+});
+
+test("M. Re-identifying a snapshot, as a value", () => {
+  testCloning(snapshot);
+});
+
+test("N. An archive written before this branch still exports", async () => {
+  await testLegacyArchiveExports();
+});
+
+test("O. A user's own names are never rewritten; an import's are made distinct", async () => {
+  await testNames(text);
+});
+
+test("P. The imported-name rule, on its own", () => {
+  testNamingRule();
+});
+
+test("Q. What `expo-sharing` hands the router, and what the router is told to do with it", () => {
+  testIncomingLinks();
+});
+
+test("R. A file the user has answered is not offered again", () => {
+  testAnsweredShares();
+});
+
+test("S. A shared file is judged by exactly the gate a picked one is", async () => {
+  await testSharedFileMeetsTheSameGate(text);
+});
+
+test("T. A shared file, previewed and imported, with a timetable already active", async () => {
+  await testIncomingShareBesideActive(text);
+});
+
+test("U. A shared file on a device with no active timetable becomes the timetable", async () => {
+  await testIncomingShareOnEmptyDevice(text);
+});
+
+test("V. Cancelling, and a file that is not a timetable, change nothing at all", async () => {
+  await testIncomingShareWritesNothingUntilConfirmed(text);
+});
+
+test("W. A redelivered share is not presented twice", async () => {
+  await testIncomingShareIsAnsweredOnce(text);
+});
+
+// Windows keeps a handle on a WAL database for a moment after it is closed;
+// failing to tidy a temporary directory is not a test result.
+after(() => {
   try {
-    const { text, snapshot } = await testExport();
-    await testExportArchived();
-    testRoundTrip(text, snapshot);
-    await testImportIntoEmptyApp(text);
-    await testImportOnFreshInstall(text);
-    await testImportBesideActive(text);
-    await testRefusals(text);
-    await testForcedImportFailure(text);
-    await testReminderLedgerStaysHome(text);
-    testCloning(snapshot);
-    await testLegacyArchiveExports();
-    await testNames(text);
-    testNamingRule();
-    testIncomingLinks();
-    testAnsweredShares();
-    await testSharedFileMeetsTheSameGate(text);
-    await testIncomingShareBesideActive(text);
-    await testIncomingShareOnEmptyDevice(text);
-    await testIncomingShareWritesNothingUntilConfirmed(text);
-    await testIncomingShareIsAnsweredOnce(text);
-  } finally {
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      console.log(`\n(left ${directory} behind; the platform still had it open)`);
-    }
+    rmSync(directory, { recursive: true, force: true });
+  } catch {
+    console.log(`(left ${directory} behind; the platform still had it open)`);
   }
-}
+});

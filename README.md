@@ -250,8 +250,8 @@ Details are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the short version:
 ## Getting started
 
 Prerequisites: Node.js and npm, plus an Android device or emulator. Developed
-on Node 22; `npm run harness` in particular relies on Node's built-in SQLite
-and TypeScript stripping, so it needs Node 22 or newer.
+on Node 22; `npm test` in particular relies on Node's built-in test runner,
+SQLite and TypeScript stripping, so it needs Node 22 or newer.
 
 ```bash
 git clone <repository-url>
@@ -299,12 +299,24 @@ Checks:
 ```bash
 npm run lint        # expo lint
 npx tsc --noEmit    # TypeScript, strict
-npm run harness     # domain + storage checks
+npm test            # domain, storage and architecture tests
+npm run test:watch  # re-run on change
+npm run test:coverage
 ```
 
-`npm run harness` runs a small Node script under [harness/](harness/) that
-exercises grid geometry and the storage layer against Node's built-in SQLite.
-It is not a substitute for a real test runner, which has not been chosen yet.
+`npm test` runs the suites under [tests/](tests/) on Node's built-in test
+runner (`node --test`), with no test dependency installed. A small resolve
+hook maps the `@/` alias and points `expo-sqlite` at Node's own SQLite, so
+the real migrations, repository and file formats run unchanged.
+
+What the tests cover is everything below the screens: `src/domain/`,
+`src/storage/`, the file formats, the grid geometry and paging, and the
+architecture rules. They never render a screen or a component, so a change to
+`src/app/` or to a component cannot fail them — and `npm run test:watch` does
+not re-run for one, because no test depends on that file. Screens are checked
+by `npx tsc --noEmit` and `npm run lint`, which catch type and syntax errors
+but not something that is valid code yet wrong on screen, and by running the
+app.
 
 ## Android builds
 
@@ -350,7 +362,8 @@ Beta 2 (0.2.0), adding intentional overlapping classes, chosen start dates for
 repeating classes, and any set of visible weekdays.
 
 **In progress** — milestone 14: the web version and its desktop layout are
-done; next are a TypeScript test runner and an optional Spring Boot service
+done, and the tests run on Node's built-in test runner; next is an optional
+Spring Boot service
 for sharing a timetable as a link (see [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 **Later, not committed to** — reusing an existing course across placements,
@@ -377,7 +390,7 @@ src/
                 each with a `.web.ts` twin for the browser
 docs/           PRODUCT.md, ARCHITECTURE.md, ROADMAP.md,
                 BETA1_RELEASE_NOTES.md, BETA2_RELEASE_NOTES.md
-harness/        Node-based domain and storage checks
+tests/          Domain, storage and architecture tests (node --test)
 assets/         branding/ holds the Temelo mark and the icon, adaptive-icon,
                 monochrome, notification and splash assets derived from it
 ```

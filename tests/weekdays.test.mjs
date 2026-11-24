@@ -15,9 +15,10 @@
  *  - both grid orientations, and the grid geometry, cope with any number of
  *    columns from one to seven.
  *
- * Run it with `node harness/run.mjs`.
+ * Run it with `npm test` (or `node --import ./tests/support/setup.mjs --test tests/weekdays.test.mjs` alone).
  */
 
+import { after, test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,8 +53,8 @@ import { buildTimetableSnapshot, parseTimetableSnapshot, serializeTimetableSnaps
 import { buildTemeloFile, parseTemeloFile, serializeTemeloFile } from "@/storage/timetableFile";
 import { archiveActiveTimetable, createTimetable, listArchivedTimetables, restoreArchivedTimetable } from "@/storage/timetableLifecycle";
 import { loadTimetable, saveTimetable } from "@/storage/timetableRepository";
-import { check, equal, section } from "./report.mjs";
-import { useDatabaseFile } from "./sqlite-stub.mjs";
+import { check, equal, section } from "./support/assertions.mjs";
+import { useDatabaseFile } from "./support/sqlite-stub.mjs";
 
 const directory = mkdtempSync(join(tmpdir(), "temelo-weekdays-"));
 let databaseIndex = 0;
@@ -198,7 +199,7 @@ function testGeometry() {
 async function buildV7Database(weekendMode) {
   const path = nextPath();
   useDatabaseFile(path);
-  const { openDatabaseAsync } = await import("./sqlite-stub.mjs");
+  const { openDatabaseAsync } = await import("./support/sqlite-stub.mjs");
   const db = await openDatabaseAsync();
   await db.execAsync("PRAGMA foreign_keys = ON;");
   for (const migration of MIGRATIONS.filter((entry) => entry.version <= 7)) {
@@ -354,18 +355,34 @@ async function testRoundTrips() {
   equal("a snapshot re-encodes to the same bytes", reencoded.ok && serializeTimetableSnapshot(reencoded.snapshot), serializeTimetableSnapshot(snapshot));
 }
 
-export async function runWeekdaysHarness() {
+/* ---------------------------------------------------------------- tests */
+
+test("Days A. Any set of days, kept Monday first; the legacy preset never hides a shown day", () => {
+  testVocabulary();
+});
+
+test("Days B. Hiding a day changes what is drawn, and nothing else", () => {
+  testPresentationOnly();
+});
+
+test("Days C. The grid geometry holds for one to seven columns", () => {
+  testGeometry();
+});
+
+test("Days D. v7 -> v8: every device opens to exactly the days it showed", async () => {
+  await testUpgrade();
+});
+
+test("Days E. Hiding and showing days loses nothing — through relaunch, archive and file", async () => {
+  await testRoundTrips();
+});
+
+// Windows keeps a handle on a WAL database for a moment after it is closed;
+// failing to tidy a temporary directory is not a test result.
+after(() => {
   try {
-    testVocabulary();
-    testPresentationOnly();
-    testGeometry();
-    await testUpgrade();
-    await testRoundTrips();
-  } finally {
-    try {
-      rmSync(directory, { recursive: true, force: true });
-    } catch {
-      console.log(`\n(left ${directory} behind; the platform still had it open)`);
-    }
+    rmSync(directory, { recursive: true, force: true });
+  } catch {
+    console.log(`(left ${directory} behind; the platform still had it open)`);
   }
-}
+});

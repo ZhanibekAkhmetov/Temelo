@@ -22,10 +22,11 @@ development build, not Expo Go.
   edges are `.web.ts` twins of `src/util/` wrappers — see "Web build" in
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 - `npm run lint` — lint (`expo lint`); run after code changes
-- `npm run harness` — the harness suites in `harness/` (geometry, navigation,
-  storage, lifecycle, transfer, calendar, overlaps, series start, visible
-  weekdays), run against Node's own SQLite. There is no test runner; this
-  is the substitute, and it must stay green.
+- `npm test` — the test suites in `tests/` (geometry, navigation, storage,
+  lifecycle, transfer, calendar, overlaps, series start, visible weekdays,
+  architecture), on Node's built-in test runner against Node's own SQLite.
+  No test dependency is installed. Must stay green. `npm run test:watch` and
+  `npm run test:coverage` exist too.
 
 ## Architecture boundaries
 
@@ -62,7 +63,7 @@ development build, not Expo Go.
   plus `createdAt`/`updatedAt`/`deletedAt`.
 - Web: a platform edge in `src/util/` gets a `.web.ts` twin typed
   `typeof Native.x` against the native file and importing no module at
-  runtime (`harness/architecture.mjs` section AC). The desktop layout is
+  runtime (`tests/architecture.test.mjs`, test AC). The desktop layout is
   gated on `useIsDesktop()` (web and ≥ 1024 px); every desktop change must
   leave the phone app — native, and narrow web — exactly as it was.
 

@@ -469,7 +469,7 @@ const addTimetableLifecycle: Migration = {
  *    before this one's start and twelve after, created no later than it and
  *    last updated no earlier than it was created — both halves are written in
  *    the same instant. The same rule as `inferStartsWithTimetable`, which the
- *    harness checks this against. It errs towards 0, which is exactly how
+ *    tests check this against. It errs towards 0, which is exactly how
  *    every series behaved before this migration, so a mistake can only ever
  *    withhold the new behaviour, never draw a class twice.
  *

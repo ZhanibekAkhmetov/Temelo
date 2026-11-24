@@ -1,5 +1,5 @@
 /**
- * Module resolution for the harness.
+ * Module resolution for the tests (loaded by `setup.mjs`).
  *
  * Two mappings, and nothing else:
  *
@@ -7,7 +7,7 @@
  *    understands it; Node does not, so it is resolved here against `src/`.
  *  - `expo-sqlite` is a native module that cannot exist outside a device
  *    build. It is redirected to `sqlite-stub.mjs`, which presents the same
- *    surface over Node's own SQLite. That is what lets the harness exercise
+ *    surface over Node's own SQLite. That is what lets the tests exercise
  *    the real `openTemeloDatabase`, the real migrations and the real
  *    repository rather than a re-implementation of them.
  *
@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = pathToFileURL(join(HERE, "..", "src") + "/").href;
+const SRC = pathToFileURL(join(HERE, "..", "..", "src") + "/").href;
 const SQLITE_STUB = pathToFileURL(join(HERE, "sqlite-stub.mjs")).href;
 
 const EXTENSIONS = ["", ".ts", ".tsx", "/index.ts", "/index.tsx"];

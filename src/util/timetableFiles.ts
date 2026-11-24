@@ -8,7 +8,7 @@
  * `storage/timetableFile`, the meaning in
  * `storage/timetableLifecycle`, and neither can be reached from here. That is
  * the same line `util/notifications` and `util/haptics` already draw, and it is
- * what lets the whole of the file *format* be exercised by the Node harness,
+ * what lets the whole of the file *format* be exercised by the Node tests,
  * which has no native modules at all.
  *
  * Every function here is total: each returns a reason rather than throwing,
