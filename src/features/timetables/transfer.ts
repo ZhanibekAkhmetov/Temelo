@@ -1,13 +1,15 @@
 /**
- * Sharing a timetable out, importing one in, and exporting one to a calendar,
- * as three hooks.
+ * Sharing a timetable out (as a file or as a link), importing one in (from a
+ * file or from a link), and exporting one to a calendar, as four hooks.
  *
  * This is the one place the layers meet: `state/AppStateContext` owns the
  * database, `storage/timetableFile` owns what a `.temelo` is,
  * `storage/calendarFile` owns what an `.ics` is, `domain/calendarExport` owns
  * which meetings fall inside a date range,
  * `features/timetables/importPipeline` owns what a valid file *means*, and
- * `util/timetableFiles` owns the share sheet and the picker. None of them knows
+ * `util/timetableFiles` owns the share sheet and the picker, and
+ * `util/shareLinkApi` owns the conversation with the share-link server. None of
+ * them knows
  * about the others, and none of them knows how to say "this file isn't a valid
  * Temelo timetable" — that is this module's job, and it is why the
  * failure-to-copy mapping below is written out in full rather than hidden
@@ -36,6 +38,7 @@ import {
   type CalendarExportRange,
 } from "@/domain/calendarExport";
 import { domainError, type DomainError } from "@/domain/errors";
+import { shareIdFromInput, shareLinkUrl } from "@/domain/shareLink";
 import { previewTimetableFile, type ImportCandidate } from "@/features/timetables/importPipeline";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState, type ImportActionResult, type SnapshotResult } from "@/state/AppStateContext";
@@ -51,6 +54,12 @@ import {
   TEMELO_FILE_MIME_TYPE,
   type TemeloFileFailure,
 } from "@/storage/timetableFile";
+import {
+  downloadSharedTimetable,
+  shareLinkConfig,
+  uploadSharedTimetable,
+  type ShareLinkFailure,
+} from "@/util/shareLinkApi";
 import { openFileWithApp, pickTimetableFile, shareTimetableFile } from "@/util/timetableFiles";
 
 /**
@@ -77,6 +86,54 @@ function fileError(failure: TemeloFileFailure): DomainError {
     case "damaged":
       return domainError("errors.fileDamaged");
   }
+}
+
+/**
+ * Why a request to the share-link server did not work, in words.
+ *
+ * `refused` means the server judged a file *this device* built and validated
+ * not to be a Temelo timetable — a disagreement between app and server, not
+ * something the user did — so it gets the ordinary "couldn't" sentence and the
+ * log gets the detail, exactly as a file that fails its own validation does.
+ */
+function linkError(failure: ShareLinkFailure): DomainError {
+  logDetail("the share-link server", `${failure.kind} — ${failure.detail}`);
+  switch (failure.kind) {
+    case "unreachable":
+      return domainError("errors.linkOffline");
+    case "notFound":
+      return domainError("errors.linkNotFound");
+    case "tooLarge":
+      return domainError("errors.linkTooLarge");
+    case "refused":
+      return domainError("errors.shareLinkFailed");
+    case "server":
+      return domainError("errors.linkServer");
+  }
+}
+
+/** A snapshot, written out as the text of a `.temelo` that this build would accept. */
+type ShareableFile = { ok: true; text: string; timetableName: string } | { ok: false; error: DomainError };
+
+/**
+ * The common first half of both ways to share: load the snapshot and build the
+ * file, validated on the way out — see `buildValidatedTemeloFile` — so a
+ * timetable that could not be imported anywhere is caught here, with a normal
+ * error and nothing shared, rather than on the recipient's device.
+ */
+async function buildShareableFile(load: () => SnapshotResult | Promise<SnapshotResult>): Promise<ShareableFile> {
+  const loaded = await load();
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+
+  const built = buildValidatedTemeloFile(loaded.snapshot, new Date().toISOString());
+  if (!built.ok) {
+    // The app produced a timetable it would refuse to read back. That is a
+    // defect rather than something the user did, so the log gets the field
+    // name and they get the ordinary sentence.
+    logDetail("this device's own timetable did not validate for export", built.failure.detail);
+    return { ok: false, error: domainError("errors.shareFailed") };
+  }
+  return { ok: true, text: built.text, timetableName: loaded.snapshot.timetable.name };
 }
 
 /* ------------------------------------------------------------------- share */
@@ -124,24 +181,14 @@ export function useShareTimetable(): TimetableSharing {
       setError(null);
       setSharing(true);
       try {
-        const loaded = await load();
-        if (!loaded.ok) {
-          setError(loaded.error);
-          return;
-        }
-
-        const built = buildValidatedTemeloFile(loaded.snapshot, new Date().toISOString());
+        const built = await buildShareableFile(load);
         if (!built.ok) {
-          // The app produced a timetable it would refuse to read back. That is
-          // a defect rather than something the user did, so the log gets the
-          // field name and they get the ordinary sentence.
-          logDetail("this device's own timetable did not validate for export", built.failure.detail);
-          setError(domainError("errors.shareFailed"));
+          setError(built.error);
           return;
         }
 
         const shared = await shareTimetableFile({
-          fileName: temeloFileName(loaded.snapshot.timetable.name),
+          fileName: temeloFileName(built.timetableName),
           contents: built.text,
           mimeType: TEMELO_FILE_MIME_TYPE,
           dialogTitle: t("transfer.shareDialogTitle"),
@@ -173,6 +220,112 @@ export function useShareTimetable(): TimetableSharing {
   return { sharing, error, shareActive, shareArchive };
 }
 
+/* -------------------------------------------------------------- share link */
+
+/** Where a share link stands, as the dialog draws it. */
+export type ShareLinkState =
+  | { kind: "idle" }
+  /** Uploading. On a free host this includes waking the server, up to a minute. */
+  | { kind: "creating" }
+  | { kind: "created"; url: string; expiresAt: string }
+  | { kind: "failed"; error: DomainError };
+
+export interface TimetableShareLinks {
+  /** Whether this build has a server to share through. Nothing is offered without one. */
+  available: boolean;
+  state: ShareLinkState;
+  /** Uploads the active timetable and makes a link to it. */
+  createForActive: () => void;
+  /** Uploads one archived timetable, read without restoring it. */
+  createForArchive: (archiveId: string) => void;
+  /** Tries the last request again, after a failure. */
+  retry: () => void;
+  /**
+   * Closes the dialog. While creating, it stops waiting rather than stopping
+   * the upload: an answer that arrives later is ignored, and a share that did
+   * land expires on its own. A share stays on the server until it expires.
+   */
+  dismiss: () => void;
+}
+
+/**
+ * Sharing a timetable as a link: the same validated `.temelo` that "Share
+ * Temelo file" hands to the share sheet, uploaded to the share-link server
+ * instead, which answers with an id and an expiry.
+ *
+ * Export still never mutates: the snapshot is read, the file is built, and the
+ * only thing that changes is a row on the server. And nothing is uploaded until
+ * the user chooses "Share link", whose description says that it uploads.
+ */
+export function useShareLink(): TimetableShareLinks {
+  const { activeTimetableSnapshot, readArchivedSnapshot } = useAppState();
+  const [state, setState] = useState<ShareLinkState>({ kind: "idle" });
+  /** See the note on `inFlight` in `useImportTimetable`; same reason. */
+  const inFlight = useRef(false);
+  /** The last loader, so Try again repeats exactly the request that failed. */
+  const lastLoad = useRef<(() => SnapshotResult | Promise<SnapshotResult>) | null>(null);
+  /** Bumped by every dismissal, so the answer to a request nobody is waiting for is dropped. */
+  const generation = useRef(0);
+
+  const create = useCallback(async (load: () => SnapshotResult | Promise<SnapshotResult>) => {
+    if (inFlight.current) return;
+    const target = shareLinkConfig();
+    if (!target) return;
+    inFlight.current = true;
+    lastLoad.current = load;
+    const mine = generation.current;
+    const settle = (next: ShareLinkState) => {
+      if (generation.current === mine) setState(next);
+    };
+    setState({ kind: "creating" });
+    try {
+      const built = await buildShareableFile(load);
+      if (!built.ok) {
+        settle({ kind: "failed", error: built.error });
+        return;
+      }
+      const uploaded = await uploadSharedTimetable(target.serverUrl, built.text);
+      if (!uploaded.ok) {
+        settle({ kind: "failed", error: linkError(uploaded.failure) });
+        return;
+      }
+      settle({ kind: "created", url: shareLinkUrl(target.webUrl, uploaded.id), expiresAt: uploaded.expiresAt });
+    } finally {
+      if (generation.current === mine) inFlight.current = false;
+    }
+  }, []);
+
+  const createForActive = useCallback(() => {
+    void create(() => activeTimetableSnapshot());
+  }, [create, activeTimetableSnapshot]);
+
+  const createForArchive = useCallback(
+    (archiveId: string) => {
+      void create(() => readArchivedSnapshot(archiveId));
+    },
+    [create, readArchivedSnapshot],
+  );
+
+  const retry = useCallback(() => {
+    if (lastLoad.current) void create(lastLoad.current);
+  }, [create]);
+
+  const dismiss = useCallback(() => {
+    generation.current += 1;
+    inFlight.current = false;
+    setState({ kind: "idle" });
+  }, []);
+
+  return {
+    available: shareLinkConfig() !== null,
+    state,
+    createForActive,
+    createForArchive,
+    retry,
+    dismiss,
+  };
+}
+
 /* ------------------------------------------------------------------ import */
 
 export interface TimetableImporting {
@@ -184,6 +337,13 @@ export interface TimetableImporting {
   error: DomainError | null;
   /** Opens the picker. Writes nothing; may produce a `pending` or an error. */
   choose: () => void;
+  /**
+   * Downloads the timetable behind a share link — a whole link or a bare id —
+   * into the same preview a picked file produces. Writes nothing.
+   */
+  openLink: (input: string) => void;
+  /** Whether this build has a server to open links from. */
+  linksAvailable: boolean;
   /** Writes the pending import. Resolves to where it landed, or null if none. */
   confirm: () => Promise<ImportActionResult | null>;
   /** Throws the pending import away. Nothing was written, so nothing is undone. */
@@ -268,6 +428,54 @@ export function useImportTimetable(): TimetableImporting {
     })();
   }, [hasActive, timetableNames]);
 
+  /*
+   * The second way in, and deliberately the same room: whatever the server
+   * sends goes through `previewTimetableFile` exactly as a picked file's text
+   * does — same length bound, same validator, same naming — and only `confirm`
+   * writes, through the same cloning import. The server is never trusted.
+   */
+  const openLink = useCallback(
+    (input: string) => {
+      if (inFlight.current) return;
+      setError(null);
+      const config = shareLinkConfig();
+      if (!config) {
+        setError(domainError("errors.linkUnavailable"));
+        return;
+      }
+      const id = shareIdFromInput(input);
+      if (!id) {
+        setError(domainError("errors.linkInvalid"));
+        return;
+      }
+      inFlight.current = true;
+      setBusy(true);
+      void (async () => {
+        try {
+          const downloaded = await downloadSharedTimetable(config.serverUrl, id);
+          if (!downloaded.ok) {
+            setError(linkError(downloaded.failure));
+            return;
+          }
+          const preview = previewTimetableFile({
+            text: downloaded.text,
+            hasActive,
+            existingNames: await timetableNames(),
+          });
+          if (!preview.ok) {
+            setError(fileError(preview.failure));
+            return;
+          }
+          setPending(preview.candidate);
+        } finally {
+          inFlight.current = false;
+          setBusy(false);
+        }
+      })();
+    },
+    [hasActive, timetableNames],
+  );
+
   const confirm = useCallback(async () => {
     if (!pending || inFlight.current) return null;
     inFlight.current = true;
@@ -295,7 +503,16 @@ export function useImportTimetable(): TimetableImporting {
     setError(null);
   }, []);
 
-  return { pending, busy, error, choose, confirm, cancel };
+  return {
+    pending,
+    busy,
+    error,
+    choose,
+    openLink,
+    linksAvailable: shareLinkConfig() !== null,
+    confirm,
+    cancel,
+  };
 }
 
 /* --------------------------------------------------------- calendar export */

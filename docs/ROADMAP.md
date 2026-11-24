@@ -312,14 +312,65 @@ current implementation status.
       `mvnw test` runs 54 tests: unit tests for the validator and the size
       limit, MockMvc slices, and Testcontainers tests for the round trip,
       expiry (with a movable clock), the purge, Flyway and the OpenAPI
-      description. CORS is left to 14.6 and upload rate limiting to 14.7.
+      description. CORS is left to 14.6 and upload rate limiting to hosting
+      (14.9).
     - **14.6 Share links in the app.** "Share link" beside "Share Temelo
       file" and "Export to calendar"; opening a link leads to the same import
       preview, and importing still clones every id. How a link reaches the
       native app is decided in this step.
-    - **14.7 Hosting and documentation.** The static web build hosted with
-      the COOP/COEP headers; the server runnable with one Docker Compose
-      command; README and [ARCHITECTURE.md](ARCHITECTURE.md) describe both.
+      *Status: done.* A link is an address of the web app,
+      `<web app>/shared/<id>` (`domain/shareLink`), so it opens in any
+      browser, installed app or not. "Share link" sits in the Share / Export
+      sheet on all three screens that have one; it uploads the same validated
+      `.temelo` that "Share Temelo file" writes and shows the link, its expiry,
+      Copy (browser) and the share sheet (React Native's `Share`, no new
+      dependency). The route `app/shared/[id].tsx` and "Open share link" under
+      Import both go through `useImportTimetable`, so a download meets the
+      same `previewTimetableFile`, the same preview and the same cloning
+      import as a picked file. *Decided:* on a phone a link is pasted into
+      "Open share link"; opening the app from a tapped link needs Android App
+      Links, which need the hosted domain and the release signing key, so it
+      moves to 14.7. The feature is on only when `EXPO_PUBLIC_TEMELO_SERVER_URL`
+      (and, on a phone, `EXPO_PUBLIC_TEMELO_WEB_URL`) is set at build time;
+      without them the app shows no link actions and needs no network. The
+      server allows the web app's origin by CORS
+      (`temelo.cors.allowed-origins`). 25 new Node tests (link parsing, the
+      configuration, every outcome of the API client against a stubbed
+      `fetch`, the server's example importing and a tampered download being
+      refused) and four CORS tests; a headless-Chrome run of the real web
+      build against the real server covered opening a link as a first-time
+      visitor, import, reload, creating and copying a link, pasting one, and
+      an unknown link.
+    - **14.7 Opening a link in the installed app.** Tapping a share link on
+      an Android phone with Temelo installed opens the app and the same
+      import preview, instead of the browser. The web address is decided
+      first, because it is compiled into the app: `intentFilters` with
+      `autoVerify` for `https://<domain>/shared/*` in `app.json`, and
+      `public/.well-known/assetlinks.json` in the web build with the SHA-256
+      fingerprints of the release key (EAS credentials) and of the
+      development build's key, so both can be tested. The incoming URL lands
+      on the existing `/shared/[id]` route; a cold start straight into it, and
+      leaving it afterwards, are checked on a physical phone, because the
+      share receiver's history is exactly a navigation dispatched too early.
+      Needs a new development build. Everything is testable before hosting
+      through the already registered `temelo://shared/<id>` scheme and
+      Android's "Open by default" setting; automatic verification of the
+      `https` link can only be confirmed once the domain is live (14.9).
+    - **14.8 Review before release.** A pass over the whole app — phone,
+      narrow web and desktop web — before anything is public: flows, copy in
+      all three languages, accessibility, error states and edge cases, with
+      what it finds fixed or written down.
+    - **14.9 Hosting and documentation.** The static web build hosted with
+      the COOP/COEP headers; the server and its database hosted, runnable
+      with one Docker Compose command; README and
+      [ARCHITECTURE.md](ARCHITECTURE.md) describe both. Carried over from
+      14.6: the static host rewrites `/shared/*` to the exported
+      `shared/[id].html`; the production build sets
+      `EXPO_PUBLIC_TEMELO_SERVER_URL` and `EXPO_PUBLIC_TEMELO_WEB_URL` (they
+      are inlined when the bundle is built); the server's
+      `TEMELO_CORS_ALLOWED_ORIGINS` names the hosted web origin; and rate
+      limiting of uploads. Carried over from 14.7: `assetlinks.json` served
+      from the live domain and App Links verification confirmed on a phone.
 
     *Deliberately out of scope:* accounts, cross-device synchronization and
     web reminders (they would need push and therefore a server-side
@@ -375,15 +426,18 @@ added intentional overlaps, chosen start dates and any set of visible weekdays.
 
 Milestone 14 is under way: the web version (14.1), its desktop layout (14.2),
 the move to Node's built-in test runner (14.3), the Spring Boot server
-scaffold in `server/` (14.4) and its share-link API (14.5) are done. The web version runs locally with
+scaffold in `server/` (14.4), its share-link API (14.5) and share links in the
+app (14.6) are done. The web version runs locally with
 `npm run web` and the server with `docker compose up` and `./mvnw
-spring-boot:run`; neither has been hosted yet (14.7).
+spring-boot:run`; neither has been hosted yet (14.9), so share links work
+between a local server and local builds.
 
 ## Next milestone
 
-Share links in the app (14.6) on top of the share-link API from 14.5, then
-hosting the web build and the server (14.7). Tester feedback on Beta 2 keeps priority over
-new work: high-impact bugs are fixed first, preserving the data model and the
-upgrade path.
+A tapped share link opening the installed Android app (14.7), then a review
+of the whole app (14.8), then hosting the web build and the server (14.9),
+which turns share links into links anyone can open. Tester feedback on Beta 2
+keeps priority over new work: high-impact bugs are fixed first, preserving the
+data model and the upgrade path.
 Synchronization, optional accounts and store distribution remain deliberately
 unscoped until they are actually started.

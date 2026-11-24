@@ -11,10 +11,17 @@ import { ScreenHeader } from "@/components/ScreenHeader";
 import { todayIsoDate } from "@/domain/date";
 import { CalendarExportSheet } from "@/features/timetables/CalendarExportSheet";
 import { ImportPreviewDialog } from "@/features/timetables/ImportPreviewDialog";
+import { OpenLinkDialog } from "@/features/timetables/OpenLinkDialog";
+import { ShareLinkDialog } from "@/features/timetables/ShareLinkDialog";
 import { TimetableActionSheet, type TimetableAction } from "@/features/timetables/TimetableActionSheet";
 import { timetableSummary, shapeOfActive } from "@/features/timetables/summary";
 import { TimetableSummaryRow } from "@/features/timetables/TimetableSummaryRow";
-import { useExportCalendar, useImportTimetable, useShareTimetable } from "@/features/timetables/transfer";
+import {
+  useExportCalendar,
+  useImportTimetable,
+  useShareLink,
+  useShareTimetable,
+} from "@/features/timetables/transfer";
 import { useI18n } from "@/i18n/I18nProvider";
 import { useAppState } from "@/state/AppStateContext";
 import type { ArchivedTimetableSummary } from "@/storage/timetableLifecycle";
@@ -65,6 +72,11 @@ export default function TimetablesScreen() {
   const sharing = useShareTimetable();
   const importing = useImportTimetable();
   const calendar = useExportCalendar();
+  const links = useShareLink();
+  /** The timetable a share link is being made for, named in the dialog. */
+  const [linkName, setLinkName] = useState("");
+  /** Whether the paste-a-link dialog is open. */
+  const [openingLink, setOpeningLink] = useState(false);
 
   /**
    * Which row the contextual actions are about, or null.
@@ -150,6 +162,23 @@ export default function TimetablesScreen() {
       },
     };
 
+    /* Only where a share-link server is configured; see `useShareLink`. */
+    const link: TimetableAction[] = links.available
+      ? [
+          {
+            key: "link",
+            label: t("transfer.shareLinkAction"),
+            description: t("transfer.shareLinkHint"),
+            onPress: () => {
+              setSelected(null);
+              setLinkName(entry.name);
+              if (entry.kind === "current") links.createForActive();
+              else links.createForArchive(entry.id);
+            },
+          },
+        ]
+      : [];
+
     const anchorDate = anchorDateFor(entry);
     /*
      * Offered only when there is a start date to range from — which for an
@@ -171,10 +200,11 @@ export default function TimetablesScreen() {
             },
           ];
 
-    if (entry.kind === "current") return [share, ...exportToCalendar];
+    if (entry.kind === "current") return [share, ...link, ...exportToCalendar];
 
     return [
       share,
+      ...link,
       ...exportToCalendar,
       {
         key: "delete",
@@ -201,6 +231,7 @@ export default function TimetablesScreen() {
   function handleImportConfirm() {
     void importing.confirm().then((result) => {
       if (!result?.ok) return;
+      setOpeningLink(false);
       refresh();
       /*
        * Somewhere the user can see it landed, and which of the two things
@@ -224,7 +255,8 @@ export default function TimetablesScreen() {
     });
   }
 
-  const transferError = sharing.error ?? (importing.pending ? null : importing.error);
+  // A link's failure is shown inside its own dialog while that is open.
+  const transferError = sharing.error ?? (importing.pending || openingLink ? null : importing.error);
 
   return (
     <View style={{ flex: 1 }}>
@@ -284,6 +316,20 @@ export default function TimetablesScreen() {
               not a walkthrough — the whole instruction is "tap Share, pick
               Temelo", and anybody who has shared a photo already knows it. */}
           <Text style={[typography.caption, { color: colors.textMuted }]}>{t("transfer.importHint")}</Text>
+          {/* The other way a timetable arrives once a server is configured: a
+              link somebody sent. In a browser a link opens by itself; on a
+              phone it is pasted here. */}
+          {importing.linksAvailable ? (
+            <Button
+              label={t("transfer.openLinkAction")}
+              variant="secondary"
+              onPress={() => {
+                importing.cancel();
+                setOpeningLink(true);
+              }}
+              disabled={busy}
+            />
+          ) : null}
           {transferError ? (
             <Text style={[typography.caption, { color: colors.danger }]}>
               {t(transferError.key, transferError.params)}
@@ -368,13 +414,32 @@ export default function TimetablesScreen() {
         />
       ) : null}
 
+      {openingLink && !importing.pending ? (
+        <OpenLinkDialog
+          busy={importing.busy}
+          error={importing.error ? t(importing.error.key, importing.error.params) : undefined}
+          onOpen={importing.openLink}
+          onCancel={() => {
+            importing.cancel();
+            setOpeningLink(false);
+          }}
+        />
+      ) : null}
+
+      {links.state.kind !== "idle" ? (
+        <ShareLinkDialog name={linkName} state={links.state} onRetry={links.retry} onDismiss={links.dismiss} />
+      ) : null}
+
       {importing.pending ? (
         <ImportPreviewDialog
           pending={importing.pending}
           busy={importing.busy}
           error={importing.error ? t(importing.error.key, importing.error.params) : undefined}
           onConfirm={handleImportConfirm}
-          onCancel={importing.cancel}
+          onCancel={() => {
+            importing.cancel();
+            setOpeningLink(false);
+          }}
         />
       ) : null}
     </View>

@@ -39,10 +39,14 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
+/** A moment's local calendar date, not a UTC-shifted one. */
+export function isoDateOf(moment: Date): string {
+  return `${moment.getFullYear()}-${pad2(moment.getMonth() + 1)}-${pad2(moment.getDate())}`;
+}
+
 /** Today's date as a local calendar date, not a UTC-shifted one. */
 export function todayIsoDate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  return isoDateOf(new Date());
 }
 
 export function addDaysIso(date: string, days: number): string {
