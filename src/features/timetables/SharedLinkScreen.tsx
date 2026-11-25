@@ -23,6 +23,17 @@ import { useTheme } from "@/theme/useTheme";
  * start of the app, which decides for itself whether that is setup or the
  * grid — a visitor who opened a link before ever using Temelo has not been set
  * up, and an import that did not happen does not change that.
+ *
+ * ## Arriving from outside the app
+ *
+ * On Android a tapped link reaches this same route (App Links, milestone
+ * 14.7): Expo Router routes an `https` link by its path. A cold start begins
+ * with this screen alone on the stack; a link tapped while Temelo is running
+ * is pushed on top of whatever was open. Every way out therefore first drops
+ * back to the bottom of the stack and then replaces it, so neither case leaves
+ * a second grid underneath. Navigation only ever happens on the user's own
+ * tap, long after the navigator has mounted — the timing the share receiver's
+ * history warns about cannot arise here.
  */
 export function SharedLinkScreen({ id }: { id: string }) {
   const { colors, spacing, typography } = useTheme();
@@ -38,15 +49,21 @@ export function SharedLinkScreen({ id }: { id: string }) {
     openLink(id);
   }, [id, openLink]);
 
+  /** Replaces the whole stack with `href`, however this screen was reached. */
+  function exitTo(href: "/" | "/timetable") {
+    if (router.canDismiss()) router.dismissAll();
+    router.replace(href);
+  }
+
   function leave() {
     importing.cancel();
-    router.replace("/");
+    exitTo("/");
   }
 
   function confirm() {
     void importing.confirm().then((result) => {
       if (!result?.ok) return;
-      router.replace("/timetable");
+      exitTo("/timetable");
       if (result.destination === "archive") {
         router.push({ pathname: "/timetables/archived", params: { id: result.timetableId, imported: "1" } });
       }

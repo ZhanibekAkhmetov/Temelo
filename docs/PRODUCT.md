@@ -214,10 +214,12 @@ stops working — two weeks later — and Copy (in a browser) or the share sheet
   opens it — with Temelo installed or not — sees the same preview the Import
   button shows, and nothing is imported until they confirm. Importing makes a
   new copy with new identities, exactly like importing a file.
-- On a phone, **Open share link** under Import takes a pasted link (a whole
-  sentence from a chat works too). A link tapped on the phone opens in the
-  browser for now; opening the app straight from a link (Android App Links)
-  is the next step, and works fully once the web version is hosted.
+- On an Android phone with Temelo installed, **tapping a link opens
+  Temelo** at that same preview instead of the browser (Android App Links).
+  This needs the web version to be live at its address, which Android checks
+  when the app is installed; until then, and on any phone, **Open share
+  link** under Import takes a pasted link (a whole sentence from a chat works
+  too).
 - There are no accounts. The link is the only key, so it is long and random,
   and it stops working after two weeks. An expired link and a wrong one look
   the same: "This link has expired or doesn't exist."

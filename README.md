@@ -319,6 +319,13 @@ enough for the web build. A phone on the same Wi-Fi needs the computer's LAN
 address instead of `localhost`, plus `EXPO_PUBLIC_TEMELO_WEB_URL` for the
 links it makes; a development build allows plain `http`.
 
+On Android, a tapped share link opens the installed app (App Links):
+[app.config.ts](app.config.ts) adds the intent filter for the web address
+that [eas.json](eas.json) gives every build profile, and the web build serves
+[public/.well-known/assetlinks.json](public/.well-known/assetlinks.json).
+Android verifies the domain when the app is installed, so this works fully
+once the web version is hosted.
+
 ### Development notes
 
 Ordinary JavaScript/TypeScript changes reload straight through Metro. Adding or

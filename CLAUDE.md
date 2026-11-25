@@ -25,8 +25,8 @@ and Spring Boot `4.2.0` — versions in [server/pom.xml](server/pom.xml).
 - `npm run lint` — lint (`expo lint`); run after code changes
 - `npm test` — the test suites in `tests/` (geometry, navigation, storage,
   lifecycle, transfer, calendar, overlaps, series start, visible weekdays,
-  share links, architecture), on Node's built-in test runner against Node's
-  own SQLite.
+  share links, app links, architecture), on Node's built-in test runner
+  against Node's own SQLite.
   No test dependency is installed. Must stay green. `npm run test:watch` and
   `npm run test:coverage` exist too.
 
@@ -60,6 +60,12 @@ Server (`server/`, milestone 14; Java 21, Spring Boot 4.2, run from
   `src/util/shareLinkApi.ts`, and every download goes through
   `useImportTimetable` → `previewTimetableFile` → the cloning import, like a
   file.
+- Android App Links: `app.config.ts` derives the `autoVerify` intent filter
+  for `<web host>/shared/*` from `EXPO_PUBLIC_TEMELO_WEB_URL` (set per build
+  profile in `eas.json`); `public/.well-known/assetlinks.json` lists the
+  signing-key fingerprints. Changing the domain or the signing key means
+  updating both and a new native build. A tapped link lands on the same
+  `app/shared/[id].tsx` route as on the web.
 - `src/app/` — Expo Router routes and layouts ONLY, no substantial logic.
 - Reusable UI components live outside `src/app` (e.g. `src/components/`).
 - Domain logic (`src/domain/`) must not import React or RN UI primitives.

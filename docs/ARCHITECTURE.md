@@ -552,8 +552,8 @@ server running at all.
 - **A link is a web-app address**, `<web app>/shared/<id>`
   (`domain/shareLink`: `shareLinkUrl`, `shareIdFromInput`), not a server
   one: it opens in any browser, so the recipient needs nothing installed, and
-  the same route is where Android App Links will deliver a tapped link once
-  there is a hosted domain (14.7, verified once it is live in 14.9).
+  the same route is where Android App Links deliver a tapped link (see
+  "Opening a link in the installed app" below).
 - **Off unless configured.** `util/shareLinkApi.shareLinkConfig()` reads
   `EXPO_PUBLIC_TEMELO_SERVER_URL` and `EXPO_PUBLIC_TEMELO_WEB_URL` (the page's
   own origin in a browser), which Expo inlines at build time. Without them it
@@ -584,14 +584,45 @@ server running at all.
   timetable, the archived timetable's screen otherwise — or back to `/`, which
   decides between setup and the grid. Importing into an empty app completes
   setup, as every import into an empty app does.
-- **On a phone today**, a link is pasted into **Open share link** under
-  Import (`OpenLinkDialog`). A tapped link opens the browser. App Links
-  (`intentFilters` + `assetlinks.json`) need the hosted domain and the
-  release signing fingerprint: they are prepared in 14.7, and their
-  automatic verification is confirmed once the domain is live (14.9).
+- **On a phone**, a link can always be pasted into **Open share link** under
+  Import (`OpenLinkDialog`); a tapped one opens the app (below).
 - **Strings** (`transfer.shareLink*`, `shareLink.*`, `openLink.*`,
   `sharedLink.*`, `errors.link*`) exist in all three languages; the server's
   `reason` codes map to them in `linkError`.
+
+### Opening a link in the installed app (milestone 14.7)
+
+- **Android App Links.** `app.config.ts` layers onto `app.json` one
+  `autoVerify` intent filter for `https://<web host>/shared/…`, derived by
+  `shareLinkIntentFilters` from `EXPO_PUBLIC_TEMELO_WEB_URL` — the same
+  variable share links use, so the domain is configuration, set for every
+  build profile in `eas.json` (`https://temelo.zhanik.workers.dev`). Only an
+  `https` address on the default port gets a filter, because that is all
+  Android verifies; a build without the variable has none. The filter is
+  compiled into the app, so a new domain means a new build.
+- **Verification.** `public/.well-known/assetlinks.json` (copied into the web
+  export) names the package and the SHA-256 fingerprint of the EAS-managed
+  signing key, read from the released Beta 2 APK with `apksigner`. Android
+  fetches it from the live domain when the app is installed, so automatic
+  verification can only happen once the web app is hosted (14.9); before
+  that, Android's "Open by default" setting (or
+  `adb shell pm set-app-links-user-selection`) approves the domain by hand.
+- **Routing.** Expo Router turns an incoming `http(s)` URL into its path,
+  whatever the host (`extractExactPathFromURL` strips the origin), so a
+  tapped link lands on the same `app/shared/[id].tsx` the web uses, and so
+  does `temelo://shared/<id>`. `+native-intent` passes both through
+  unchanged. `MainActivity` is `singleTask`: a link tapped while Temelo runs
+  arrives in the running app and is pushed onto its stack.
+- **Leaving.** `SharedLinkScreen` exits by `dismissAll` (when there is
+  anything to dismiss) and then `replace`, so a cold start (the route alone)
+  and a warm one (the route on top of other screens) both end with one clean
+  stack. Navigation happens only on the user's tap, long after the navigator
+  mounted — not the early dispatch that broke the share receiver.
+- `tests/appLinks.test.ts` checks the derived filter, that it covers exactly
+  `SHARE_LINK_PATH`, that every build profile gives the same https address,
+  and the asset links file's package and fingerprint format. The generated
+  manifest was checked with `expo prebuild`; the device behaviour is on the
+  14.7 checklist in [ROADMAP.md](ROADMAP.md).
 
 ## Future synchronization considerations
 

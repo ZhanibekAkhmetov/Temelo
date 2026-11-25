@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.zhanibekakhmetov.temelo",
+      "sha256_cert_fingerprints": [
+        "41:52:90:B0:AF:32:07:C7:CB:A3:9C:99:3A:3C:4D:D1:80:B5:EB:12:54:2E:FE:3C:B6:DA:D5:5A:05:4E:96:65"
+      ]
+    }
+  }
+]

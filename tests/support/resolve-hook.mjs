@@ -11,6 +11,9 @@
  *    the real `openTemeloDatabase`, the real migrations and the real
  *    repository rather than a re-implementation of them.
  *
+ * And relative imports from a test may leave out the `.ts` extension, as
+ * TypeScript writes them (`../app.config`); Node's resolver insists on one.
+ *
  * TypeScript itself needs no handling: Node strips the types.
  */
 
@@ -32,6 +35,16 @@ export async function resolve(specifier, context, next) {
     for (const extension of EXTENSIONS) {
       const candidate = base + extension;
       if (existsSync(new URL(candidate))) return { url: candidate, shortCircuit: true };
+    }
+  }
+
+  if ((specifier.startsWith("./") || specifier.startsWith("../")) && context.parentURL) {
+    const base = new URL(specifier, context.parentURL);
+    if (!existsSync(base)) {
+      for (const extension of EXTENSIONS.slice(1)) {
+        const candidate = new URL(base.href + extension);
+        if (existsSync(candidate)) return { url: candidate.href, shortCircuit: true };
+      }
     }
   }
 
