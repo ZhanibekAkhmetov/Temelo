@@ -356,7 +356,7 @@ current implementation status.
       through the already registered `temelo://shared/<id>` scheme and
       Android's "Open by default" setting; automatic verification of the
       `https` link can only be confirmed once the domain is live (14.9).
-      *Status: done in code; the device checklist below is the developer's.*
+      *Status: done; device checklist passed on a physical phone.*
       The web address is `https://temelo.zhanik.workers.dev` (Cloudflare
       Workers). `app.config.ts` derives the intent filter from
       `EXPO_PUBLIC_TEMELO_WEB_URL`, which `eas.json` sets for all three
@@ -378,7 +378,14 @@ current implementation status.
       tapped in a chat opens Temelo's preview from cold (app closed) and warm
       (app open on another screen), and Cancel and Import both leave cleanly;
       (5) `adb shell am start -a android.intent.action.VIEW -d
-      "temelo://shared/<id>"` does the same.
+      "temelo://shared/<id>"` does the same. Run on a phone with the new
+      development build: the development profile uses the same EAS key as
+      the fingerprint in `assetlinks.json`, so no second fingerprint is
+      needed; with the domain approved by hand, a link made on the phone
+      against the local server opened Temelo from a chat cold and warm,
+      Cancel and Import left cleanly, and the timetable imported. (5) was not
+      run. A phone reaches the local server by this computer's Wi-Fi address
+      in `.env.local`, not `localhost`.
     - **14.8 Review before release.** A pass over the whole app — phone,
       narrow web and desktop web — before anything is public: flows, copy in
       all three languages, accessibility, error states and edge cases, with
