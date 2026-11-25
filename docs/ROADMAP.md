@@ -356,6 +356,29 @@ current implementation status.
       through the already registered `temelo://shared/<id>` scheme and
       Android's "Open by default" setting; automatic verification of the
       `https` link can only be confirmed once the domain is live (14.9).
+      *Status: done in code; the device checklist below is the developer's.*
+      The web address is `https://temelo.zhanik.workers.dev` (Cloudflare
+      Workers). `app.config.ts` derives the intent filter from
+      `EXPO_PUBLIC_TEMELO_WEB_URL`, which `eas.json` sets for all three
+      profiles; `expo prebuild` produces
+      `<intent-filter android:autoVerify="true">` with that host and
+      `pathPrefix="/shared/"` on the `singleTask` `MainActivity`, beside the
+      `temelo` scheme and the share-sheet filters. `assetlinks.json` names
+      the package and the EAS key's fingerprint (`41:52:90:B0:…:96:65`, read
+      from the Beta 2 APK) and is in the web export. Expo Router was read to
+      confirm an `https` URL is routed by its path, so no `+native-intent`
+      change was needed; `SharedLinkScreen` now leaves by `dismissAll` +
+      `replace`, so a link opened on top of the running app leaves one clean
+      stack. Nine Node tests (`tests/appLinks.test.ts`), and the headless-Chrome
+      run again, plus a link opened on top of the app, cancelled and
+      imported. Device checklist: (1) a new development build; (2) confirm
+      with `eas credentials -p android` that the development profile uses the
+      same key, or add its fingerprint to `assetlinks.json`; (3) approve
+      `temelo.zhanik.workers.dev` under the app's "Open by default"; (4) a link
+      tapped in a chat opens Temelo's preview from cold (app closed) and warm
+      (app open on another screen), and Cancel and Import both leave cleanly;
+      (5) `adb shell am start -a android.intent.action.VIEW -d
+      "temelo://shared/<id>"` does the same.
     - **14.8 Review before release.** A pass over the whole app — phone,
       narrow web and desktop web — before anything is public: flows, copy in
       all three languages, accessibility, error states and edge cases, with
@@ -426,17 +449,18 @@ added intentional overlaps, chosen start dates and any set of visible weekdays.
 
 Milestone 14 is under way: the web version (14.1), its desktop layout (14.2),
 the move to Node's built-in test runner (14.3), the Spring Boot server
-scaffold in `server/` (14.4), its share-link API (14.5) and share links in the
-app (14.6) are done. The web version runs locally with
-`npm run web` and the server with `docker compose up` and `./mvnw
-spring-boot:run`; neither has been hosted yet (14.9), so share links work
-between a local server and local builds.
+scaffold in `server/` (14.4), its share-link API (14.5), share links in the
+app (14.6) and opening a tapped link in the installed Android app (14.7) are
+done. The web version runs locally with `npm run web` and the server with
+`docker compose up` and `./mvnw spring-boot:run`; neither has been hosted yet
+(14.9), so share links work between a local server and local builds, and App
+Links are approved by hand until the domain is live.
 
 ## Next milestone
 
-A tapped share link opening the installed Android app (14.7), then a review
-of the whole app (14.8), then hosting the web build and the server (14.9),
-which turns share links into links anyone can open. Tester feedback on Beta 2
+A review of the whole app (14.8), then hosting the web build and the server
+(14.9), which turns share links into links anyone can open and lets Android
+verify the App Links domain. Tester feedback on Beta 2
 keeps priority over new work: high-impact bugs are fixed first, preserving the
 data model and the upgrade path.
 Synchronization, optional accounts and store distribution remain deliberately
